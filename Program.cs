@@ -78,6 +78,9 @@ builder.Services.AddCors(options =>
     });
 });
 
+// Add memory cache for name resolution service
+builder.Services.AddMemoryCache();
+
 // Register custom services - Use singleton for account management
 builder.Services.AddSingleton<IAccountService, AccountService>();
 builder.Services.AddSingleton<IDisplayNameService, DisplayNameService>();
