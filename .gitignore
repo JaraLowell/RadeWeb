@@ -302,8 +302,18 @@ logs/
 data/accounts/*/cache/
 data/accounts/*/logs/
 
+# SSL/TLS Certificates (security sensitive)
+certificates/
+*.pfx
+*.p12
+*.crt
+*.key
+*.pem
+
 # Environment files (may contain sensitive data)
 appsettings.Development.json
+appsettings.Production.json
+appsettings.Staging.json
 
 # Database files
 *.db
