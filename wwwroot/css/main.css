@@ -31,6 +31,7 @@
 .btn-info, .btn-primary {
     --bs-btn-bg: #4a73a9;
     --bs-btn-border-color: #000000;
+    --bs-btn-color: #ffffff;
 }
 
 .btn-outline-info {
