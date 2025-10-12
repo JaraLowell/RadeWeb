@@ -1,0 +1,277 @@
+/* Region Info Panel Styles */
+.region-info-container {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1000;
+}
+
+.region-info-panel {
+    background: #ffffff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    width: 600px;
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.region-header {
+    background: #f8f9fa;
+    border-bottom: 1px solid #ddd;
+    padding: 15px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-radius: 8px 8px 0 0;
+}
+
+.region-header h3 {
+    margin: 0;
+    color: #333;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: #666;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background-color 0.2s;
+}
+
+.close-btn:hover {
+    background-color: #e9ecef;
+    color: #333;
+}
+
+.region-content {
+    padding: 20px;
+}
+
+.region-section {
+    margin-bottom: 25px;
+}
+
+.region-section:last-child {
+    margin-bottom: 0;
+}
+
+.region-section h4 {
+    margin: 0 0 15px 0;
+    color: #495057;
+    font-size: 16px;
+    font-weight: 600;
+    border-bottom: 2px solid #e9ecef;
+    padding-bottom: 8px;
+}
+
+.region-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px 20px;
+}
+
+.info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+}
+
+.info-item label {
+    font-weight: 500;
+    color: #6c757d;
+    margin-right: 10px;
+}
+
+.info-item span {
+    color: #212529;
+    font-weight: 400;
+    text-align: right;
+    word-break: break-word;
+}
+
+/* Performance Indicator */
+.performance-summary {
+    margin-bottom: 15px;
+}
+
+.performance-indicator {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+.performance-bar {
+    flex: 1;
+    height: 20px;
+    background-color: #e9ecef;
+    border-radius: 10px;
+    overflow: hidden;
+    position: relative;
+}
+
+.performance-fill {
+    height: 100%;
+    border-radius: 10px;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    background-color: #6c757d;
+}
+
+.performance-fill.excellent {
+    background-color: #28a745; /* Green */
+}
+
+.performance-fill.good {
+    background-color: #ffc107; /* Yellow */
+}
+
+.performance-fill.fair {
+    background-color: #fd7e14; /* Orange */
+}
+
+.performance-fill.poor {
+    background-color: #dc3545; /* Red */
+}
+
+.performance-fill.critical {
+    background-color: #721c24; /* Dark Red */
+}
+
+.performance-text {
+    font-weight: 600;
+    color: #495057;
+    min-width: 80px;
+    text-align: center;
+}
+
+/* Special styling for critical values */
+.time-dilation {
+    font-weight: 600;
+}
+
+.fps {
+    font-weight: 600;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .region-info-panel {
+        width: 95vw;
+        margin: 20px;
+    }
+    
+    .region-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    
+    .region-content {
+        padding: 15px;
+    }
+    
+    .performance-indicator {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .performance-text {
+        min-width: auto;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .region-info-panel {
+        background: #2b2b2b;
+        border-color: #444;
+        color: #e9ecef;
+    }
+    
+    .region-header {
+        background: #1e1e1e;
+        border-bottom-color: #444;
+    }
+    
+    .region-header h3 {
+        color: #e9ecef;
+    }
+    
+    .close-btn {
+        color: #adb5bd;
+    }
+    
+    .close-btn:hover {
+        background-color: #495057;
+        color: #e9ecef;
+    }
+    
+    .region-section h4 {
+        color: #adb5bd;
+        border-bottom-color: #495057;
+    }
+    
+    .info-item label {
+        color: #adb5bd;
+    }
+    
+    .info-item span {
+        color: #e9ecef;
+    }
+    
+    .performance-bar {
+        background-color: #495057;
+    }
+    
+    .performance-text {
+        color: #adb5bd;
+    }
+}
+
+/* Animation for panel appearance */
+.region-info-panel {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: scale(0.9);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Scrollbar styling */
+.region-info-panel::-webkit-scrollbar {
+    width: 8px;
+}
+
+.region-info-panel::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.region-info-panel::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+.region-info-panel::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
