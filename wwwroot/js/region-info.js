@@ -219,7 +219,7 @@ class RegionInfoPanel {
                 await window.radegastConnection.invoke('GetRegionStats', this.currentAccountId);
             } else {
                 // Fallback to REST API
-                const response = await fetch(`/api/region/${this.currentAccountId}/stats`);
+                const response = await window.authManager.makeAuthenticatedRequest(`/api/region/${this.currentAccountId}/stats`);
                 if (response.ok) {
                     const stats = await response.json();
                     this.updateDisplay(stats);

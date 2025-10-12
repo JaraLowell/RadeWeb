@@ -74,7 +74,7 @@ class RadegastWebClient {
 
     async loadAccounts() {
         try {
-            const response = await fetch('/api/accounts');
+            const response = await window.authManager.makeAuthenticatedRequest('/api/accounts');
             if (response.ok) {
                 this.accounts = await response.json();
                 this.updateAccountsList();

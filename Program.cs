@@ -1,6 +1,8 @@
 using RadegastWeb.Hubs;
 using RadegastWeb.Services;
 using RadegastWeb.Data;
+using RadegastWeb.Models;
+using RadegastWeb.Middleware;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -51,6 +53,11 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new() { Title = "RadegastWeb API", Version = "v1" });
 });
+
+// Configure authentication
+builder.Services.Configure<AuthenticationConfig>(
+    builder.Configuration.GetSection("Authentication"));
+builder.Services.AddSingleton<IAuthenticationService, AuthenticationService>();
 
 // Add SignalR
 builder.Services.AddSignalR(options =>
@@ -123,6 +130,9 @@ app.UseHttpsRedirection();
 
 // Enable CORS
 app.UseCors("AllowExternalAccess");
+
+// Add custom authentication middleware
+app.UseCustomAuthentication();
 
 // Serve static files
 app.UseStaticFiles();

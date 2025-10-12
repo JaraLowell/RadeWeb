@@ -9,18 +9,31 @@ namespace RadegastWeb.Hubs
         private readonly IAccountService _accountService;
         private readonly IChatHistoryService _chatHistoryService;
         private readonly IPresenceService _presenceService;
+        private readonly IAuthenticationService _authService;
         private readonly ILogger<RadegastHub> _logger;
 
-        public RadegastHub(IAccountService accountService, IChatHistoryService chatHistoryService, IPresenceService presenceService, ILogger<RadegastHub> logger)
+        public RadegastHub(IAccountService accountService, IChatHistoryService chatHistoryService, IPresenceService presenceService, IAuthenticationService authService, ILogger<RadegastHub> logger)
         {
             _accountService = accountService;
             _chatHistoryService = chatHistoryService;
             _presenceService = presenceService;
+            _authService = authService;
             _logger = logger;
+        }
+
+        private bool IsAuthenticated()
+        {
+            return _authService.ValidateHttpContext(Context.GetHttpContext()!);
         }
 
         public async Task JoinAccountGroup(string accountId)
         {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
             await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
             _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}", 
                 Context.ConnectionId, accountId);
@@ -28,6 +41,12 @@ namespace RadegastWeb.Hubs
 
         public async Task LeaveAccountGroup(string accountId)
         {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
             await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"account_{accountId}");
             _logger.LogInformation("Client {ConnectionId} left account group {AccountId}", 
                 Context.ConnectionId, accountId);
@@ -35,6 +54,12 @@ namespace RadegastWeb.Hubs
 
         public async Task SendChat(SendChatRequest request)
         {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
             try
             {
                 var success = await _accountService.SendChatAsync(
@@ -284,6 +309,13 @@ namespace RadegastWeb.Hubs
 
         public override async Task OnConnectedAsync()
         {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated connection attempt from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
             _logger.LogInformation("Client connected: {ConnectionId}", Context.ConnectionId);
             await base.OnConnectedAsync();
         }

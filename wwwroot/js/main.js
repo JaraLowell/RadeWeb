@@ -40,6 +40,20 @@ class RadegastWebClient {
                 return;
             }
 
+            // Wait for authentication to be confirmed before connecting
+            if (!window.authManager.isAuthenticated) {
+                await new Promise(resolve => {
+                    const checkAuth = () => {
+                        if (window.authManager.isAuthenticated) {
+                            resolve();
+                        } else {
+                            setTimeout(checkAuth, 100);
+                        }
+                    };
+                    checkAuth();
+                });
+            }
+
             this.connection = new signalR.HubConnectionBuilder()
                 .withUrl("/radegasthub")
                 .withAutomaticReconnect()
@@ -535,7 +549,7 @@ class RadegastWebClient {
     async loadAccounts() {
         try {
             // Add cache-busting parameter to ensure fresh data
-            const response = await fetch(`/api/accounts?_t=${Date.now()}`);
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts?_t=${Date.now()}`);
             if (response.ok) {
                 this.accounts = await response.json();
                 console.log('Loaded accounts:', this.accounts.map(a => ({ 
@@ -819,7 +833,7 @@ class RadegastWebClient {
 
         try {
             this.showLoading(true);
-            const response = await fetch('/api/accounts', {
+            const response = await window.authManager.makeAuthenticatedRequest('/api/accounts', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -852,7 +866,7 @@ class RadegastWebClient {
 
         try {
             this.showLoading(true);
-            const response = await fetch(`/api/accounts/${accountId}`, {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${accountId}`, {
                 method: 'DELETE'
             });
 
@@ -901,7 +915,7 @@ class RadegastWebClient {
                 }
             }
             
-            const response = await fetch(`/api/accounts/${targetAccountId}/login`, {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${targetAccountId}/login`, {
                 method: 'POST'
             });
 
@@ -951,7 +965,7 @@ class RadegastWebClient {
 
         try {
             this.showLoading(true);
-            const response = await fetch(`/api/accounts/${targetAccountId}/logout`, {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${targetAccountId}/logout`, {
                 method: 'POST'
             });
 
