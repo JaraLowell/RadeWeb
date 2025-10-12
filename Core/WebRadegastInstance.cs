@@ -105,6 +105,7 @@ namespace RadegastWeb.Core
             _client.Objects.AvatarUpdate += Objects_AvatarUpdate;
             _client.Objects.KillObject += Objects_KillObject;
             _client.Objects.AvatarSitChanged += Objects_AvatarSitChanged;
+            _client.Grid.CoarseLocationUpdate += Grid_CoarseLocationUpdate;
             _client.Groups.CurrentGroups += Groups_CurrentGroups;
             _client.Self.GroupChatJoined += Self_GroupChatJoined;
             
@@ -132,6 +133,7 @@ namespace RadegastWeb.Core
             _client.Objects.AvatarUpdate -= Objects_AvatarUpdate;
             _client.Objects.KillObject -= Objects_KillObject;
             _client.Objects.AvatarSitChanged -= Objects_AvatarSitChanged;
+            _client.Grid.CoarseLocationUpdate -= Grid_CoarseLocationUpdate;
             _client.Groups.CurrentGroups -= Groups_CurrentGroups;
             _client.Self.GroupChatJoined -= Self_GroupChatJoined;
             _client.Avatars.UUIDNameReply -= Avatars_UUIDNameReply;
@@ -253,7 +255,7 @@ namespace RadegastWeb.Core
             }
         }
 
-        public void SendIM(string targetId, string message)
+        public async void SendIM(string targetId, string message)
         {
             if (!_client.Network.Connected)
             {
@@ -271,10 +273,13 @@ namespace RadegastWeb.Core
                     var sessionId = $"im-{targetId}";
                     if (!_chatSessions.ContainsKey(sessionId))
                     {
+                        // Get display name for the target
+                        var targetDisplayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), targetId);
+                        
                         var session = new ChatSessionDto
                         {
                             SessionId = sessionId,
-                            SessionName = "Loading...", // Will be updated when we get avatar name
+                            SessionName = targetDisplayName, // Use resolved display name
                             ChatType = "IM",
                             TargetId = targetId,
                             LastActivity = DateTime.UtcNow,
@@ -646,10 +651,14 @@ namespace RadegastWeb.Core
         {
             if (_client.Network.CurrentSim != null)
             {
+                // Use the total avatar count from the sim, which includes all avatars
+                // regardless of draw distance, similar to how Radegast's radar works
+                var totalAvatarCount = _client.Network.CurrentSim.AvatarPositions.Count;
+                
                 var regionInfo = new RegionInfoDto
                 {
                     Name = _client.Network.CurrentSim.Name,
-                    AvatarCount = _nearbyAvatars.Count + 1, // +1 for self
+                    AvatarCount = totalAvatarCount, // This includes self and all other avatars
                     AccountId = Guid.Parse(_accountId),
                     RegionX = _client.Network.CurrentSim.Handle >> 32,
                     RegionY = _client.Network.CurrentSim.Handle & 0xFFFFFFFF
@@ -764,6 +773,17 @@ namespace RadegastWeb.Core
             return prim?.ID;
         }
 
+        private void Grid_CoarseLocationUpdate(object? sender, CoarseLocationUpdateEventArgs e)
+        {
+            // This gives us a more complete list of all avatars in the sim, 
+            // not just those within draw distance that trigger AvatarUpdate
+            if (e.Simulator == _client.Network.CurrentSim)
+            {
+                // Update the region info with the total avatar count from coarse location data
+                UpdateRegionInfo();
+            }
+        }
+
         private async void Self_ChatFromSimulator(object? sender, ChatEventArgs e)
         {
             // Filter out typing indicators and empty messages
@@ -854,7 +874,7 @@ namespace RadegastWeb.Core
                     // This could be either group chat or conference IM
                     if (_groups.ContainsKey(e.IM.IMSessionID))
                     {
-                        // Group chat
+                        // Known group chat
                         sessionId = $"group-{e.IM.IMSessionID}";
                         sessionName = _groups[e.IM.IMSessionID].Name;
                         chatType = "Group";
@@ -862,15 +882,36 @@ namespace RadegastWeb.Core
                     }
                     else
                     {
-                        // Conference IM or unknown session
-                        sessionId = $"conference-{e.IM.IMSessionID}";
-                        sessionName = System.Text.Encoding.UTF8.GetString(e.IM.BinaryBucket).Trim('\0');
-                        if (string.IsNullOrEmpty(sessionName))
+                        // Check if this might be a group message from an unknown/unloaded group
+                        // The BinaryBucket often contains the group name for group messages
+                        var binaryBucketContent = System.Text.Encoding.UTF8.GetString(e.IM.BinaryBucket).Trim('\0');
+                        
+                        // If the binary bucket contains what looks like a group name (not empty and not agent info),
+                        // treat this as a group message and request group info
+                        if (!string.IsNullOrWhiteSpace(binaryBucketContent) && 
+                            binaryBucketContent.Length > 36 && // Longer than a UUID
+                            !UUID.TryParse(binaryBucketContent, out _)) // Not just a UUID
                         {
-                            sessionName = "Conference";
+                            // This is likely a group message from a group we're not aware of
+                            sessionId = $"group-{e.IM.IMSessionID}";
+                            sessionName = binaryBucketContent;
+                            chatType = "Group";
+                            targetId = e.IM.IMSessionID.ToString();
+                            
+                            // Request current groups to update our group list
+                            _client.Groups.RequestCurrentGroups();
+                            
+                            _logger.LogInformation("Received group message from unknown group {GroupName} ({GroupId}), requested group list update", 
+                                binaryBucketContent, e.IM.IMSessionID);
                         }
-                        chatType = "Conference";
-                        targetId = e.IM.IMSessionID.ToString();
+                        else
+                        {
+                            // Conference IM or other session type
+                            sessionId = $"conference-{e.IM.IMSessionID}";
+                            sessionName = !string.IsNullOrWhiteSpace(binaryBucketContent) ? binaryBucketContent : "Conference";
+                            chatType = "Conference";
+                            targetId = e.IM.IMSessionID.ToString();
+                        }
                     }
                     break;
 
@@ -1000,6 +1041,35 @@ namespace RadegastWeb.Core
             // Don't automatically join all group chats - join them on-demand when needed
             // This prevents "too many chat sessions" errors and matches Radegast behavior
             _logger.LogInformation("Loaded {GroupCount} groups. Group chats will be joined on-demand.", _groups.Count);
+            
+            // Update any existing conference sessions that might actually be group sessions
+            foreach (var session in _chatSessions.Values.Where(s => s.ChatType == "Conference"))
+            {
+                if (UUID.TryParse(session.TargetId, out UUID groupId) && _groups.ContainsKey(groupId))
+                {
+                    // Convert conference session to group session
+                    var updatedSession = new ChatSessionDto
+                    {
+                        SessionId = $"group-{groupId}",
+                        SessionName = _groups[groupId].Name,
+                        ChatType = "Group",
+                        TargetId = session.TargetId,
+                        LastActivity = session.LastActivity,
+                        AccountId = session.AccountId,
+                        IsActive = session.IsActive,
+                        UnreadCount = session.UnreadCount
+                    };
+                    
+                    // Remove old conference session and add new group session
+                    _chatSessions.TryRemove(session.SessionId, out _);
+                    _chatSessions.TryAdd(updatedSession.SessionId, updatedSession);
+                    
+                    ChatSessionUpdated?.Invoke(this, updatedSession);
+                    
+                    _logger.LogInformation("Converted conference session {OldSessionId} to group session {NewSessionId} for group {GroupName}", 
+                        session.SessionId, updatedSession.SessionId, _groups[groupId].Name);
+                }
+            }
         }
 
         private void Self_GroupChatJoined(object? sender, GroupChatJoinedEventArgs e)
