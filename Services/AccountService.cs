@@ -30,6 +30,7 @@ namespace RadegastWeb.Services
         Task AcknowledgeNoticeAsync(Guid accountId, string noticeId);
         Task<IEnumerable<NoticeDto>> GetRecentNoticesAsync(Guid accountId, int count = 20);
         Task<RegionStatsDto?> GetRegionStatsAsync(Guid accountId);
+        Task ResetAllAccountsToOfflineAsync();
     }
 
     public class AccountService : IAccountService, IDisposable
@@ -85,6 +86,63 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error loading accounts from database");
+            }
+        }
+
+        public async Task ResetAllAccountsToOfflineAsync()
+        {
+            try
+            {
+                using var context = CreateDbContext();
+                
+                // Update all accounts in database to offline status
+                var accounts = await context.Accounts.ToListAsync();
+                var updateCount = 0;
+                
+                foreach (var account in accounts)
+                {
+                    if (account.IsConnected || account.Status != "Offline")
+                    {
+                        account.IsConnected = false;
+                        account.Status = "Offline";
+                        updateCount++;
+                    }
+                }
+                
+                if (updateCount > 0)
+                {
+                    await context.SaveChangesAsync();
+                    _logger.LogInformation("Reset {Count} accounts to offline status", updateCount);
+                }
+                else
+                {
+                    _logger.LogInformation("All accounts were already offline");
+                }
+                
+                // Also update in-memory accounts
+                foreach (var kvp in _accounts)
+                {
+                    kvp.Value.IsConnected = false;
+                    kvp.Value.Status = "Offline";
+                }
+                
+                // Clear any lingering instances (shouldn't be any at startup, but just in case)
+                foreach (var instance in _instances.Values)
+                {
+                    try
+                    {
+                        instance.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Error disposing instance during reset");
+                    }
+                }
+                _instances.Clear();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error resetting accounts to offline status");
             }
         }
 

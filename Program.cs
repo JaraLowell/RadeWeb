@@ -95,8 +95,11 @@ using (var scope = app.Services.CreateScope())
     var context = scope.ServiceProvider.GetRequiredService<RadegastDbContext>();
     context.Database.EnsureCreated();
     
-    // Load existing accounts
+    // Reset all accounts to offline status on startup (safeguard for crashes)
     var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+    await accountService.ResetAllAccountsToOfflineAsync();
+    
+    // Load existing accounts
     await accountService.LoadAccountsAsync();
     
     // Ensure test account exists for development
