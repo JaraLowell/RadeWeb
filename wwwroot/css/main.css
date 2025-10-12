@@ -28,6 +28,16 @@
     --scrollbar-thumb-hover: #a8a8a8;
 }
 
+.btn-info, .btn-primary {
+    --bs-btn-bg: #4a73a9;
+    --bs-btn-border-color: #000000;
+}
+
+.btn-outline-info {
+    --bs-btn-border-color: #4a73a9;
+    --bs-btn-color: #4a73a9;
+}
+
 [data-theme="dark"] {
     --bg-color: #1a1a1a;
     --bf-select: #46505a;
@@ -803,7 +813,7 @@
 
 /* Mini Map Styles */
 .minimap-container {
-    margin-top: 1rem;
+    margin-top: -0.5rem;
 }
 
 .minimap-header {

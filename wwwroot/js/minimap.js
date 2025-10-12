@@ -23,14 +23,8 @@ class MiniMap {
 
         const mapHtml = `
             <div class="minimap-container" style="display: none;">
-                <div class="minimap-header">
-                    <h6><i class="fas fa-map me-2"></i>Region Map</h6>
-                    <div class="minimap-info">
-                        <small class="region-name-display text-muted">-</small>
-                    </div>
-                </div>
                 <div class="minimap-content">
-                    <div class="minimap-canvas-container" style="position: relative; width: 256px; height: 256px; margin: 0 auto; border: 1px solid #dee2e6; background: #f8f9fa;">
+                    <div class="minimap-canvas-container" style="position: relative; width: 256px; height: 256px; margin: 0 auto; border: 1px solid #4a73a9; background: #4a73a9;">
                         <canvas width="256" height="256" style="width: 100%; height: 100%; display: block;"></canvas>
                         <div class="minimap-overlay">
                             <div class="avatar-dot" style="position: absolute; width: 6px; height: 6px; background: #ff0000; border: 1px solid #fff; border-radius: 50%; transform: translate(-50%, -50%);"></div>
@@ -47,6 +41,7 @@ class MiniMap {
                     </div>
                     <div class="minimap-coordinates mt-2">
                         <small class="text-muted">
+                            <span class="region-name-display text-muted">-</span><br>
                             Position: <span class="avatar-coords">-</span> | 
                             Region: <span class="region-coords">-</span>
                         </small>
