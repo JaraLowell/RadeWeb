@@ -800,3 +800,111 @@
 [data-theme="dark"] .slurl-link.object-link {
     color: #f56565;
 }
+
+/* Mini Map Styles */
+.minimap-container {
+    margin-top: 1rem;
+}
+
+.minimap-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.minimap-header h6 {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--bs-body-color);
+}
+
+.minimap-info {
+    font-size: 0.75rem;
+}
+
+.minimap-content {
+    text-align: center;
+}
+
+.minimap-canvas-container {
+    position: relative;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    transition: box-shadow 0.2s ease;
+}
+
+.minimap-canvas-container:hover {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.minimap-canvas-container canvas {
+    cursor: crosshair;
+}
+
+.minimap-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.avatar-dot {
+    z-index: 10;
+    box-shadow: 0 0 4px rgba(0,0,0,0.5);
+    transition: all 0.3s ease;
+}
+
+.avatar-dot:hover {
+    transform: translate(-50%, -50%) scale(1.2);
+}
+
+.minimap-loading {
+    background: rgba(248, 249, 250, 0.9);
+    border-radius: 4px;
+    padding: 1rem;
+}
+
+.minimap-placeholder {
+    color: #6c757d;
+    background: rgba(248, 249, 250, 0.5);
+    border-radius: 4px;
+    padding: 2rem 1rem;
+}
+
+.minimap-coordinates {
+    font-size: 0.75rem;
+    line-height: 1.2;
+}
+
+/* Dark mode adjustments for minimap */
+[data-theme="dark"] .minimap-container {
+    border-color: #495057;
+}
+
+[data-theme="dark"] .minimap-canvas-container {
+    background: #343a40;
+    border-color: #495057;
+}
+
+[data-theme="dark"] .minimap-loading {
+    background: rgba(52, 58, 64, 0.9);
+    color: #f8f9fa;
+}
+
+[data-theme="dark"] .minimap-placeholder {
+    background: rgba(52, 58, 64, 0.5);
+    color: #adb5bd;
+}
+
+[data-theme="dark"] .minimap-header h6 {
+    color: #f8f9fa;
+}
+
+[data-theme="dark"] .avatar-dot {
+    border-color: #f8f9fa;
+    box-shadow: 0 0 4px rgba(255,255,255,0.3);
+}

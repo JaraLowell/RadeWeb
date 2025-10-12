@@ -11,11 +11,13 @@ class RadegastWebClient {
         this.currentChatSession = 'local';
         this.avatarRefreshInterval = null;
         this.closedGroupSessions = new Set(); // Track closed group sessions during this account session
+        this.groups = []; // Store groups for the current account
         
         this.initializeSignalR();
         this.bindEvents();
         this.setupTabs();
         this.initializeDarkMode();
+        this.initializeGroupsToggleState();
         
         // Load accounts after initialization and set up periodic refresh
         this.loadAccounts().catch(error => {
@@ -464,6 +466,92 @@ class RadegastWebClient {
         `).join('');
     }
 
+    async loadGroups() {
+        if (!this.currentAccountId) return;
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/groups/${this.currentAccountId}`);
+            if (response.ok) {
+                this.groups = await response.json();
+                console.log('Loaded groups for account:', this.currentAccountId, this.groups.length);
+                this.renderGroupsList();
+            } else {
+                console.error("Failed to load groups, status:", response.status);
+            }
+        } catch (error) {
+            console.error("Error loading groups:", error);
+        }
+    }
+
+    renderGroupsList() {
+        const groupsList = document.getElementById('groupsList');
+        const groupCount = document.getElementById('groupCount');
+        
+        if (groupCount) {
+            groupCount.textContent = this.groups.length;
+        }
+        
+        if (this.groups.length === 0) {
+            groupsList.innerHTML = '<div class="text-muted p-2 small">No groups loaded</div>';
+            return;
+        }
+
+        // Sort groups alphabetically by name
+        const sortedGroups = [...this.groups].sort((a, b) => a.name.localeCompare(b.name));
+
+        groupsList.innerHTML = sortedGroups.map(group => `
+            <div class="group-item d-flex justify-content-between align-items-center p-2 border-bottom" data-group-id="${group.id}">
+                <div class="group-info flex-grow-1">
+                    <div class="group-name small fw-bold text-truncate">${this.escapeHtml(group.name)}</div>
+                    <div class="group-details text-muted" style="font-size: 0.75rem;">
+                        ${group.memberTitle || 'Member'}
+                    </div>
+                </div>
+                <div class="group-actions">
+                    <button class="btn btn-sm btn-outline-primary" onclick="radegastClient.openGroupChat('${group.id}', '${this.escapeHtml(group.name)}')" title="Open Group Chat">
+                        <i class="fas fa-comments"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async openGroupChat(groupId, groupName) {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            // Check if we already have a group chat session
+            const existingSessionId = `group-${groupId}`;
+            const existingSession = this.chatSessions[existingSessionId];
+            
+            if (existingSession) {
+                this.setActiveTab(`chat-${existingSessionId}`);
+                return;
+            }
+
+            // Create a new group session
+            const session = {
+                sessionId: existingSessionId,
+                sessionName: groupName,
+                chatType: 'Group',
+                targetId: groupId,
+                unreadCount: 0,
+                lastActivity: new Date(),
+                accountId: this.currentAccountId,
+                isActive: true
+            };
+
+            this.createGroupTab(session);
+            this.showAlert(`Opened group chat: ${groupName}`, "success");
+        } catch (error) {
+            console.error("Error opening group chat:", error);
+            this.showAlert("Failed to open group chat", "danger");
+        }
+    }
+
     async refreshNearbyAvatars() {
         if (!this.currentAccountId) return;
 
@@ -581,6 +669,11 @@ class RadegastWebClient {
             if (e.key === 'Enter') {
                 this.sitOnObject();
             }
+        });
+
+        // Groups toggle button
+        document.getElementById('groupsToggleBtn').addEventListener('click', () => {
+            this.toggleGroupsList();
         });
     }
 
@@ -787,6 +880,10 @@ class RadegastWebClient {
         this.nearbyAvatars = [];
         this.renderPeopleList();
 
+        // Clear groups for the previous account
+        this.groups = [];
+        this.renderGroupsList();
+
         // Update UI
         this.renderAccountsList();
         document.getElementById('welcomeMessage').classList.add('d-none');
@@ -814,10 +911,20 @@ class RadegastWebClient {
             regionInfoBtn.classList.remove('d-none');
             // Start avatar refresh for connected accounts
             this.startAvatarRefresh();
+            
+            // Show minimap for connected accounts
+            if (window.miniMap) {
+                window.miniMap.show(accountId);
+            }
         } else {
             loginBtn.classList.remove('d-none');
             logoutBtn.classList.add('d-none');
             regionInfoBtn.classList.add('d-none');
+            
+            // Hide minimap for disconnected accounts
+            if (window.miniMap) {
+                window.miniMap.hide();
+            }
         }
 
         // Clear chat messages in all remaining tabs (mainly local chat)
@@ -839,6 +946,8 @@ class RadegastWebClient {
                 // Refresh nearby avatars for the new account (only if connected)
                 if (account.isConnected) {
                     this.refreshNearbyAvatars();
+                    // Load groups for connected accounts
+                    this.loadGroups();
                 }
             } catch (error) {
                 console.error("Error joining account group:", error);
@@ -1315,10 +1424,17 @@ class RadegastWebClient {
         // Update region info in the UI if needed
         const account = this.accounts.find(a => a.accountId === regionInfo.accountId);
         if (account) {
+            const previousRegion = account.currentRegion;
             account.currentRegion = regionInfo.name;
+            
             if (this.currentAccountId === regionInfo.accountId) {
                 document.getElementById('chatAccountStatus').textContent = 
                     `${account.status} • ${regionInfo.name} (${regionInfo.avatarCount} people)`;
+                
+                // Refresh minimap if region changed (teleport/login to new region)
+                if (window.miniMap && previousRegion !== regionInfo.name) {
+                    window.miniMap.refresh();
+                }
             }
         }
     }
@@ -1354,8 +1470,16 @@ class RadegastWebClient {
                     // Start avatar refresh when account becomes connected
                     this.startAvatarRefresh();
                     
+                    // Show minimap for connected accounts
+                    if (window.miniMap) {
+                        window.miniMap.show(status.accountId);
+                    }
+                    
                     // Load recent notices for this account
                     this.loadAccountNotices(status.accountId);
+                    
+                    // Load groups when account connects
+                    this.loadGroups();
                 } else {
                     loginBtn.classList.remove('d-none');
                     logoutBtn.classList.add('d-none');
@@ -1363,9 +1487,18 @@ class RadegastWebClient {
                     // Stop avatar refresh when account disconnects
                     this.stopAvatarRefresh();
                     
+                    // Hide minimap for disconnected accounts
+                    if (window.miniMap) {
+                        window.miniMap.hide();
+                    }
+                    
                     // Clear nearby avatars when disconnected
                     this.nearbyAvatars = [];
                     this.renderPeopleList();
+                    
+                    // Clear groups when disconnected
+                    this.groups = [];
+                    this.renderGroupsList();
                     
                     // Clear closed group sessions when account disconnects
                     // This allows groups to reopen on next login
@@ -1784,6 +1917,38 @@ class RadegastWebClient {
                 // For unknown actions or external links, open in new tab
                 window.open(href, '_blank');
                 break;
+        }
+    }
+
+    toggleGroupsList() {
+        const groupsCardBody = document.getElementById('groupsCardBody');
+        const toggleIcon = document.getElementById('groupsToggleIcon');
+        
+        if (groupsCardBody.style.display === 'none') {
+            // Show the groups list
+            groupsCardBody.style.display = 'block';
+            toggleIcon.className = 'fas fa-chevron-up';
+            localStorage.setItem('groupsListCollapsed', 'false');
+        } else {
+            // Hide the groups list
+            groupsCardBody.style.display = 'none';
+            toggleIcon.className = 'fas fa-chevron-down';
+            localStorage.setItem('groupsListCollapsed', 'true');
+        }
+    }
+
+    initializeGroupsToggleState() {
+        // Restore the toggle state from localStorage
+        const isCollapsed = localStorage.getItem('groupsListCollapsed') === 'true';
+        const groupsCardBody = document.getElementById('groupsCardBody');
+        const toggleIcon = document.getElementById('groupsToggleIcon');
+        
+        if (isCollapsed) {
+            groupsCardBody.style.display = 'none';
+            toggleIcon.className = 'fas fa-chevron-down';
+        } else {
+            groupsCardBody.style.display = 'block';
+            toggleIcon.className = 'fas fa-chevron-up';
         }
     }
 }

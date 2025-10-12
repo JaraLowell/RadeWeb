@@ -90,5 +90,127 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, new { error = "Internal server error" });
             }
         }
+
+        /// <summary>
+        /// Download the region map image for an account using Linden Lab's public Map API
+        /// </summary>
+        /// <param name="accountId">The account ID</param>
+        /// <returns>The region map image as JPEG</returns>
+        [HttpGet("{accountId}/map")]
+        public async Task<IActionResult> GetRegionMap(Guid accountId)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null || !instance.IsConnected)
+                {
+                    return BadRequest(new { error = "Account not connected" });
+                }
+
+                var client = instance.Client;
+                var currentSim = client.Network.CurrentSim;
+                
+                if (currentSim == null)
+                {
+                    return BadRequest(new { error = "No current region" });
+                }
+
+                // Calculate region coordinates from the sim handle
+                var regionX = (ulong)(currentSim.Handle >> 32) / 256;
+                var regionY = (ulong)(currentSim.Handle & 0xFFFFFFFF) / 256;
+
+                // Use Linden Lab's public Map API to get the region image
+                // Format: http://map.secondlife.com/map-{z}-{x}-{y}-objects.jpg
+                // z=1 means most zoomed in (one region per tile)
+                var mapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
+                
+                _logger.LogInformation("Fetching region map from URL: {MapUrl} for region {RegionName} at ({RegionX}, {RegionY})", 
+                    mapUrl, currentSim.Name, regionX, regionY);
+
+                // Download the image from Linden Lab's servers
+                using var httpClient = new HttpClient();
+                httpClient.Timeout = TimeSpan.FromSeconds(30);
+                
+                var response = await httpClient.GetAsync(mapUrl);
+                
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("Failed to fetch region map from {MapUrl}. Status: {StatusCode}", 
+                        mapUrl, response.StatusCode);
+                    return NotFound(new { error = "Region map image not available" });
+                }
+
+                var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                
+                if (imageBytes == null || imageBytes.Length == 0)
+                {
+                    return NotFound(new { error = "Failed to download region map image" });
+                }
+
+                // Return the image as JPEG
+                return File(imageBytes, "image/jpeg", $"{currentSim.Name}_map.jpg");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting region map for account {AccountId}", accountId);
+                return StatusCode(500, new { error = "Internal server error" });
+            }
+        }
+
+        /// <summary>
+        /// Get region map information including image URL and metadata
+        /// </summary>
+        /// <param name="accountId">The account ID</param>
+        /// <returns>Region map metadata</returns>
+        [HttpGet("{accountId}/map/info")]
+        public ActionResult<object> GetRegionMapInfo(Guid accountId)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null || !instance.IsConnected)
+                {
+                    return BadRequest(new { error = "Account not connected" });
+                }
+
+                var client = instance.Client;
+                var currentSim = client.Network.CurrentSim;
+                
+                if (currentSim == null)
+                {
+                    return BadRequest(new { error = "No current region" });
+                }
+
+                // Calculate region coordinates from the sim handle
+                var regionX = (ulong)(currentSim.Handle >> 32) / 256;
+                var regionY = (ulong)(currentSim.Handle & 0xFFFFFFFF) / 256;
+
+                // Generate the public map URL using Linden Lab's Map API
+                var publicMapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
+
+                var result = new
+                {
+                    regionName = currentSim.Name,
+                    regionX = regionX,
+                    regionY = regionY,
+                    mapImageUrl = $"/api/region/{accountId}/map",
+                    publicMapUrl = publicMapUrl,
+                    localPosition = new
+                    {
+                        x = client.Self.SimPosition.X,
+                        y = client.Self.SimPosition.Y,
+                        z = client.Self.SimPosition.Z
+                    },
+                    hasMapImage = true // Always true with public API
+                };
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting region map info for account {AccountId}", accountId);
+                return StatusCode(500, new { error = "Internal server error" });
+            }
+        }
     }
 }

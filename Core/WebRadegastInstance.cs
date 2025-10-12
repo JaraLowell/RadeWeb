@@ -13,6 +13,7 @@ namespace RadegastWeb.Core
         private readonly INoticeService _noticeService;
         private readonly ISlUrlParser _urlParser;
         private readonly INameResolutionService _nameResolutionService;
+        private readonly IGroupService _groupService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -41,13 +42,14 @@ namespace RadegastWeb.Core
         public event EventHandler<ChatSessionDto>? ChatSessionUpdated;
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
             _noticeService = noticeService;
             _urlParser = urlParser;
             _nameResolutionService = nameResolutionService;
+            _groupService = groupService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -64,6 +66,29 @@ namespace RadegastWeb.Core
             _client = new GridClient();
             InitializeClient();
             RegisterClientEvents();
+            
+            // Load groups cache when instance is created and populate the local groups dictionary
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _groupService.LoadGroupsCacheAsync(Guid.Parse(_accountId));
+                    
+                    // Load cached groups into our local dictionary for immediate availability
+                    var cachedGroups = await _groupService.GetCachedGroupsAsync(Guid.Parse(_accountId));
+                    foreach (var group in cachedGroups.Values)
+                    {
+                        _groups.TryAdd(group.ID, group);
+                    }
+                    
+                    _logger.LogInformation("Groups cache loaded for account {AccountId}, populated {Count} cached groups", 
+                        _accountId, cachedGroups.Count);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error loading groups cache for account {AccountId}", _accountId);
+                }
+            });
         }
 
         private void InitializeClient()
@@ -214,6 +239,9 @@ namespace RadegastWeb.Core
                 
                 // Clean up notice service resources
                 _noticeService.CleanupAccount(Guid.Parse(_accountId));
+                
+                // Clean up group service resources
+                _groupService.CleanupAccount(Guid.Parse(_accountId));
             }
             catch (Exception ex)
             {
@@ -463,6 +491,54 @@ namespace RadegastWeb.Core
         public IEnumerable<ChatSessionDto> GetChatSessions()
         {
             return _chatSessions.Values.OrderByDescending(s => s.LastActivity);
+        }
+
+        /// <summary>
+        /// Get all groups for this account
+        /// </summary>
+        public async Task<IEnumerable<GroupDto>> GetGroupsAsync()
+        {
+            try
+            {
+                return await _groupService.GetGroupsAsync(Guid.Parse(_accountId));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting groups for account {AccountId}", _accountId);
+                return Enumerable.Empty<GroupDto>();
+            }
+        }
+
+        /// <summary>
+        /// Get a specific group by ID
+        /// </summary>
+        public async Task<GroupDto?> GetGroupAsync(string groupId)
+        {
+            try
+            {
+                return await _groupService.GetGroupAsync(Guid.Parse(_accountId), groupId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting group {GroupId} for account {AccountId}", groupId, _accountId);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Get group name by ID (with caching)
+        /// </summary>
+        public async Task<string> GetGroupNameAsync(string groupId, string fallbackName = "Unknown Group")
+        {
+            try
+            {
+                return await _groupService.GetGroupNameAsync(Guid.Parse(_accountId), groupId, fallbackName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error getting group name for {GroupId} on account {AccountId}", groupId, _accountId);
+                return fallbackName;
+            }
         }
 
         public void TriggerStatusUpdate()
@@ -882,35 +958,53 @@ namespace RadegastWeb.Core
                     }
                     else
                     {
-                        // Check if this might be a group message from an unknown/unloaded group
-                        // The BinaryBucket often contains the group name for group messages
-                        var binaryBucketContent = System.Text.Encoding.UTF8.GetString(e.IM.BinaryBucket).Trim('\0');
+                        // Check if this group exists in the cached groups as a fallback
+                        var groupName = await _groupService.GetGroupNameAsync(Guid.Parse(_accountId), 
+                            e.IM.IMSessionID.ToString(), "Unknown Group");
                         
-                        // If the binary bucket contains what looks like a group name (not empty and not agent info),
-                        // treat this as a group message and request group info
-                        if (!string.IsNullOrWhiteSpace(binaryBucketContent) && 
-                            binaryBucketContent.Length > 36 && // Longer than a UUID
-                            !UUID.TryParse(binaryBucketContent, out _)) // Not just a UUID
+                        if (!string.IsNullOrEmpty(groupName) && groupName != "Unknown Group")
                         {
-                            // This is likely a group message from a group we're not aware of
+                            // Found in cache, this is a group message
                             sessionId = $"group-{e.IM.IMSessionID}";
-                            sessionName = binaryBucketContent;
+                            sessionName = groupName;
                             chatType = "Group";
                             targetId = e.IM.IMSessionID.ToString();
                             
-                            // Request current groups to update our group list
-                            _client.Groups.RequestCurrentGroups();
-                            
-                            _logger.LogInformation("Received group message from unknown group {GroupName} ({GroupId}), requested group list update", 
-                                binaryBucketContent, e.IM.IMSessionID);
+                            _logger.LogInformation("Using cached group name {GroupName} for group {GroupId}", 
+                                groupName, e.IM.IMSessionID);
                         }
                         else
                         {
-                            // Conference IM or other session type
-                            sessionId = $"conference-{e.IM.IMSessionID}";
-                            sessionName = !string.IsNullOrWhiteSpace(binaryBucketContent) ? binaryBucketContent : "Conference";
-                            chatType = "Conference";
-                            targetId = e.IM.IMSessionID.ToString();
+                            // Check if this might be a group message from an unknown/unloaded group
+                            // The BinaryBucket often contains the group name for group messages
+                            var binaryBucketContent = System.Text.Encoding.UTF8.GetString(e.IM.BinaryBucket).Trim('\0');
+                            
+                            // If the binary bucket contains what looks like a group name (not empty and not agent info),
+                            // treat this as a group message and request group info
+                            if (!string.IsNullOrWhiteSpace(binaryBucketContent) && 
+                                binaryBucketContent.Length > 36 && // Longer than a UUID
+                                !UUID.TryParse(binaryBucketContent, out _)) // Not just a UUID
+                            {
+                                // This is likely a group message from a group we're not aware of
+                                sessionId = $"group-{e.IM.IMSessionID}";
+                                sessionName = binaryBucketContent;
+                                chatType = "Group";
+                                targetId = e.IM.IMSessionID.ToString();
+                                
+                                // Request current groups to update our group list
+                                _client.Groups.RequestCurrentGroups();
+                                
+                                _logger.LogInformation("Received group message from unknown group {GroupName} ({GroupId}), requested group list update", 
+                                    binaryBucketContent, e.IM.IMSessionID);
+                            }
+                            else
+                            {
+                                // Conference IM or other session type
+                                sessionId = $"conference-{e.IM.IMSessionID}";
+                                sessionName = !string.IsNullOrWhiteSpace(binaryBucketContent) ? binaryBucketContent : "Conference";
+                                chatType = "Conference";
+                                targetId = e.IM.IMSessionID.ToString();
+                            }
                         }
                     }
                     break;
@@ -1029,8 +1123,10 @@ namespace RadegastWeb.Core
             ChatReceived?.Invoke(this, chatMessage);
         }
 
-        private void Groups_CurrentGroups(object? sender, CurrentGroupsEventArgs e)
+        private async void Groups_CurrentGroups(object? sender, CurrentGroupsEventArgs e)
         {
+            var previousGroupCount = _groups.Count;
+            
             _groups.Clear();
             foreach (var group in e.Groups.Values)
             {
@@ -1038,9 +1134,20 @@ namespace RadegastWeb.Core
                 _logger.LogInformation("Loaded group: {GroupName} ({GroupId})", group.Name, group.ID);
             }
             
+            // Update groups cache
+            try
+            {
+                await _groupService.UpdateGroupsAsync(Guid.Parse(_accountId), e.Groups);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating groups cache for account {AccountId}", _accountId);
+            }
+            
             // Don't automatically join all group chats - join them on-demand when needed
             // This prevents "too many chat sessions" errors and matches Radegast behavior
-            _logger.LogInformation("Loaded {GroupCount} groups. Group chats will be joined on-demand.", _groups.Count);
+            _logger.LogInformation("Updated {GroupCount} groups (previously had {PreviousGroupCount} cached). Group chats will be joined on-demand.", 
+                _groups.Count, previousGroupCount);
             
             // Update any existing conference sessions that might actually be group sessions
             foreach (var session in _chatSessions.Values.Where(s => s.ChatType == "Conference"))
@@ -1325,6 +1432,9 @@ namespace RadegastWeb.Core
                 
                 // Clean up notice service resources
                 _noticeService.CleanupAccount(Guid.Parse(_accountId));
+                
+                // Clean up group service resources
+                _groupService.CleanupAccount(Guid.Parse(_accountId));
                 
                 // Unregister from name resolution service
                 _nameResolutionService.UnregisterInstance(Guid.Parse(_accountId));
