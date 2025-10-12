@@ -6,6 +6,9 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Configure URLs - allow binding to all interfaces
+builder.WebHost.UseUrls("http://0.0.0.0:5269", "https://0.0.0.0:7077");
+
 // Configure Serilog
 builder.Host.UseSerilog((context, configuration) =>
 {
@@ -59,11 +62,12 @@ builder.Services.AddSignalR(options =>
 // Add CORS
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
+    options.AddPolicy("AllowExternalAccess", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.SetIsOriginAllowed(origin => true) // Allow any origin in development
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials(); // Important for SignalR
     });
 });
 
@@ -115,7 +119,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 
 // Enable CORS
-app.UseCors("AllowAll");
+app.UseCors("AllowExternalAccess");
 
 // Serve static files
 app.UseStaticFiles();
