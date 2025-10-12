@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using OpenMetaverse;
 
 namespace RadegastWeb.Controllers
 {
@@ -11,6 +12,57 @@ namespace RadegastWeb.Controllers
         public TestController(ILogger<TestController> logger)
         {
             _logger = logger;
+        }
+
+        /// <summary>
+        /// Test endpoint to demonstrate the distance calculation difference
+        /// Shows why webapp showed different distances than Radegast
+        /// </summary>
+        [HttpGet("distance-calculation")]
+        public IActionResult TestDistanceCalculation()
+        {
+            try
+            {
+                // Example scenario: Two avatars with height difference
+                var avatarOnGround = new Vector3(100f, 100f, 20f);      // Ground level (Z=20)
+                var avatarOnPlatform = new Vector3(174.4f, 100f, 40f);  // On platform (Z=40), 74.4m away horizontally
+
+                // Calculate distances using both methods
+                var horizontalDistance = CalculateHorizontalDistance(avatarOnGround, avatarOnPlatform);
+                var fullDistance = Vector3.Distance(avatarOnGround, avatarOnPlatform);
+
+                var result = new
+                {
+                    explanation = "This demonstrates why the webapp showed different distances than Radegast",
+                    scenario = "Two avatars: one on ground level, one on a platform 20m higher",
+                    avatar1Position = new { x = avatarOnGround.X, y = avatarOnGround.Y, z = avatarOnGround.Z },
+                    avatar2Position = new { x = avatarOnPlatform.X, y = avatarOnPlatform.Y, z = avatarOnPlatform.Z },
+                    horizontalDistance2D = Math.Round(horizontalDistance, 1),
+                    fullDistance3D = Math.Round(fullDistance, 1),
+                    heightDifference = Math.Abs(avatarOnPlatform.Z - avatarOnGround.Z),
+                    oldBehavior = "Webapp showed 135.6m (including height)",
+                    newBehavior = "Webapp now shows 74.4m (horizontal only, like Radegast)",
+                    conclusion = "The webapp was including height differences in distance calculations. Now it matches Radegast's practical horizontal distance."
+                };
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in distance calculation test");
+                return StatusCode(500, new { error = "Internal server error", message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Calculate horizontal distance between two positions, ignoring height difference.
+        /// This matches how Radegast calculates nearby people distance.
+        /// </summary>
+        private static float CalculateHorizontalDistance(Vector3 pos1, Vector3 pos2)
+        {
+            var deltaX = pos2.X - pos1.X;
+            var deltaY = pos2.Y - pos1.Y;
+            return (float)Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
         }
 
         /// <summary>

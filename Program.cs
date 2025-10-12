@@ -82,6 +82,7 @@ builder.Services.AddCors(options =>
 builder.Services.AddMemoryCache();
 
 // Register custom services - Use singleton for account management
+builder.Services.AddSingleton<IGlobalDisplayNameCache, GlobalDisplayNameCache>();
 builder.Services.AddSingleton<IAccountService, AccountService>();
 builder.Services.AddSingleton<IDisplayNameService, DisplayNameService>();
 builder.Services.AddSingleton<INoticeService, NoticeService>();

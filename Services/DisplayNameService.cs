@@ -8,14 +8,6 @@ using System.Threading.Channels;
 
 namespace RadegastWeb.Services
 {
-    public class DisplayNameChangedEventArgs : EventArgs
-    {
-        public Guid AccountId { get; init; }
-        public string AvatarId { get; init; } = string.Empty;
-        public string OldDisplayName { get; init; } = string.Empty;
-        public string NewDisplayName { get; init; } = string.Empty;
-        public DisplayName DisplayName { get; init; } = null!;
-    }
 
     public interface IDisplayNameService
     {
@@ -38,6 +30,7 @@ namespace RadegastWeb.Services
     {
         private readonly ILogger<DisplayNameService> _logger;
         private readonly IServiceProvider _serviceProvider;
+        private readonly IGlobalDisplayNameCache _globalCache;
         private readonly string _connectionString;
         
         // Event for display name changes
@@ -65,10 +58,15 @@ namespace RadegastWeb.Services
         private readonly int _maxBatchSize = 100; // Radegast uses 100
         private readonly TimeSpan _batchWindow = TimeSpan.FromMilliseconds(100); // Radegast uses 100ms
 
-        public DisplayNameService(ILogger<DisplayNameService> logger, IServiceProvider serviceProvider, IConfiguration configuration)
+        public DisplayNameService(
+            ILogger<DisplayNameService> logger, 
+            IServiceProvider serviceProvider, 
+            IConfiguration configuration,
+            IGlobalDisplayNameCache globalCache)
         {
             _logger = logger;
             _serviceProvider = serviceProvider;
+            _globalCache = globalCache;
             
             var contentRoot = configuration.GetValue<string>("ContentRoot") ?? Directory.GetCurrentDirectory();
             var dataDirectory = Path.Combine(contentRoot, "data");
@@ -145,43 +143,84 @@ namespace RadegastWeb.Services
             // Update memory cache
             cache.AddOrUpdate(displayName.AvatarId, displayName, (key, existing) => displayName);
 
-            // Update database cache
-            try
+            // Update database cache with retry logic for race conditions
+            var maxRetries = 3;
+            for (int attempt = 0; attempt < maxRetries; attempt++)
             {
-                using var context = CreateDbContext();
-                var existing = await context.DisplayNames
-                    .FirstOrDefaultAsync(dn => dn.AccountId == accountId && dn.AvatarId == displayName.AvatarId);
-
-                if (existing != null)
+                try
                 {
-                    // Update existing
-                    existing.DisplayNameValue = displayName.DisplayNameValue;
-                    existing.UserName = displayName.UserName;
-                    existing.LegacyFirstName = displayName.LegacyFirstName;
-                    existing.LegacyLastName = displayName.LegacyLastName;
-                    existing.IsDefaultDisplayName = displayName.IsDefaultDisplayName;
-                    existing.NextUpdate = displayName.NextUpdate;
-                    existing.LastUpdated = displayName.LastUpdated;
-                    existing.CachedAt = DateTime.UtcNow;
-                }
-                else
-                {
-                    // Create new
-                    displayName.AccountId = accountId;
-                    displayName.CachedAt = DateTime.UtcNow;
-                    context.DisplayNames.Add(displayName);
-                }
+                    using var context = CreateDbContext();
+                    var existing = await context.DisplayNames
+                        .FirstOrDefaultAsync(dn => dn.AccountId == accountId && dn.AvatarId == displayName.AvatarId);
 
-                await context.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error saving display name cache for {AvatarId} on account {AccountId}", displayName.AvatarId, accountId);
+                    if (existing != null)
+                    {
+                        // Update existing
+                        existing.DisplayNameValue = displayName.DisplayNameValue;
+                        existing.UserName = displayName.UserName;
+                        existing.LegacyFirstName = displayName.LegacyFirstName;
+                        existing.LegacyLastName = displayName.LegacyLastName;
+                        existing.IsDefaultDisplayName = displayName.IsDefaultDisplayName;
+                        existing.NextUpdate = displayName.NextUpdate;
+                        existing.LastUpdated = displayName.LastUpdated;
+                        existing.CachedAt = DateTime.UtcNow;
+                    }
+                    else
+                    {
+                        // Create new
+                        displayName.AccountId = accountId;
+                        displayName.CachedAt = DateTime.UtcNow;
+                        context.DisplayNames.Add(displayName);
+                    }
+
+                    await context.SaveChangesAsync();
+                    return; // Success, exit the retry loop
+                }
+                catch (DbUpdateException dbEx) when (dbEx.InnerException?.Message?.Contains("UNIQUE constraint failed") == true)
+                {
+                    // Handle race condition - another thread inserted the same record
+                    if (attempt < maxRetries - 1)
+                    {
+                        _logger.LogDebug("Unique constraint violation for {AvatarId} on account {AccountId}, retrying... (attempt {Attempt})", 
+                            displayName.AvatarId, accountId, attempt + 1);
+                        
+                        // Small delay before retry to avoid immediate collision
+                        await Task.Delay(10 * (attempt + 1)); // 10ms, 20ms, 30ms delays
+                        continue;
+                    }
+                    else
+                    {
+                        // Final attempt failed, log error but don't throw - memory cache is updated
+                        _logger.LogWarning(dbEx, "Failed to save display name to database after {MaxRetries} attempts for {AvatarId} on account {AccountId}. Memory cache updated.", 
+                            maxRetries, displayName.AvatarId, accountId);
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error saving display name cache for {AvatarId} on account {AccountId}", displayName.AvatarId, accountId);
+                    return; // Exit on other errors
+                }
             }
         }
 
         public async Task<string> GetDisplayNameAsync(Guid accountId, string avatarId, NameDisplayMode mode = NameDisplayMode.Smart, string? fallbackName = null)
         {
+            // First try the global cache
+            try
+            {
+                var globalResult = await _globalCache.GetDisplayNameAsync(avatarId, mode, fallbackName);
+                if (globalResult != "Loading..." && !string.IsNullOrEmpty(globalResult))
+                {
+                    return globalResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error accessing global cache for {AvatarId}, falling back to account-specific cache", avatarId);
+            }
+
+            // Fallback to original account-specific logic
             if (string.IsNullOrEmpty(avatarId) || avatarId == UUID.Zero.ToString())
             {
                 return fallbackName ?? "Unknown User";
@@ -241,6 +280,21 @@ namespace RadegastWeb.Services
 
         public async Task<string> GetLegacyNameAsync(Guid accountId, string avatarId, string? fallbackName = null)
         {
+            // First try the global cache
+            try
+            {
+                var globalResult = await _globalCache.GetLegacyNameAsync(avatarId, fallbackName);
+                if (globalResult != "Loading..." && !string.IsNullOrEmpty(globalResult))
+                {
+                    return globalResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error accessing global cache for legacy name {AvatarId}", avatarId);
+            }
+
+            // Fallback to original account-specific logic
             if (string.IsNullOrEmpty(avatarId) || avatarId == UUID.Zero.ToString())
             {
                 return fallbackName ?? "Unknown User";
@@ -265,6 +319,21 @@ namespace RadegastWeb.Services
 
         public async Task<string> GetUserNameAsync(Guid accountId, string avatarId, string? fallbackName = null)
         {
+            // First try the global cache
+            try
+            {
+                var globalResult = await _globalCache.GetUserNameAsync(avatarId, fallbackName);
+                if (globalResult != "Loading..." && !string.IsNullOrEmpty(globalResult))
+                {
+                    return globalResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error accessing global cache for username {AvatarId}", avatarId);
+            }
+
+            // Fallback to original account-specific logic
             if (string.IsNullOrEmpty(avatarId) || avatarId == UUID.Zero.ToString())
             {
                 return fallbackName?.ToLower().Replace(" ", ".") ?? "unknown.user";
@@ -621,14 +690,7 @@ namespace RadegastWeb.Services
                             await SaveDisplayNameToCacheAsync(accountId, displayName);
                             
                             // Fire display name changed event
-                            DisplayNameChanged?.Invoke(this, new DisplayNameChangedEventArgs
-                            {
-                                AccountId = accountId,
-                                AvatarId = avatarId,
-                                OldDisplayName = oldDisplayName,
-                                NewDisplayName = agentDisplayName.DisplayName,
-                                DisplayName = displayName
-                            });
+                            DisplayNameChanged?.Invoke(this, new DisplayNameChangedEventArgs(avatarId, displayName));
                             
                             if (cachedName != null)
                             {
@@ -721,14 +783,7 @@ namespace RadegastWeb.Services
                             await SaveDisplayNameToCacheAsync(accountId, displayName);
                             
                             // Fire display name changed event for legacy name updates too
-                            DisplayNameChanged?.Invoke(this, new DisplayNameChangedEventArgs
-                            {
-                                AccountId = accountId,
-                                AvatarId = avatarId,
-                                OldDisplayName = oldDisplayName,
-                                NewDisplayName = fullName,
-                                DisplayName = displayName
-                            });
+                            DisplayNameChanged?.Invoke(this, new DisplayNameChangedEventArgs(avatarId, displayName));
                             
                             if (cachedName != null)
                             {
