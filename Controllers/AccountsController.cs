@@ -351,7 +351,7 @@ namespace RadegastWeb.Controllers
         /// Sit on an object or ground
         /// </summary>
         [HttpPost("{id}/sit")]
-        public async Task<IActionResult> SitOnObject(Guid id, [FromBody] SitRequest request)
+        public IActionResult SitOnObject(Guid id, [FromBody] SitRequest request)
         {
             try
             {
@@ -401,10 +401,10 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
-        /// Stand up from sitting
+        /// Stand up
         /// </summary>
         [HttpPost("{id}/stand")]
-        public async Task<IActionResult> StandUp(Guid id)
+        public IActionResult StandUp(Guid id)
         {
             try
             {

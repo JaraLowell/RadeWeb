@@ -11,6 +11,8 @@ namespace RadegastWeb.Core
         private readonly ILogger<WebRadegastInstance> _logger;
         private readonly IDisplayNameService _displayNameService;
         private readonly INoticeService _noticeService;
+        private readonly ISlUrlParser _urlParser;
+        private readonly INameResolutionService _nameResolutionService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -39,13 +41,18 @@ namespace RadegastWeb.Core
         public event EventHandler<ChatSessionDto>? ChatSessionUpdated;
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
             _noticeService = noticeService;
+            _urlParser = urlParser;
+            _nameResolutionService = nameResolutionService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
+            
+            // Register this instance with the name resolution service
+            _nameResolutionService.RegisterInstance(Guid.Parse(_accountId), this);
             
             // Create isolated directories for this account
             _cacheDir = Path.Combine("data", "accounts", _accountId, "cache");
@@ -781,11 +788,14 @@ namespace RadegastWeb.Core
                 senderDisplayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), e.SourceID.ToString(), NameDisplayMode.Smart, e.FromName);
             }
             
+            // Process any SLURLs in the message
+            var processedMessage = await _urlParser.ProcessChatMessageAsync(e.Message, Guid.Parse(_accountId));
+            
             var chatMessage = new ChatMessageDto
             {
                 AccountId = Guid.Parse(_accountId),
                 SenderName = senderDisplayName,
-                Message = e.Message,
+                Message = processedMessage, // Use the processed message with URL replacements
                 ChatType = e.Type.ToString(),
                 Channel = "0", // Default channel for local chat
                 Timestamp = DateTime.UtcNow,
@@ -899,11 +909,14 @@ namespace RadegastWeb.Core
 
             ChatSessionUpdated?.Invoke(this, session);
 
+            // Process any SLURLs in the IM message
+            var processedMessage = await _urlParser.ProcessChatMessageAsync(e.IM.Message, Guid.Parse(_accountId));
+
             var chatMessage = new ChatMessageDto
             {
                 AccountId = Guid.Parse(_accountId),
                 SenderName = senderDisplayName,
-                Message = e.IM.Message,
+                Message = processedMessage, // Use the processed message with URL replacements
                 ChatType = chatType,
                 Channel = chatType,
                 Timestamp = DateTime.UtcNow,
@@ -1242,6 +1255,9 @@ namespace RadegastWeb.Core
                 
                 // Clean up notice service resources
                 _noticeService.CleanupAccount(Guid.Parse(_accountId));
+                
+                // Unregister from name resolution service
+                _nameResolutionService.UnregisterInstance(Guid.Parse(_accountId));
                 
                 if (_client.Network.Connected)
                 {

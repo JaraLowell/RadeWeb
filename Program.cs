@@ -84,6 +84,8 @@ builder.Services.AddSingleton<IDisplayNameService, DisplayNameService>();
 builder.Services.AddSingleton<INoticeService, NoticeService>();
 builder.Services.AddSingleton<IPresenceService, PresenceService>();
 builder.Services.AddSingleton<IRegionInfoService, RegionInfoService>();
+builder.Services.AddSingleton<INameResolutionService, NameResolutionService>();
+builder.Services.AddSingleton<ISlUrlParser, SlUrlParser>();
 builder.Services.AddScoped<IChatHistoryService, ChatHistoryService>();
 builder.Services.AddHostedService<RadegastBackgroundService>();
 

@@ -1218,12 +1218,15 @@ class RadegastWebClient {
             <div class="d-flex">
                 <span class="text-muted me-2 small">${timestamp}</span>
                 <span class="fw-bold me-2">${this.escapeHtml(chatMessage.senderName)}${nameFormat}</span>
-                <span>${this.escapeHtml(displayMessage)}</span>
+                <span>${this.renderMessageContent(displayMessage)}</span>
             </div>
         `;
 
         messagesContainer.appendChild(messageDiv);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        
+        // Add event listeners for SLURL links in this message
+        this.attachSlUrlLinkHandlers(messageDiv);
         
         // Update unread count if not on active tab
         if (chatMessage.sessionId && this.currentChatSession !== `chat-${chatMessage.sessionId}`) {
@@ -1414,6 +1417,16 @@ class RadegastWebClient {
         return div.innerHTML;
     }
 
+    // New method to safely render message content that may contain SLURL links
+    renderMessageContent(message) {
+        // If the message contains HTML-like content (our SLURL links), render it as HTML
+        if (message && message.includes('<a href=') && message.includes('class="slurl-link')) {
+            return message; // Already processed and safe HTML from server
+        }
+        // Otherwise, escape HTML to prevent XSS
+        return this.escapeHtml(message);
+    }
+
     loadChatHistory(accountId, sessionId, messages) {
         if (!messages || messages.length === 0) return;
         
@@ -1472,17 +1485,19 @@ class RadegastWebClient {
         const isPersonalThought = message.message.startsWith('/me ');
         const displayMessage = isPersonalThought ? message.message.substring(4) : message.message;
         const nameFormat = isPersonalThought ? '' : ':';
-        const messageText = this.escapeHtml(displayMessage);
         
         messageDiv.innerHTML = `
             <div class="d-flex">
                 <span class="text-muted me-2 small">${timestamp}</span>
                 <span class="fw-bold me-2">${senderName}${nameFormat}</span>
-                <span>${messageText}</span>
+                <span>${this.renderMessageContent(displayMessage)}</span>
             </div>
         `;
         
         container.appendChild(messageDiv);
+        
+        // Add event listeners for SLURL links in this message
+        this.attachSlUrlLinkHandlers(messageDiv);
     }
 
     handleNoticeReceived(noticeEvent) {
@@ -1722,6 +1737,53 @@ class RadegastWebClient {
             this.refreshSittingStatus();
         } else {
             movementControls.style.display = 'none';
+        }
+    }
+
+    // Handle SLURL link clicks
+    attachSlUrlLinkHandlers(container) {
+        const slUrlLinks = container.querySelectorAll('a.slurl-link');
+        slUrlLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.handleSlUrlClick(link);
+            });
+        });
+    }
+
+    handleSlUrlClick(link) {
+        const href = link.getAttribute('href');
+        const action = link.getAttribute('data-action');
+        const linkText = link.textContent;
+        
+        console.log('SLURL clicked:', { href, action, linkText });
+        
+        // Handle different types of SLURL actions
+        switch (action) {
+            case 'agent':
+                this.showAlert(`Agent profile: ${linkText}`, 'info');
+                // TODO: Open agent profile
+                break;
+            case 'group':
+                this.showAlert(`Group: ${linkText}`, 'info');
+                // TODO: Open group profile
+                break;
+            case 'teleport':
+                this.showAlert(`Teleport to: ${linkText}`, 'info');
+                // TODO: Implement teleport
+                break;
+            case 'map':
+                this.showAlert(`Show map: ${linkText}`, 'info');
+                // TODO: Open map
+                break;
+            case 'inventory':
+                this.showAlert(`Inventory item: ${linkText}`, 'info');
+                // TODO: Open inventory
+                break;
+            default:
+                // For unknown actions or external links, open in new tab
+                window.open(href, '_blank');
+                break;
         }
     }
 }

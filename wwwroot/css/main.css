@@ -715,3 +715,88 @@
 [data-theme="dark"] #movementControls .text-muted {
     color: #adb5bd !important;
 }
+
+/* SLURL Link Styles */
+.slurl-link {
+    color: #0066cc;
+    text-decoration: none;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.slurl-link:hover {
+    color: #004499;
+    text-decoration: underline;
+}
+
+.slurl-link.agent-link {
+    color: #007bff;
+    font-weight: 500;
+}
+
+.slurl-link.group-link {
+    color: #28a745;
+    font-weight: 500;
+}
+
+.slurl-link.region-link {
+    color: #fd7e14;
+    font-weight: 500;
+}
+
+.slurl-link.teleport-link {
+    color: #6f42c1;
+    font-weight: 500;
+}
+
+.slurl-link.map-link {
+    color: #17a2b8;
+    font-weight: 500;
+}
+
+.slurl-link.inventory-link {
+    color: #ffc107;
+    font-weight: 500;
+}
+
+.slurl-link.object-link {
+    color: #dc3545;
+    font-weight: 500;
+}
+
+/* Dark mode adjustments for SLURL links */
+[data-theme="dark"] .slurl-link {
+    color: #66b3ff;
+}
+
+[data-theme="dark"] .slurl-link:hover {
+    color: #99ccff;
+}
+
+[data-theme="dark"] .slurl-link.agent-link {
+    color: #409eff;
+}
+
+[data-theme="dark"] .slurl-link.group-link {
+    color: #67c23a;
+}
+
+[data-theme="dark"] .slurl-link.region-link {
+    color: #e6a23c;
+}
+
+[data-theme="dark"] .slurl-link.teleport-link {
+    color: #9c88ff;
+}
+
+[data-theme="dark"] .slurl-link.map-link {
+    color: #67c5ff;
+}
+
+[data-theme="dark"] .slurl-link.inventory-link {
+    color: #f1c40f;
+}
+
+[data-theme="dark"] .slurl-link.object-link {
+    color: #f56565;
+}
