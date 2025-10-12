@@ -147,6 +147,47 @@
                         </div>
                     </div>
                     
+                    <!-- Movement Controls -->
+                    <div class="card mt-3" id="movementControls" style="display: none;">
+                        <div class="card-header">
+                            <h6><i class="fas fa-chair me-1"></i>Sitting Controls</h6>
+                        </div>
+                        <div class="card-body">
+                            <!-- Sit/Stand Controls -->
+                            <div class="mb-3">
+                                <div class="input-group mb-2">
+                                    <input type="text" id="objectIdInput" class="form-control" placeholder="Object UUID (optional)" style="font-size: 0.85rem;">
+                                    <button id="validateObjectBtn" class="btn btn-outline-info btn-sm" title="Check if object exists">
+                                        <i class="fas fa-search"></i>
+                                    </button>
+                                </div>
+                                <div class="d-grid gap-2">
+                                    <button id="sitBtn" class="btn btn-primary btn-sm">
+                                        <i class="fas fa-chair me-1"></i>Sit
+                                    </button>
+                                    <button id="standBtn" class="btn btn-secondary btn-sm">
+                                        <i class="fas fa-walking me-1"></i>Stand
+                                    </button>
+                                </div>
+                                <div class="mt-2">
+                                    <small class="text-muted">Leave UUID empty to sit on ground</small>
+                                </div>
+                            </div>
+                            
+                            <!-- Current Status -->
+                            <div class="border-top pt-2">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <small class="text-muted">Status:</small>
+                                    <span id="sittingStatus" class="badge bg-secondary">Standing</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mt-1">
+                                    <small class="text-muted">On Object:</small>
+                                    <small id="sittingObjectInfo" class="text-muted">None</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <!-- Mini Map Placeholder -->
                     <div class="card mt-3">
                         <div class="card-header">

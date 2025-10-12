@@ -97,6 +97,7 @@ namespace RadegastWeb.Core
             _client.Network.SimChanged += Network_SimChanged;
             _client.Objects.AvatarUpdate += Objects_AvatarUpdate;
             _client.Objects.KillObject += Objects_KillObject;
+            _client.Objects.AvatarSitChanged += Objects_AvatarSitChanged;
             _client.Groups.CurrentGroups += Groups_CurrentGroups;
             _client.Self.GroupChatJoined += Self_GroupChatJoined;
             
@@ -123,6 +124,7 @@ namespace RadegastWeb.Core
             _client.Network.SimChanged -= Network_SimChanged;
             _client.Objects.AvatarUpdate -= Objects_AvatarUpdate;
             _client.Objects.KillObject -= Objects_KillObject;
+            _client.Objects.AvatarSitChanged -= Objects_AvatarSitChanged;
             _client.Groups.CurrentGroups -= Groups_CurrentGroups;
             _client.Self.GroupChatJoined -= Self_GroupChatJoined;
             _client.Avatars.UUIDNameReply -= Avatars_UUIDNameReply;
@@ -728,6 +730,33 @@ namespace RadegastWeb.Core
             }
         }
 
+        private void Objects_AvatarSitChanged(object? sender, AvatarSitChangedEventArgs e)
+        {
+            // Only track sitting changes for this account's avatar
+            if (e.Avatar.LocalID != _client.Self.LocalID) return;
+
+            var isSitting = e.SittingOn != 0;
+            var objectId = isSitting ? GetObjectUUIDFromLocalID(e.SittingOn) : null;
+
+            var eventArgs = new SitStateChangedEventArgs(isSitting, objectId?.ToString(), e.SittingOn);
+            SitStateChanged?.Invoke(this, eventArgs);
+
+            _logger.LogInformation("Avatar sitting state changed for account {AccountId}: {IsSitting} on {ObjectId}", 
+                _accountId, isSitting, objectId?.ToString() ?? "ground");
+        }
+
+        /// <summary>
+        /// Helper method to get object UUID from local ID
+        /// </summary>
+        private UUID? GetObjectUUIDFromLocalID(uint localId)
+        {
+            if (!_client.Network.Connected || _client.Network.CurrentSim == null)
+                return null;
+
+            var prim = _client.Network.CurrentSim.ObjectsPrimitives.Values.FirstOrDefault(p => p.LocalID == localId);
+            return prim?.ID;
+        }
+
         private async void Self_ChatFromSimulator(object? sender, ChatEventArgs e)
         {
             // Filter out typing indicators and empty messages
@@ -1077,6 +1106,121 @@ namespace RadegastWeb.Core
             {
                 _logger.LogError(ex, "Error handling notice received event for account {AccountId}", _accountId);
             }
+        }
+
+        #endregion
+
+        #region Sit/Stand Methods
+        
+        /// <summary>
+        /// Gets whether the avatar is currently sitting
+        /// </summary>
+        public bool IsSitting => _client.Self.SittingOn != 0 || _client.Self.Movement.SitOnGround;
+        
+        /// <summary>
+        /// Gets the local ID of the object the avatar is sitting on, or 0 if not sitting on an object
+        /// </summary>
+        public uint SittingOnLocalId => _client.Self.SittingOn;
+        
+        /// <summary>
+        /// Event fired when sitting state changes
+        /// </summary>
+        public event EventHandler<SitStateChangedEventArgs>? SitStateChanged;
+        
+        /// <summary>
+        /// Attempts to sit on the specified object or ground
+        /// </summary>
+        /// <param name="target">UUID of object to sit on, or UUID.Zero to sit on ground</param>
+        /// <returns>True if sit request was sent successfully</returns>
+        public bool SetSitting(bool sit, UUID target = default)
+        {
+            try
+            {
+                if (!_client.Network.Connected)
+                {
+                    _logger.LogWarning("Cannot change sitting state - not connected");
+                    return false;
+                }
+
+                if (sit)
+                {
+                    if (target == UUID.Zero)
+                    {
+                        // Sit on ground
+                        _client.Self.SitOnGround();
+                        _logger.LogInformation("Requested to sit on ground for account {AccountId}", _accountId);
+                    }
+                    else
+                    {
+                        // Check if object exists in current simulator
+                        if (!IsObjectInRegion(target))
+                        {
+                            _logger.LogWarning("Cannot sit on object {ObjectId} - object not found in current region", target);
+                            return false;
+                        }
+
+                        // Sit on object
+                        _client.Self.RequestSit(target, Vector3.Zero);
+                        _client.Self.Sit();
+                        _logger.LogInformation("Requested to sit on object {ObjectId} for account {AccountId}", target, _accountId);
+                    }
+                }
+                else
+                {
+                    // Stand up
+                    _client.Self.Stand();
+                    _logger.LogInformation("Requested to stand up for account {AccountId}", _accountId);
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error changing sitting state for account {AccountId}", _accountId);
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Checks if an object exists in the current region
+        /// </summary>
+        /// <param name="objectId">UUID of the object to check</param>
+        /// <returns>True if object exists in current region</returns>
+        public bool IsObjectInRegion(UUID objectId)
+        {
+            if (!_client.Network.Connected || _client.Network.CurrentSim == null)
+                return false;
+
+            // Search through all objects in the simulator to find one with the matching UUID
+            return _client.Network.CurrentSim.ObjectsPrimitives.Values.Any(prim => prim.ID == objectId);
+        }
+        
+        /// <summary>
+        /// Gets information about a specific object in the region
+        /// </summary>
+        /// <param name="objectId">UUID of the object</param>
+        /// <returns>Object information or null if not found</returns>
+        public ObjectInfo? GetObjectInfo(UUID objectId)
+        {
+            if (!_client.Network.Connected || _client.Network.CurrentSim == null)
+                return null;
+
+            var prim = _client.Network.CurrentSim.ObjectsPrimitives.Values.FirstOrDefault(p => p.ID == objectId);
+            if (prim != null)
+            {
+                return new ObjectInfo
+                {
+                    Id = prim.ID.ToString(),
+                    LocalId = prim.LocalID,
+                    Name = prim.Properties?.Name ?? "Unknown",
+                    Description = prim.Properties?.Description ?? "",
+                    Position = prim.Position,
+                    OwnerId = prim.OwnerID.ToString(),
+                    CanSit = (prim.Flags & PrimFlags.Touch) != 0 // Objects with touch flag can usually be sat on
+                };
+            }
+
+            return null;
         }
 
         #endregion

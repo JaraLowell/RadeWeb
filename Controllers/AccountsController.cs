@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using OpenMetaverse;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
 
@@ -342,6 +343,169 @@ namespace RadegastWeb.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting presence status for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Sit on an object or ground
+        /// </summary>
+        [HttpPost("{id}/sit")]
+        public async Task<IActionResult> SitOnObject(Guid id, [FromBody] SitRequest request)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(id);
+                if (instance == null)
+                {
+                    return NotFound("Account not found");
+                }
+
+                if (!instance.IsConnected)
+                {
+                    return BadRequest("Account is not connected");
+                }
+
+                UUID targetObject = UUID.Zero;
+                
+                // Validate and parse object ID if provided
+                if (!string.IsNullOrEmpty(request.ObjectId))
+                {
+                    if (!UUID.TryParse(request.ObjectId, out targetObject))
+                    {
+                        return BadRequest("Invalid object ID format");
+                    }
+
+                    // Check if object exists in region
+                    if (!instance.IsObjectInRegion(targetObject))
+                    {
+                        return BadRequest("Object not found in current region");
+                    }
+                }
+
+                // Attempt to sit
+                var success = instance.SetSitting(true, targetObject);
+                if (!success)
+                {
+                    return StatusCode(500, "Failed to initiate sitting");
+                }
+
+                var message = targetObject == UUID.Zero ? "Sitting on ground" : $"Sitting on object {targetObject}";
+                return Ok(new { message = message, objectId = request.ObjectId });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sitting on object for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Stand up from sitting
+        /// </summary>
+        [HttpPost("{id}/stand")]
+        public async Task<IActionResult> StandUp(Guid id)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(id);
+                if (instance == null)
+                {
+                    return NotFound("Account not found");
+                }
+
+                if (!instance.IsConnected)
+                {
+                    return BadRequest("Account is not connected");
+                }
+
+                // Attempt to stand
+                var success = instance.SetSitting(false);
+                if (!success)
+                {
+                    return StatusCode(500, "Failed to stand up");
+                }
+
+                return Ok(new { message = "Standing up" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error standing up for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Get object information by UUID
+        /// </summary>
+        [HttpGet("{id}/objects/{objectId}")]
+        public ActionResult<ObjectInfo> GetObjectInfo(Guid id, string objectId)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(id);
+                if (instance == null)
+                {
+                    return NotFound("Account not found");
+                }
+
+                if (!instance.IsConnected)
+                {
+                    return BadRequest("Account is not connected");
+                }
+
+                if (!UUID.TryParse(objectId, out var uuid))
+                {
+                    return BadRequest("Invalid object ID format");
+                }
+
+                var objectInfo = instance.GetObjectInfo(uuid);
+                if (objectInfo == null)
+                {
+                    return NotFound("Object not found in current region");
+                }
+
+                return Ok(objectInfo);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting object info for account {AccountId}, object {ObjectId}", id, objectId);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Get current sitting status
+        /// </summary>
+        [HttpGet("{id}/sitting-status")]
+        public ActionResult<object> GetSittingStatus(Guid id)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(id);
+                if (instance == null)
+                {
+                    return NotFound("Account not found");
+                }
+
+                if (!instance.IsConnected)
+                {
+                    return BadRequest("Account is not connected");
+                }
+
+                var isSitting = instance.IsSitting;
+                var sittingOnLocalId = instance.SittingOnLocalId;
+                
+                return Ok(new 
+                { 
+                    isSitting = isSitting,
+                    sittingOnLocalId = sittingOnLocalId,
+                    sittingOnGround = instance.Client.Self.Movement.SitOnGround
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting sitting status for account {AccountId}", id);
                 return StatusCode(500, "Internal server error");
             }
         }

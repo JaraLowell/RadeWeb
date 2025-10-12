@@ -658,3 +658,60 @@
     background-color: #198754;
     color: white;
 }
+
+/* Movement Controls */
+#movementControls .card-body {
+    padding: 0.75rem;
+}
+
+#objectIdInput {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.8rem;
+}
+
+#movementControls .btn-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+}
+
+#movementControls .badge {
+    font-size: 0.75rem;
+}
+
+#sittingObjectInfo {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.7rem;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Sitting status indicator colors */
+.sitting-status-standing {
+    background-color: #6c757d !important;
+}
+
+.sitting-status-sitting {
+    background-color: #198754 !important;
+}
+
+.sitting-status-sitting-ground {
+    background-color: #fd7e14 !important;
+}
+
+/* Dark mode adjustments for movement controls */
+[data-theme="dark"] #movementControls {
+    background-color: var(--card-bg);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] #objectIdInput {
+    background-color: var(--input-bg);
+    border-color: var(--input-border);
+    color: var(--text-color);
+}
+
+[data-theme="dark"] #movementControls .text-muted {
+    color: #adb5bd !important;
+}

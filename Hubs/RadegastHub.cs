@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
+using OpenMetaverse;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
 
@@ -307,6 +308,201 @@ namespace RadegastWeb.Hubs
             }
         }
 
+        public async Task SitOnObject(string accountId, string? objectId)
+        {
+            try
+            {
+                if (!Guid.TryParse(accountId, out var accountGuid))
+                {
+                    await Clients.Caller.SitStandError("Invalid account ID");
+                    return;
+                }
+
+                var instance = _accountService.GetInstance(accountGuid);
+                if (instance == null)
+                {
+                    await Clients.Caller.SitStandError("Account not found");
+                    return;
+                }
+
+                if (!instance.IsConnected)
+                {
+                    await Clients.Caller.SitStandError("Account is not connected");
+                    return;
+                }
+
+                UUID targetObject = UUID.Zero;
+
+                // Validate and parse object ID if provided
+                if (!string.IsNullOrEmpty(objectId))
+                {
+                    if (!UUID.TryParse(objectId, out targetObject))
+                    {
+                        await Clients.Caller.SitStandError("Invalid object ID format");
+                        return;
+                    }
+
+                    // Check if object exists in region
+                    if (!instance.IsObjectInRegion(targetObject))
+                    {
+                        await Clients.Caller.SitStandError("Object not found in current region");
+                        return;
+                    }
+                }
+
+                // Attempt to sit
+                var success = instance.SetSitting(true, targetObject);
+                if (!success)
+                {
+                    await Clients.Caller.SitStandError("Failed to initiate sitting");
+                    return;
+                }
+
+                var message = targetObject == UUID.Zero ? "Sitting on ground" : $"Sitting on object {targetObject}";
+                await Clients.Caller.SitStandSuccess(message);
+
+                _logger.LogInformation("Avatar sitting initiated for account {AccountId} on {ObjectId}", 
+                    accountId, objectId ?? "ground");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sitting on object via SignalR");
+                await Clients.Caller.SitStandError("Error initiating sit");
+            }
+        }
+
+        public async Task StandUp(string accountId)
+        {
+            try
+            {
+                if (!Guid.TryParse(accountId, out var accountGuid))
+                {
+                    await Clients.Caller.SitStandError("Invalid account ID");
+                    return;
+                }
+
+                var instance = _accountService.GetInstance(accountGuid);
+                if (instance == null)
+                {
+                    await Clients.Caller.SitStandError("Account not found");
+                    return;
+                }
+
+                if (!instance.IsConnected)
+                {
+                    await Clients.Caller.SitStandError("Account is not connected");
+                    return;
+                }
+
+                // Attempt to stand
+                var success = instance.SetSitting(false);
+                if (!success)
+                {
+                    await Clients.Caller.SitStandError("Failed to stand up");
+                    return;
+                }
+
+                await Clients.Caller.SitStandSuccess("Standing up");
+
+                _logger.LogInformation("Avatar standing up for account {AccountId}", accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error standing up via SignalR");
+                await Clients.Caller.SitStandError("Error standing up");
+            }
+        }
+
+        public async Task GetObjectInfo(string accountId, string objectId)
+        {
+            try
+            {
+                if (!Guid.TryParse(accountId, out var accountGuid))
+                {
+                    await Clients.Caller.SitStandError("Invalid account ID");
+                    return;
+                }
+
+                var instance = _accountService.GetInstance(accountGuid);
+                if (instance == null)
+                {
+                    await Clients.Caller.SitStandError("Account not found");
+                    return;
+                }
+
+                if (!instance.IsConnected)
+                {
+                    await Clients.Caller.SitStandError("Account is not connected");
+                    return;
+                }
+
+                if (!UUID.TryParse(objectId, out var uuid))
+                {
+                    await Clients.Caller.SitStandError("Invalid object ID format");
+                    return;
+                }
+
+                var objectInfo = instance.GetObjectInfo(uuid);
+                if (objectInfo == null)
+                {
+                    await Clients.Caller.SitStandError("Object not found in current region");
+                    return;
+                }
+
+                await Clients.Caller.ObjectInfoReceived(objectInfo);
+
+                _logger.LogInformation("Object info retrieved for account {AccountId}, object {ObjectId}", 
+                    accountId, objectId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting object info via SignalR");
+                await Clients.Caller.SitStandError("Error retrieving object info");
+            }
+        }
+
+        public async Task GetSittingStatus(string accountId)
+        {
+            try
+            {
+                if (!Guid.TryParse(accountId, out var accountGuid))
+                {
+                    await Clients.Caller.SitStandError("Invalid account ID");
+                    return;
+                }
+
+                var instance = _accountService.GetInstance(accountGuid);
+                if (instance == null)
+                {
+                    await Clients.Caller.SitStandError("Account not found");
+                    return;
+                }
+
+                if (!instance.IsConnected)
+                {
+                    await Clients.Caller.SitStandError("Account is not connected");
+                    return;
+                }
+
+                var isSitting = instance.IsSitting;
+                var sittingOnLocalId = instance.SittingOnLocalId;
+                
+                await Clients.Caller.SittingStatusUpdated(new
+                {
+                    isSitting = isSitting,
+                    sittingOnLocalId = sittingOnLocalId,
+                    sittingOnGround = instance.Client.Self.Movement.SitOnGround
+                });
+
+                _logger.LogInformation("Sitting status retrieved for account {AccountId}", accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting sitting status via SignalR");
+                await Clients.Caller.SitStandError("Error retrieving sitting status");
+            }
+        }
+
         public override async Task OnConnectedAsync()
         {
             if (!IsAuthenticated())
@@ -346,5 +542,11 @@ namespace RadegastWeb.Hubs
         Task RecentSessionsLoaded(string accountId, List<ChatSessionDto> sessions);
         Task NoticeReceived(NoticeReceivedEventDto noticeEvent);
         Task RecentNoticesLoaded(string accountId, List<NoticeDto> notices);
+        
+        // Sit/Stand methods
+        Task SitStandSuccess(string message);
+        Task SitStandError(string error);
+        Task ObjectInfoReceived(ObjectInfo objectInfo);
+        Task SittingStatusUpdated(object status);
     }
 }

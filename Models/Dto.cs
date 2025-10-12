@@ -98,4 +98,34 @@ namespace RadegastWeb.Models
         public string SessionId { get; set; } = string.Empty;
         public string DisplayMessage { get; set; } = string.Empty;
     }
+
+    public class SitRequest
+    {
+        public string? ObjectId { get; set; } // UUID string, null or empty for ground
+    }
+
+    public class SitStateChangedEventArgs : EventArgs
+    {
+        public bool IsSitting { get; set; }
+        public string? ObjectId { get; set; } // UUID string of object being sat on, null if on ground
+        public uint LocalId { get; set; } // Local ID of object (0 if on ground)
+
+        public SitStateChangedEventArgs(bool isSitting, string? objectId = null, uint localId = 0)
+        {
+            IsSitting = isSitting;
+            ObjectId = objectId;
+            LocalId = localId;
+        }
+    }
+
+    public class ObjectInfo
+    {
+        public string Id { get; set; } = string.Empty; // UUID as string
+        public uint LocalId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public OpenMetaverse.Vector3 Position { get; set; }
+        public string OwnerId { get; set; } = string.Empty; // UUID as string
+        public bool CanSit { get; set; }
+    }
 }

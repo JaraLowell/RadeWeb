@@ -107,6 +107,24 @@ class RadegastWebClient {
                 this.loadRecentNotices(accountId, notices);
             });
 
+            // Sit/Stand event handlers
+            this.connection.on("SitStandSuccess", (message) => {
+                this.showAlert(message, "success");
+                this.refreshSittingStatus();
+            });
+
+            this.connection.on("SitStandError", (error) => {
+                this.showAlert("Movement Error: " + error, "danger");
+            });
+
+            this.connection.on("ObjectInfoReceived", (objectInfo) => {
+                this.displayObjectInfo(objectInfo);
+            });
+
+            this.connection.on("SittingStatusUpdated", (status) => {
+                this.updateSittingStatus(status);
+            });
+
             await this.connection.start();
         } catch (err) {
             console.error("SignalR Connection Error:", err);
@@ -544,6 +562,26 @@ class RadegastWebClient {
         document.getElementById('regionInfoBtn').addEventListener('click', () => {
             this.showRegionInfo();
         });
+
+        // Movement control event handlers
+        document.getElementById('sitBtn').addEventListener('click', () => {
+            this.sitOnObject();
+        });
+
+        document.getElementById('standBtn').addEventListener('click', () => {
+            this.standUp();
+        });
+
+        document.getElementById('validateObjectBtn').addEventListener('click', () => {
+            this.validateObject();
+        });
+
+        // Enter key support for object ID input
+        document.getElementById('objectIdInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this.sitOnObject();
+            }
+        });
     }
 
     async loadAccounts() {
@@ -623,6 +661,9 @@ class RadegastWebClient {
             logoutBtn.classList.add('d-none');
             regionInfoBtn.classList.add('d-none');
         }
+        
+        // Update movement controls visibility
+        this.updateMovementControlsVisibility(account);
         
         console.log(`Updated chat interface for account ${account.accountId}: connected=${account.isConnected}`);
     }
@@ -1555,6 +1596,132 @@ class RadegastWebClient {
             await this.connection.invoke("GetRecentNotices", accountId, 20);
         } catch (err) {
             console.error("Error loading account notices:", err);
+        }
+    }
+
+    // Sit/Stand Methods
+    async sitOnObject() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const objectIdInput = document.getElementById('objectIdInput');
+            const objectId = objectIdInput.value.trim();
+            
+            // Validate UUID format if provided
+            if (objectId && !this.isValidUUID(objectId)) {
+                this.showAlert("Invalid UUID format", "danger");
+                return;
+            }
+
+            if (this.connection) {
+                await this.connection.invoke("SitOnObject", this.currentAccountId, objectId || null);
+            }
+        } catch (error) {
+            console.error("Error sitting on object:", error);
+            this.showAlert("Failed to sit: " + error.message, "danger");
+        }
+    }
+
+    async standUp() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            if (this.connection) {
+                await this.connection.invoke("StandUp", this.currentAccountId);
+            }
+        } catch (error) {
+            console.error("Error standing up:", error);
+            this.showAlert("Failed to stand up: " + error.message, "danger");
+        }
+    }
+
+    async validateObject() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const objectIdInput = document.getElementById('objectIdInput');
+            const objectId = objectIdInput.value.trim();
+            
+            if (!objectId) {
+                this.showAlert("Please enter an object UUID", "warning");
+                return;
+            }
+
+            if (!this.isValidUUID(objectId)) {
+                this.showAlert("Invalid UUID format", "danger");
+                return;
+            }
+
+            if (this.connection) {
+                await this.connection.invoke("GetObjectInfo", this.currentAccountId, objectId);
+            }
+        } catch (error) {
+            console.error("Error validating object:", error);
+            this.showAlert("Failed to validate object: " + error.message, "danger");
+        }
+    }
+
+    async refreshSittingStatus() {
+        if (!this.currentAccountId) return;
+
+        try {
+            if (this.connection) {
+                await this.connection.invoke("GetSittingStatus", this.currentAccountId);
+            }
+        } catch (error) {
+            console.error("Error refreshing sitting status:", error);
+        }
+    }
+
+    updateSittingStatus(status) {
+        const statusBadge = document.getElementById('sittingStatus');
+        const objectInfo = document.getElementById('sittingObjectInfo');
+        
+        if (status.isSitting) {
+            if (status.sittingOnGround) {
+                statusBadge.textContent = 'Sitting (Ground)';
+                statusBadge.className = 'badge sitting-status-sitting-ground';
+                objectInfo.textContent = 'Ground';
+            } else {
+                statusBadge.textContent = 'Sitting';
+                statusBadge.className = 'badge sitting-status-sitting';
+                objectInfo.textContent = status.sittingOnLocalId ? `LocalID: ${status.sittingOnLocalId}` : 'Unknown';
+            }
+        } else {
+            statusBadge.textContent = 'Standing';
+            statusBadge.className = 'badge sitting-status-standing';
+            objectInfo.textContent = 'None';
+        }
+    }
+
+    displayObjectInfo(objectInfo) {
+        const message = `Object Found: ${objectInfo.name}\nDescription: ${objectInfo.description}\nPosition: (${objectInfo.position.x.toFixed(1)}, ${objectInfo.position.y.toFixed(1)}, ${objectInfo.position.z.toFixed(1)})\nCan Sit: ${objectInfo.canSit ? 'Yes' : 'No'}`;
+        this.showAlert(message, objectInfo.canSit ? "success" : "warning");
+    }
+
+    isValidUUID(str) {
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        return uuidRegex.test(str);
+    }
+
+    // Show/hide movement controls based on account connection status
+    updateMovementControlsVisibility(account) {
+        const movementControls = document.getElementById('movementControls');
+        if (account && account.isConnected) {
+            movementControls.style.display = 'block';
+            // Refresh sitting status when account becomes active
+            this.refreshSittingStatus();
+        } else {
+            movementControls.style.display = 'none';
         }
     }
 }
