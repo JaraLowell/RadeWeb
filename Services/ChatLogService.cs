@@ -353,7 +353,7 @@ namespace RadegastWeb.Services
                 if (invalidChars.Contains(c))
                 {
                     // Skip invalid characters entirely or replace with underscore
-                    if (char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '.')
+                    if (char.IsLetterOrDigit(c) || c == '-' || c == '.')
                     {
                         sanitized.Append(c);
                     }
@@ -375,7 +375,7 @@ namespace RadegastWeb.Services
             {
                 result = result.Replace("  ", " ");
             }
-            result = result.Replace(' ', '_');
+            // result = result.Replace(' ', '_');
             
             // Remove multiple consecutive underscores and dashes
             while (result.Contains("__"))

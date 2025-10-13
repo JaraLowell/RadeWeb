@@ -460,18 +460,46 @@ namespace RadegastWeb.Services
 
         public Task<IEnumerable<AccountStatus>> GetAccountStatusesAsync()
         {
-            var statuses = _accounts.Values.Select(account => new AccountStatus
+            // Get presence service to check current presence status
+            var presenceService = _serviceProvider.GetService<IPresenceService>();
+            
+            var statuses = _accounts.Values.Select(account => 
             {
-                AccountId = account.Id,
-                FirstName = account.FirstName,
-                LastName = account.LastName,
-                DisplayName = account.DisplayName,
-                IsConnected = account.IsConnected,
-                Status = account.Status,
-                CurrentRegion = account.CurrentRegion,
-                LastLoginAt = account.LastLoginAt,
-                AvatarUuid = account.AvatarUuid,
-                GridUrl = account.GridUrl
+                var status = account.Status;
+                
+                // If connected, get the actual presence status
+                if (account.IsConnected && presenceService != null)
+                {
+                    var presenceStatus = presenceService.GetAccountStatus(account.Id);
+                    var newStatus = presenceStatus switch
+                    {
+                        PresenceStatus.Away => "Away",
+                        PresenceStatus.Busy => "Busy",
+                        _ => "Online"
+                    };
+                    
+                    if (newStatus != status)
+                    {
+                        _logger.LogInformation("Account {AccountId}: status updated from '{OldStatus}' to '{NewStatus}' based on presence", 
+                            account.Id, status, newStatus);
+                    }
+                    
+                    status = newStatus;
+                }
+                
+                return new AccountStatus
+                {
+                    AccountId = account.Id,
+                    FirstName = account.FirstName,
+                    LastName = account.LastName,
+                    DisplayName = account.DisplayName,
+                    IsConnected = account.IsConnected,
+                    Status = status,
+                    CurrentRegion = account.CurrentRegion,
+                    LastLoginAt = account.LastLoginAt,
+                    AvatarUuid = account.AvatarUuid,
+                    GridUrl = account.GridUrl
+                };
             });
 
             return Task.FromResult(statuses);

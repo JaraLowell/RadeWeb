@@ -968,6 +968,9 @@ class RadegastWebClient {
         document.getElementById('chatAccountStatus').textContent = 
             `${account.status}${account.currentRegion ? ' • ' + account.currentRegion : ''}`;
         
+        // Initialize presence status display for this account
+        this.initializePresenceStatusForAccount(account);
+        
         // Update the login/logout buttons
         const loginBtn = document.getElementById('loginBtn');
         const logoutBtn = document.getElementById('logoutBtn');
@@ -1199,11 +1202,43 @@ class RadegastWebClient {
 
     // Initialize the presence status display based on current account status
     initializePresenceStatusForAccount(account) {
-        // For now, default to Online status since we don't have real-time presence tracking yet
-        // This will be updated by SignalR events when status actually changes
-        const status = 'Online'; // Could be enhanced to track actual status
-        const statusText = 'Online';
+        // Use the actual account status from the loaded data
+        let status = 'Online';
+        let statusText = 'Online';
+        
+        if (account.status) {
+            // Map the account status to presence status
+            if (account.status === 'Away') {
+                status = 'Away';
+                statusText = 'Away';
+            } else if (account.status === 'Busy') {
+                status = 'Busy';
+                statusText = 'Busy';
+            } else if (account.status === 'Online') {
+                status = 'Online';
+                statusText = 'Online';
+            } else if (account.status === 'Offline') {
+                status = 'Offline';
+                statusText = 'Offline';
+            } else {
+                // For any other status, use it as-is
+                status = account.status;
+                statusText = account.status;
+            }
+        }
+        
+        console.log(`Initializing presence status for account ${account.accountId}: ${status} (${statusText})`);
         this.updatePresenceStatusDisplay(account.accountId, status, statusText);
+        
+        // Also request the current status from the server to ensure we have the most up-to-date info
+        if (this.connection && account.isConnected) {
+            try {
+                console.log(`Requesting current presence status for account ${account.accountId}`);
+                this.connection.invoke("GetCurrentPresenceStatus", account.accountId);
+            } catch (error) {
+                console.error(`Error requesting current presence status for account ${account.accountId}:`, error);
+            }
+        }
     }
 
     async saveAccount() {
@@ -1996,12 +2031,19 @@ class RadegastWebClient {
         // Display unread notices as notifications
         const unreadNotices = notices.filter(n => !n.isRead);
         unreadNotices.forEach(notice => {
+            // Filter out non-notice messages that might have been incorrectly classified
+            if (!notice.type || !['Group', 'Region'].includes(notice.type)) {
+                console.log("Skipping non-notice message in recent notices:", notice);
+                return;
+            }
+            
             const sessionId = notice.type === 'Group' && notice.groupId ? 
                 `group-${notice.groupId}` : 'local-chat';
             const timestamp = new Date(notice.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
             const displayMessage = `[${timestamp}] ${notice.fromName} ${notice.title}\n${notice.message}`;
             
-            this.displayNotice({
+            // Use the same handling as live notices
+            this.handleNoticeReceived({
                 notice: notice,
                 sessionId: sessionId,
                 displayMessage: displayMessage
@@ -2329,32 +2371,48 @@ class RadegastWebClient {
         const awayBtnText = document.getElementById('awayBtnText');
         const busyBtnText = document.getElementById('busyBtnText');
 
-        // Update current status display
-        currentStatusSpan.textContent = statusText;
-        currentStatusSpan.className = `fw-bold status-${status.toLowerCase()}`;
+        // Update current status display - this is the main element that should always exist
+        if (currentStatusSpan) {
+            currentStatusSpan.textContent = statusText;
+            currentStatusSpan.className = `fw-bold status-${status.toLowerCase()}`;
+        } else {
+            console.warn('currentPresenceStatus element not found');
+        }
 
-        // Update button states
+        // Update button states - these are optional elements
         if (status === 'Away') {
-            awayBtn.className = 'btn btn-warning btn-sm w-100';
-            awayBtn.dataset.status = 'active';
-            awayBtnText.textContent = 'Clear Away';
-            busyBtn.className = 'btn btn-outline-danger btn-sm w-100';
-            busyBtn.dataset.status = 'inactive';
-            busyBtnText.textContent = 'Set Busy';
+            if (awayBtn) {
+                awayBtn.className = 'btn btn-warning btn-sm w-100';
+                awayBtn.dataset.status = 'active';
+            }
+            if (awayBtnText) awayBtnText.textContent = 'Clear Away';
+            if (busyBtn) {
+                busyBtn.className = 'btn btn-outline-danger btn-sm w-100';
+                busyBtn.dataset.status = 'inactive';
+            }
+            if (busyBtnText) busyBtnText.textContent = 'Set Busy';
         } else if (status === 'Busy') {
-            busyBtn.className = 'btn btn-danger btn-sm w-100';
-            busyBtn.dataset.status = 'active';
-            busyBtnText.textContent = 'Clear Busy';
-            awayBtn.className = 'btn btn-outline-warning btn-sm w-100';
-            awayBtn.dataset.status = 'inactive';
-            awayBtnText.textContent = 'Set Away';
+            if (busyBtn) {
+                busyBtn.className = 'btn btn-danger btn-sm w-100';
+                busyBtn.dataset.status = 'active';
+            }
+            if (busyBtnText) busyBtnText.textContent = 'Clear Busy';
+            if (awayBtn) {
+                awayBtn.className = 'btn btn-outline-warning btn-sm w-100';
+                awayBtn.dataset.status = 'inactive';
+            }
+            if (awayBtnText) awayBtnText.textContent = 'Set Away';
         } else { // Online
-            awayBtn.className = 'btn btn-outline-warning btn-sm w-100';
-            awayBtn.dataset.status = 'inactive';
-            awayBtnText.textContent = 'Set Away';
-            busyBtn.className = 'btn btn-outline-danger btn-sm w-100';
-            busyBtn.dataset.status = 'inactive';
-            busyBtnText.textContent = 'Set Busy';
+            if (awayBtn) {
+                awayBtn.className = 'btn btn-outline-warning btn-sm w-100';
+                awayBtn.dataset.status = 'inactive';
+            }
+            if (awayBtnText) awayBtnText.textContent = 'Set Away';
+            if (busyBtn) {
+                busyBtn.className = 'btn btn-outline-danger btn-sm w-100';
+                busyBtn.dataset.status = 'inactive';
+            }
+            if (busyBtnText) busyBtnText.textContent = 'Set Busy';
         }
     }
 

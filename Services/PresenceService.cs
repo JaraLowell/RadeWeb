@@ -35,6 +35,7 @@ namespace RadegastWeb.Services
         private readonly IAccountService _accountService;
         private readonly ILogger<PresenceService> _logger;
         private readonly ConcurrentDictionary<Guid, PresenceStatus> _accountStatuses = new();
+        private readonly ConcurrentDictionary<Guid, bool> _busyStatuses = new(); // Track busy status separately
         private Guid? _activeAccountId;
 
         public event EventHandler<PresenceStatusChangedEventArgs>? PresenceStatusChanged;
@@ -56,6 +57,9 @@ namespace RadegastWeb.Services
 
             try
             {
+                // Primarily rely on our own tracking rather than trying to modify Movement.Away
+                // which might be automatically managed by the movement system
+                
                 // Set away animation - this is how SL clients properly indicate away status
                 var awayAnimations = new Dictionary<UUID, bool>();
                 
@@ -66,14 +70,33 @@ namespace RadegastWeb.Services
                 // Send the animation change
                 instance.Client.Self.Animate(awayAnimations, true);
                 
-                // Also set the Movement.Away flag for compatibility
-                instance.Client.Self.Movement.Away = away;
+                // Try to set the Movement.Away flag, but don't rely on it persisting
+                try
+                {
+                    instance.Client.Self.Movement.Away = away;
+                    _logger.LogInformation("Account {AccountId}: Attempted to set Movement.Away to {Away}", accountId, away);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to set Movement.Away for account {AccountId}", accountId);
+                }
 
+                // Clear busy status if setting away
+                if (away)
+                {
+                    _busyStatuses.AddOrUpdate(accountId, false, (key, oldValue) => false);
+                }
+
+                // Update our own tracking - this is the authoritative source
                 var newStatus = away ? PresenceStatus.Away : PresenceStatus.Online;
                 _accountStatuses.AddOrUpdate(accountId, newStatus, (key, oldValue) => newStatus);
 
                 var statusText = away ? "Away" : "Online";
-                _logger.LogInformation("Set account {AccountId} away status to {Away}", accountId, away);
+                
+                // Update the WebRadegastInstance status as well so AccountService reflects the change
+                instance.UpdatePresenceStatus(statusText);
+                
+                _logger.LogInformation("Set account {AccountId} away status to {Away} (using internal tracking)", accountId, away);
                 
                 PresenceStatusChanged?.Invoke(this, new PresenceStatusChangedEventArgs
                 {
@@ -111,11 +134,32 @@ namespace RadegastWeb.Services
                 // Send the animation change
                 instance.Client.Self.Animate(busyAnimations, true);
 
+                // Clear away status if setting busy
+                if (busy)
+                {
+                    try
+                    {
+                        instance.Client.Self.Movement.Away = false;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to clear Movement.Away for account {AccountId}", accountId);
+                    }
+                }
+
+                // Track busy status separately since Movement doesn't have a Busy property
+                _busyStatuses.AddOrUpdate(accountId, busy, (key, oldValue) => busy);
+
+                // Update our authoritative tracking
                 var newStatus = busy ? PresenceStatus.Busy : PresenceStatus.Online;
                 _accountStatuses.AddOrUpdate(accountId, newStatus, (key, oldValue) => newStatus);
 
                 var statusText = busy ? "Busy" : "Online";
-                _logger.LogInformation("Set account {AccountId} busy status to {Busy}", accountId, busy);
+                
+                // Update the WebRadegastInstance status as well so AccountService reflects the change
+                instance.UpdatePresenceStatus(statusText);
+                
+                _logger.LogInformation("Set account {AccountId} busy status to {Busy} (using internal tracking)", accountId, busy);
                 
                 PresenceStatusChanged?.Invoke(this, new PresenceStatusChangedEventArgs
                 {
@@ -165,7 +209,67 @@ namespace RadegastWeb.Services
 
         public PresenceStatus GetAccountStatus(Guid accountId)
         {
-            return _accountStatuses.TryGetValue(accountId, out var status) ? status : PresenceStatus.Online;
+            // Get the SL client instance to check current status
+            var instance = _accountService.GetInstance(accountId);
+            if (instance != null && instance.IsConnected)
+            {
+                // Primary approach: Check our internal tracking first (most reliable)
+                if (_accountStatuses.TryGetValue(accountId, out var trackedStatus))
+                {
+                    // Verify the tracked status makes sense
+                    var isBusyTracked = _busyStatuses.TryGetValue(accountId, out var isBusy) && isBusy;
+                    
+                    if (trackedStatus == PresenceStatus.Away)
+                    {
+                        _logger.LogDebug("Account {AccountId} status: Away (from internal tracking)", accountId);
+                        instance.UpdatePresenceStatus("Away");
+                        return PresenceStatus.Away;
+                    }
+                    else if (trackedStatus == PresenceStatus.Busy || isBusyTracked)
+                    {
+                        _logger.LogDebug("Account {AccountId} status: Busy (from internal tracking)", accountId);
+                        instance.UpdatePresenceStatus("Busy");
+                        return PresenceStatus.Busy;
+                    }
+                }
+                
+                // Fallback: Try to check Movement.Away (may not be reliable)
+                try
+                {
+                    var isAway = instance.IsAway;
+                    _logger.LogDebug("Account {AccountId} fallback check: SL client IsAway={IsAway}", accountId, isAway);
+                    
+                    if (isAway)
+                    {
+                        var awayStatus = PresenceStatus.Away;
+                        _accountStatuses.AddOrUpdate(accountId, awayStatus, (key, oldValue) => awayStatus);
+                        instance.UpdatePresenceStatus("Away");
+                        return awayStatus;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error checking Movement.Away for account {AccountId}", accountId);
+                }
+
+                // Default to online for connected accounts
+                var onlineStatus = PresenceStatus.Online;
+                _accountStatuses.AddOrUpdate(accountId, onlineStatus, (key, oldValue) => onlineStatus);
+                instance.UpdatePresenceStatus("Online");
+                _logger.LogDebug("Account {AccountId} status: Online (default for connected)", accountId);
+                return onlineStatus;
+            }
+
+            // Fall back to cached status if client unavailable
+            if (_accountStatuses.TryGetValue(accountId, out var cachedStatus))
+            {
+                _logger.LogDebug("Account {AccountId} status: {Status} (cached, client unavailable)", accountId, cachedStatus);
+                return cachedStatus;
+            }
+
+            // Default to online if we can't determine status
+            _logger.LogDebug("Account {AccountId} status: Online (default, no cache or client)", accountId);
+            return PresenceStatus.Online;
         }
     }
 }

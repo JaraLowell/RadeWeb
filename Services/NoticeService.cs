@@ -34,9 +34,21 @@ namespace RadegastWeb.Services
         {
             try
             {
+                // Log all incoming instant messages to understand what's being processed
+                _logger.LogDebug("Processing incoming IM for notice check - AccountId: {AccountId}, Dialog: {Dialog}, FromAgentName: {FromAgentName}, Message: {Message}", 
+                    accountId, im.Dialog, im.FromAgentName, im.Message);
+
                 NoticeDto? notice = null;
                 string sessionId = "";
                 string displayMessage = "";
+
+                // Filter out status-related messages that shouldn't be processed as notices
+                if (IsStatusRelatedMessage(im))
+                {
+                    _logger.LogDebug("Skipping status-related message from being processed as notice - Dialog: {Dialog}, Message: {Message}", 
+                        im.Dialog, im.Message);
+                    return null;
+                }
 
                 switch (im.Dialog)
                 {
@@ -71,6 +83,12 @@ namespace RadegastWeb.Services
                             }
                         }
                         break;
+
+                    default:
+                        // Log unexpected dialog types that are reaching this processor
+                        _logger.LogDebug("Unexpected IM dialog type {Dialog} reached notice processor - FromAgentName: {FromAgentName}, Message: {Message}", 
+                            im.Dialog, im.FromAgentName, im.Message);
+                        break;
                 }
 
                 if (notice != null)
@@ -92,6 +110,44 @@ namespace RadegastWeb.Services
                 _logger.LogError(ex, "Error processing incoming notice for account {AccountId}", accountId);
                 return null;
             }
+        }
+
+        private bool IsStatusRelatedMessage(InstantMessage im)
+        {
+            // Check for known status-related messages that shouldn't be processed as notices
+            if (im.Dialog == InstantMessageDialog.FriendshipOffered ||
+                im.Dialog == InstantMessageDialog.FriendshipAccepted ||
+                im.Dialog == InstantMessageDialog.FriendshipDeclined)
+            {
+                return true;
+            }
+
+            // Check for specific status messages by content - these are often MessageFromAgent type
+            if (im.FromAgentName == "Second Life")
+            {
+                var message = im.Message?.ToLowerInvariant() ?? "";
+                if (message.Contains("is now online") || 
+                    message.Contains("is now offline") ||
+                    message.Contains("away") ||
+                    message.Contains("busy") ||
+                    message.Contains("status"))
+                {
+                    return true;
+                }
+            }
+
+            // Also check for messages that look like status updates from other agents
+            if (!string.IsNullOrEmpty(im.Message))
+            {
+                var message = im.Message.ToLowerInvariant();
+                if ((message.Contains("away") || message.Contains("busy") || message.Contains("online")) &&
+                    (message.Contains("status") || message.Length < 50)) // Short messages are likely status updates
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private Task<NoticeDto?> ProcessGroupNoticeAsync(Guid accountId, InstantMessage im)

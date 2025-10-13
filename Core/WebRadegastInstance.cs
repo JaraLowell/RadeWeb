@@ -886,6 +886,14 @@ namespace RadegastWeb.Core
         }
 
         /// <summary>
+        /// Updates the presence status (Away, Busy, Online) for this instance
+        /// </summary>
+        public void UpdatePresenceStatus(string presenceStatus)
+        {
+            UpdateStatus(presenceStatus);
+        }
+
+        /// <summary>
         /// Manually refresh display names for all nearby avatars
         /// Useful for immediate updates when requested by the UI
         /// </summary>
@@ -1564,10 +1572,22 @@ namespace RadegastWeb.Core
             }
 
             // Handle region notices from Second Life system
+            // But filter out status-related messages
             if (e.IM.Dialog == InstantMessageDialog.MessageFromAgent && e.IM.FromAgentName == "Second Life")
             {
-                await _noticeService.ProcessIncomingNoticeAsync(Guid.Parse(_accountId), e.IM);
-                return; // Don't process as regular IM
+                // Check if this is actually a status message that shouldn't be processed as a notice
+                if (!IsStatusOrFriendshipMessage(e.IM))
+                {
+                    await _noticeService.ProcessIncomingNoticeAsync(Guid.Parse(_accountId), e.IM);
+                    return; // Don't process as regular IM
+                }
+                else
+                {
+                    // This is a status/friendship message, let it fall through to normal IM processing
+                    // or just ignore it entirely if it's not meant for chat
+                    _logger.LogDebug("Received status/friendship message from Second Life, not processing as notice: {Message}", e.IM.Message);
+                    return; // Don't process these at all
+                }
             }
 
             // Filter out typing indicators and other non-chat dialogs
@@ -2232,6 +2252,37 @@ namespace RadegastWeb.Core
         /// Gets the local ID of the object the avatar is sitting on, or 0 if not sitting on an object
         /// </summary>
         public uint SittingOnLocalId => _client.Self.SittingOn;
+
+        /// <summary>
+        /// Gets whether the avatar is currently in away mode
+        /// </summary>
+        public bool IsAway 
+        { 
+            get 
+            { 
+                var isAway = _client.Self.Movement.Away;
+                _logger.LogDebug("Account {AccountId} IsAway check: Movement.Away = {IsAway}", _accountId, isAway);
+                return isAway;
+            } 
+        }
+
+        /// <summary>
+        /// Gets the current presence status based on avatar state
+        /// </summary>
+        public PresenceStatus GetCurrentPresenceStatus()
+        {
+            if (!_client.Network.Connected)
+                return PresenceStatus.Online;
+
+            // Check for away status first (Movement.Away is reliable)
+            if (_client.Self.Movement.Away)
+                return PresenceStatus.Away;
+
+            // For busy status, we need to check if the busy animation is currently playing
+            // This is more complex since we need to track it through our animation system
+            // For now, this will be handled by the PresenceService tracking
+            return PresenceStatus.Online;
+        }
         
         /// <summary>
         /// Event fired when sitting state changes
@@ -2362,6 +2413,41 @@ namespace RadegastWeb.Core
 
             // Record the visitor
             await _statsService.RecordVisitorAsync(avatarId, regionName, simHandle, avatarName, displayName);
+        }
+
+        #endregion
+
+        #region Helper Methods
+
+        /// <summary>
+        /// Checks if an instant message is a status or friendship related message that shouldn't be processed as a notice
+        /// </summary>
+        private bool IsStatusOrFriendshipMessage(InstantMessage im)
+        {
+            if (string.IsNullOrEmpty(im.Message))
+                return false;
+
+            var message = im.Message.ToLowerInvariant();
+            
+            // Check for friendship-related messages
+            if (im.Dialog == InstantMessageDialog.FriendshipOffered ||
+                im.Dialog == InstantMessageDialog.FriendshipAccepted ||
+                im.Dialog == InstantMessageDialog.FriendshipDeclined)
+            {
+                return true;
+            }
+
+            // Check for status-related messages by content
+            if (message.Contains("is now online") || 
+                message.Contains("is now offline") ||
+                message.Contains("away") ||
+                message.Contains("busy") ||
+                (message.Contains("status") && message.Length < 100)) // Short status messages
+            {
+                return true;
+            }
+
+            return false;
         }
 
         #endregion

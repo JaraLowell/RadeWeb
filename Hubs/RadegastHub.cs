@@ -578,6 +578,7 @@ namespace RadegastWeb.Hubs
                     return;
                 }
 
+                // Get the status from PresenceService, which will check the SL client if needed
                 var status = _presenceService.GetAccountStatus(accountGuid);
                 var statusText = status switch
                 {
@@ -587,7 +588,7 @@ namespace RadegastWeb.Hubs
                 };
 
                 await Clients.Caller.PresenceStatusChanged(accountId, status.ToString(), statusText);
-                _logger.LogInformation("Retrieved current presence status for account {AccountId}: {Status}", 
+                _logger.LogInformation("Retrieved and synced current presence status for account {AccountId}: {Status}", 
                     accountId, status);
             }
             catch (Exception ex)

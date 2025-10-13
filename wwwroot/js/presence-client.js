@@ -94,7 +94,19 @@ class RadegastWebClient {
                 
                 // If there's a current account and we're connected, sync its presence status
                 if (this.currentAccount && this.isConnected) {
+                    console.log('Loading accounts complete - syncing presence status');
                     await this.syncCurrentPresenceStatus();
+                }
+
+                // Also sync presence for all connected accounts to update the account list
+                for (const account of this.accounts) {
+                    if (account.isConnected && this.connection && this.isConnected) {
+                        try {
+                            await this.connection.invoke("GetCurrentPresenceStatus", account.accountId);
+                        } catch (error) {
+                            console.error(`Error syncing presence for account ${account.accountId}:`, error);
+                        }
+                    }
                 }
             } else {
                 console.error('Failed to load accounts');
@@ -382,10 +394,12 @@ class RadegastWebClient {
     // Sync current presence status from SL client
     async syncCurrentPresenceStatus() {
         if (!this.currentAccount || !this.connection || !this.isConnected) {
+            console.log('Skipping presence sync - no account or not connected');
             return;
         }
 
         try {
+            console.log(`Syncing presence status for account: ${this.currentAccount}`);
             await this.connection.invoke("GetCurrentPresenceStatus", this.currentAccount);
         } catch (error) {
             console.error('Error syncing presence status:', error);
