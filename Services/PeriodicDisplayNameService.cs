@@ -148,9 +148,9 @@ namespace RadegastWeb.Services
                     return (0, 0);
                 }
 
-                // Get nearby avatars from the instance
-                var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
-                var avatarList = nearbyAvatars.ToList();
+                // Get nearby avatar data directly without triggering display name lookups (avoids circular calls)
+                var nearbyAvatarData = await instance.GetNearbyAvatarDataAsync();
+                var avatarList = nearbyAvatarData.ToList();
                 
                 if (avatarList.Count == 0)
                 {
@@ -164,29 +164,30 @@ namespace RadegastWeb.Services
                 var avatarsNeedingUpdate = new List<string>();
                 var cutoffTime = DateTime.UtcNow - _minimumCacheDuration;
 
-                foreach (var avatar in avatarList.Take(MaxAvatarsPerCycle))
+                foreach (var (avatarId, avatarName, position) in avatarList.Take(MaxAvatarsPerCycle))
                 {
                     try
                     {
-                        var cachedDisplayName = await _globalDisplayNameCache.GetCachedDisplayNameAsync(avatar.Id);
+                        var cachedDisplayName = await _globalDisplayNameCache.GetCachedDisplayNameAsync(avatarId);
                         
                         // Check if we need to update this avatar's display name
                         bool needsUpdate = cachedDisplayName == null ||
                                          cachedDisplayName.LastUpdated < cutoffTime ||
                                          DateTime.UtcNow > cachedDisplayName.NextUpdate ||
                                          string.IsNullOrEmpty(cachedDisplayName.DisplayNameValue) ||
-                                         cachedDisplayName.DisplayNameValue == "Loading...";
+                                         cachedDisplayName.DisplayNameValue == "Loading..." ||
+                                         cachedDisplayName.DisplayNameValue == "???";
 
                         if (needsUpdate)
                         {
-                            avatarsNeedingUpdate.Add(avatar.Id);
+                            avatarsNeedingUpdate.Add(avatarId);
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogDebug(ex, "Error checking cache for avatar {AvatarId}", avatar.Id);
+                        _logger.LogDebug(ex, "Error checking cache for avatar {AvatarId}", avatarId);
                         // If we can't check the cache, assume it needs updating
-                        avatarsNeedingUpdate.Add(avatar.Id);
+                        avatarsNeedingUpdate.Add(avatarId);
                     }
                 }
 

@@ -2,26 +2,28 @@ using System.Collections.Concurrent;
 using Microsoft.Extensions.Caching.Memory;
 using OpenMetaverse;
 using RadegastWeb.Core;
+using RadegastWeb.Models;
 
 namespace RadegastWeb.Services
 {
-    public class NameResolutionService : INameResolutionService
+public class NameResolutionService : INameResolutionService
+{
+    private readonly ILogger<NameResolutionService> _logger;
+    private readonly IMemoryCache _cache;
+    private readonly ConcurrentDictionary<Guid, object> _instances;
+    private readonly IGlobalDisplayNameCache _globalDisplayNameCache;
+    private readonly TimeSpan _cacheExpiry = TimeSpan.FromMinutes(15);
+
+    public NameResolutionService(
+        ILogger<NameResolutionService> logger,
+        IMemoryCache cache,
+        IGlobalDisplayNameCache globalDisplayNameCache)
     {
-        private readonly ILogger<NameResolutionService> _logger;
-        private readonly IMemoryCache _cache;
-        private readonly ConcurrentDictionary<Guid, object> _instances;
-        private readonly TimeSpan _cacheExpiry = TimeSpan.FromMinutes(15);
-
-        public NameResolutionService(
-            ILogger<NameResolutionService> logger,
-            IMemoryCache cache)
-        {
-            _logger = logger;
-            _cache = cache;
-            _instances = new ConcurrentDictionary<Guid, object>();
-        }
-
-        public void RegisterInstance(Guid accountId, object instance)
+        _logger = logger;
+        _cache = cache;
+        _globalDisplayNameCache = globalDisplayNameCache;
+        _instances = new ConcurrentDictionary<Guid, object>();
+    }        public void RegisterInstance(Guid accountId, object instance)
         {
             if (instance is WebRadegastInstance webInstance)
             {
@@ -38,6 +40,17 @@ namespace RadegastWeb.Services
 
         public async Task<string> ResolveAgentNameAsync(Guid accountId, UUID agentId, ResolveType resolveType = ResolveType.AgentDefaultName, int timeoutMs = 5000)
         {
+            // For display name-related requests, delegate to the global cache to avoid duplication
+            switch (resolveType)
+            {
+                case ResolveType.AgentDisplayName:
+                    return await _globalDisplayNameCache.GetDisplayNameAsync(agentId.ToString(), NameDisplayMode.OnlyDisplayName);
+                case ResolveType.AgentUsername:
+                    return await _globalDisplayNameCache.GetUserNameAsync(agentId.ToString());
+                case ResolveType.AgentDefaultName:
+                    return await _globalDisplayNameCache.GetDisplayNameAsync(agentId.ToString(), NameDisplayMode.Smart);
+            }
+            
             var cacheKey = $"agent_{accountId}_{agentId}_{resolveType}";
             
             // Check cache first
@@ -88,12 +101,7 @@ namespace RadegastWeb.Services
 
                 client.Avatars.UUIDNameReply += nameHandler;
 
-                // For display names, we need a different approach
-                if (resolveType == ResolveType.AgentDisplayName)
-                {
-                    // We'll handle display names through the normal name resolution for now
-                    // and integrate with the display name service later if needed
-                }
+                // Display names are handled above via global cache delegation
 
                 // Request name lookup
                 var requestList = new List<UUID> { agentId };
@@ -342,6 +350,19 @@ namespace RadegastWeb.Services
 
         public string? GetCachedName(Guid accountId, UUID id, ResolveType type)
         {
+            // For display name-related requests, delegate to the global cache
+            switch (type)
+            {
+                case ResolveType.AgentDisplayName:
+                    return _globalDisplayNameCache.GetCachedDisplayName(id.ToString(), NameDisplayMode.OnlyDisplayName);
+                case ResolveType.AgentUsername:
+                    // Get the cached display name object to extract username
+                    var cachedDisplayName = _globalDisplayNameCache.GetCachedDisplayNameAsync(id.ToString()).GetAwaiter().GetResult();
+                    return cachedDisplayName?.UserName;
+                case ResolveType.AgentDefaultName:
+                    return _globalDisplayNameCache.GetCachedDisplayName(id.ToString(), NameDisplayMode.Smart);
+            }
+            
             var cacheKey = type switch
             {
                 ResolveType.Group => $"group_{accountId}_{id}",

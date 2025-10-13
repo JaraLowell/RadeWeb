@@ -49,6 +49,7 @@ namespace RadegastWeb.Core
         public event EventHandler<string>? AvatarRemoved; // UUID string
         public event EventHandler<AvatarDto>? AvatarUpdated; // New event for display name changes
         public event EventHandler<RegionInfoDto>? RegionChanged;
+        public event EventHandler<string>? OwnDisplayNameChanged; // New event for our own display name changes
         public event EventHandler<ChatSessionDto>? ChatSessionUpdated;
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
 
@@ -165,6 +166,9 @@ namespace RadegastWeb.Core
             // Subscribe to display name changes from our service
             _displayNameService.DisplayNameChanged += DisplayNameService_DisplayNameChanged;
             
+            // Subscribe to global display name cache changes
+            _globalDisplayNameCache.DisplayNameChanged += GlobalDisplayNameCache_DisplayNameChanged;
+            
             // Subscribe to notice events
             _noticeService.NoticeReceived += NoticeService_NoticeReceived;
         }
@@ -195,6 +199,9 @@ namespace RadegastWeb.Core
             
             // Unsubscribe from display name changes
             _displayNameService.DisplayNameChanged -= DisplayNameService_DisplayNameChanged;
+            
+            // Unsubscribe from global display name cache changes
+            _globalDisplayNameCache.DisplayNameChanged -= GlobalDisplayNameCache_DisplayNameChanged;
             
             // Unsubscribe from notice events
             _noticeService.NoticeReceived -= NoticeService_NoticeReceived;
@@ -246,10 +253,14 @@ namespace RadegastWeb.Core
                             
                             // Update the account's display name if it's different from the legacy format
                             var legacyName = $"{AccountInfo.FirstName} {AccountInfo.LastName}";
-                            if (!string.IsNullOrEmpty(ownDisplayName) && ownDisplayName != legacyName && ownDisplayName != "Loading...")
+                            if (!string.IsNullOrEmpty(ownDisplayName) && ownDisplayName != legacyName && ownDisplayName != "Loading..." && ownDisplayName != AccountInfo.DisplayName)
                             {
+                                var oldDisplayName = AccountInfo.DisplayName;
                                 AccountInfo.DisplayName = ownDisplayName;
-                                _logger.LogInformation("Updated account display name to: {DisplayName}", ownDisplayName);
+                                _logger.LogInformation("Updated account display name from '{OldDisplayName}' to: '{NewDisplayName}'", oldDisplayName, ownDisplayName);
+                                
+                                // Fire event to notify listeners (like AccountService) that our display name changed
+                                OwnDisplayNameChanged?.Invoke(this, ownDisplayName);
                                 
                                 // Trigger a status update to refresh the UI
                                 UpdateStatus(AccountInfo.Status);
@@ -371,6 +382,32 @@ namespace RadegastWeb.Core
                         {
                             // Fall back to account-specific service
                             targetDisplayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), targetId);
+                        }
+                        
+                        // If the display name is still invalid, proactively request a fresh one
+                        if (string.IsNullOrWhiteSpace(targetDisplayName) || targetDisplayName == "Loading..." || targetDisplayName == "???")
+                        {
+                            targetDisplayName = "Unknown User"; // Temporary fallback
+                            
+                            // Proactively request a proper display name for future use
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    // Request display name refresh for this avatar
+                                    await _displayNameService.RefreshDisplayNameAsync(Guid.Parse(_accountId), targetId);
+                                    
+                                    // Also trigger a legacy name request as fallback
+                                    if (_client.Network.Connected && UUID.TryParse(targetId, out UUID avatarUUID))
+                                    {
+                                        _client.Avatars.RequestAvatarNames(new List<UUID> { avatarUUID });
+                                    }
+                                }
+                                catch (Exception refreshEx)
+                                {
+                                    _logger.LogDebug(refreshEx, "Error requesting name refresh for IM target {TargetId}", targetId);
+                                }
+                            });
                         }
                         
                         var session = new ChatSessionDto
@@ -530,9 +567,36 @@ namespace RadegastWeb.Core
             }
         }
 
+        /// <summary>
+        /// Gets the raw avatar data (IDs and basic info) for nearby avatars without triggering display name lookups.
+        /// Used by PeriodicDisplayNameService to avoid circular dependencies.
+        /// </summary>
+        public Task<IEnumerable<(string Id, string Name, Vector3 Position)>> GetNearbyAvatarDataAsync()
+        {
+            var avatarData = new List<(string Id, string Name, Vector3 Position)>();
+            
+            // Add detailed avatars
+            foreach (var avatar in _nearbyAvatars.Values)
+            {
+                avatarData.Add((avatar.ID.ToString(), avatar.Name ?? "Unknown", avatar.Position));
+            }
+            
+            // Add coarse location avatars that aren't already detailed
+            var detailedIds = new HashSet<string>(_nearbyAvatars.Keys.Select(id => id.ToString()));
+            foreach (var coarseAvatar in _coarseLocationAvatars.Values)
+            {
+                if (!detailedIds.Contains(coarseAvatar.ID.ToString()))
+                {
+                    avatarData.Add((coarseAvatar.ID.ToString(), coarseAvatar.Name ?? "Unknown", coarseAvatar.Position));
+                }
+            }
+            
+            return Task.FromResult(avatarData.AsEnumerable());
+        }
+
         public async Task<IEnumerable<AvatarDto>> GetNearbyAvatarsAsync()
         {
-            // First, proactively ensure all nearby avatar display names are loading
+            // First, proactively ensure all nearby avatar display names are loading using the global cache
             var allAvatarIds = new List<string>();
             
             // Collect IDs from both detailed and coarse location avatars
@@ -541,12 +605,12 @@ namespace RadegastWeb.Core
             
             if (allAvatarIds.Count > 0)
             {
-                // Fire and forget - start loading names in background
+                // Fire and forget - start loading names in background through global cache
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), allAvatarIds.Distinct().ToList());
+                        await _globalDisplayNameCache.PreloadDisplayNamesAsync(allAvatarIds.Distinct().ToList());
                     }
                     catch (Exception ex)
                     {
@@ -608,6 +672,18 @@ namespace RadegastWeb.Core
             var displayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
             var legacyName = await _displayNameService.GetLegacyNameAsync(Guid.Parse(_accountId), avatar.ID.ToString(), avatarName);
             
+            // Fallback to avatar name if display name is invalid
+            if (string.IsNullOrWhiteSpace(displayName) || displayName == "Loading..." || displayName == "???")
+            {
+                displayName = avatarName;
+            }
+            
+            // Fallback to avatar name if legacy name is invalid
+            if (string.IsNullOrWhiteSpace(legacyName) || legacyName == "Loading..." || legacyName == "???")
+            {
+                legacyName = avatarName;
+            }
+            
             return new AvatarDto
             {
                 Id = avatar.ID.ToString(),
@@ -629,7 +705,10 @@ namespace RadegastWeb.Core
             {
                 // Check if we have the display name in global cache
                 var cachedName = _globalDisplayNameCache.GetCachedDisplayName(avatar.ID.ToString());
-                if (!string.IsNullOrEmpty(cachedName) && cachedName != "Loading...")
+                if (!string.IsNullOrWhiteSpace(cachedName) && 
+                    cachedName != "Loading..." && 
+                    cachedName != "???" &&
+                    cachedName != avatarName) // Don't replace with same value
                 {
                     displayName = cachedName;
                 }
@@ -671,7 +750,7 @@ namespace RadegastWeb.Core
             var avatarName = coarseAvatar.Name;
             if (string.IsNullOrEmpty(avatarName) || avatarName == "Loading...")
             {
-                avatarName = "Loading...";
+                avatarName = "Unknown User";
                 // Try to get the name asynchronously
                 _ = Task.Run(async () =>
                 {
@@ -705,7 +784,7 @@ namespace RadegastWeb.Core
             var avatarName = coarseAvatar.Name;
             if (string.IsNullOrEmpty(avatarName) || avatarName == "Loading...")
             {
-                avatarName = "Loading...";
+                avatarName = "Unknown User";
                 // Request name lookup
                 _ = Task.Run(async () =>
                 {
@@ -1074,41 +1153,43 @@ namespace RadegastWeb.Core
                 }
             }
 
-            // Get display name for the avatar with fallback to avatar name
-            // Try global cache first, then fall back to account-specific service
+            // Get display name for the avatar through global cache
             var avatarName = e.Avatar.Name ?? "Unknown";
             var displayName = avatarName;
             
             try
             {
                 displayName = await _globalDisplayNameCache.GetDisplayNameAsync(e.Avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
-                if (displayName == "Loading..." || string.IsNullOrEmpty(displayName))
+                
+                // If we don't have a good display name, proactively request it
+                if (displayName == "Loading..." || string.IsNullOrEmpty(displayName) || 
+                    displayName == "???" || displayName == avatarName)
                 {
-                    // Fall back to account-specific service
-                    displayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), e.Avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
-                    
-                    // If we still don't have a good name, proactively request it
-                    if (displayName == "Loading..." || string.IsNullOrEmpty(displayName) || displayName == avatarName)
+                    _ = Task.Run(async () =>
                     {
-                        _ = Task.Run(async () =>
+                        try
                         {
-                            try
+                            // Request display name through global cache
+                            var success = await _globalDisplayNameCache.RequestDisplayNamesAsync(
+                                new List<string> { e.Avatar.ID.ToString() }, 
+                                Guid.Parse(_accountId));
+                            
+                            if (!success)
                             {
-                                // Request display name refresh for this avatar
-                                await _displayNameService.RefreshDisplayNameAsync(Guid.Parse(_accountId), e.Avatar.ID.ToString());
+                                _logger.LogDebug("Failed to request display name for avatar {AvatarId}, trying legacy request", e.Avatar.ID);
                                 
-                                // Also trigger a legacy name request as fallback
+                                // Fallback to legacy name request if display names fail
                                 if (_client.Network.Connected)
                                 {
                                     _client.Avatars.RequestAvatarNames(new List<UUID> { e.Avatar.ID });
                                 }
                             }
-                            catch (Exception refreshEx)
-                            {
-                                _logger.LogDebug(refreshEx, "Error requesting name refresh for avatar {AvatarId}", e.Avatar.ID);
-                            }
-                        });
-                    }
+                        }
+                        catch (Exception refreshEx)
+                        {
+                            _logger.LogDebug(refreshEx, "Error requesting name refresh for avatar {AvatarId}", e.Avatar.ID);
+                        }
+                    });
                 }
             }
             catch (Exception ex)
@@ -1288,7 +1369,7 @@ namespace RadegastWeb.Core
                         continue;
 
                     // Update or create coarse location avatar
-                    var avatarName = detailedAvatar?.Name ?? "Loading...";
+                    var avatarName = detailedAvatar?.Name ?? "Unknown User";
                     
                     if (_coarseLocationAvatars.TryGetValue(avatarPos.Key, out var existing))
                     {
@@ -1469,33 +1550,32 @@ namespace RadegastWeb.Core
             string targetId;
 
             // Get display name for the sender using global cache first
-            var senderDisplayName = await _globalDisplayNameCache.GetDisplayNameAsync(e.IM.FromAgentID.ToString(), NameDisplayMode.Smart);
-            if (senderDisplayName == "Loading..." || string.IsNullOrEmpty(senderDisplayName))
+            var senderDisplayName = await _globalDisplayNameCache.GetDisplayNameAsync(e.IM.FromAgentID.ToString(), NameDisplayMode.Smart, e.IM.FromAgentName);
+            
+            // If the display name is invalid, use the fallback name from the message
+            if (string.IsNullOrWhiteSpace(senderDisplayName) || senderDisplayName == "Loading..." || senderDisplayName == "???")
             {
-                senderDisplayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), e.IM.FromAgentID.ToString(), NameDisplayMode.Smart, e.IM.FromAgentName);
+                senderDisplayName = !string.IsNullOrWhiteSpace(e.IM.FromAgentName) ? e.IM.FromAgentName : "Unknown User";
                 
-                // If we still don't have a good name, proactively request it
-                if (senderDisplayName == "Loading..." || string.IsNullOrEmpty(senderDisplayName) || senderDisplayName == e.IM.FromAgentName)
+                // Proactively request a proper display name for future use
+                _ = Task.Run(async () =>
                 {
-                    _ = Task.Run(async () =>
+                    try
                     {
-                        try
+                        // Request display name refresh for this avatar
+                        await _displayNameService.RefreshDisplayNameAsync(Guid.Parse(_accountId), e.IM.FromAgentID.ToString());
+                        
+                        // Also trigger a legacy name request as fallback
+                        if (_client.Network.Connected)
                         {
-                            // Request display name refresh for this avatar
-                            await _displayNameService.RefreshDisplayNameAsync(Guid.Parse(_accountId), e.IM.FromAgentID.ToString());
-                            
-                            // Also trigger a legacy name request as fallback
-                            if (_client.Network.Connected)
-                            {
-                                _client.Avatars.RequestAvatarNames(new List<UUID> { e.IM.FromAgentID });
-                            }
+                            _client.Avatars.RequestAvatarNames(new List<UUID> { e.IM.FromAgentID });
                         }
-                        catch (Exception refreshEx)
-                        {
-                            _logger.LogDebug(refreshEx, "Error requesting name refresh for IM sender {FromAgentId}", e.IM.FromAgentID);
-                        }
-                    });
-                }
+                    }
+                    catch (Exception refreshEx)
+                    {
+                        _logger.LogDebug(refreshEx, "Error requesting name refresh for IM sender {FromAgentId}", e.IM.FromAgentID);
+                    }
+                });
             }
 
             switch (e.IM.Dialog)
@@ -1865,10 +1945,14 @@ namespace RadegastWeb.Core
                         
                     var legacyName = $"{AccountInfo.FirstName} {AccountInfo.LastName}";
                     
-                    if (!string.IsNullOrEmpty(newDisplayName) && newDisplayName != legacyName)
+                    if (!string.IsNullOrEmpty(newDisplayName) && newDisplayName != legacyName && newDisplayName != AccountInfo.DisplayName)
                     {
+                        var oldDisplayName = AccountInfo.DisplayName;
                         AccountInfo.DisplayName = newDisplayName;
-                        _logger.LogInformation("Updated own display name to: {DisplayName}", newDisplayName);
+                        _logger.LogInformation("Updated own display name from '{OldDisplayName}' to: '{NewDisplayName}'", oldDisplayName, newDisplayName);
+                        
+                        // Fire event to notify listeners (like AccountService) that our display name changed
+                        OwnDisplayNameChanged?.Invoke(this, newDisplayName);
                         
                         // Trigger status update to broadcast the change
                         UpdateStatus(AccountInfo.Status);
@@ -1881,6 +1965,49 @@ namespace RadegastWeb.Core
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error updating display name for account {AccountId}", _accountId);
+            }
+        }
+        
+        private void GlobalDisplayNameCache_DisplayNameChanged(object? sender, DisplayNameChangedEventArgs e)
+        {
+            try
+            {
+                // Check if this avatar is in our nearby avatars list
+                if (UUID.TryParse(e.AvatarId, out var avatarUuid) && _nearbyAvatars.TryGetValue(avatarUuid, out var avatar))
+                {
+                    // Create updated avatar DTO with new display name
+                    var avatarDto = new AvatarDto
+                    {
+                        Id = e.AvatarId,
+                        Name = e.DisplayName.LegacyFullName,
+                        DisplayName = e.DisplayName.DisplayNameValue,
+                        Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
+                        Status = "Online",
+                        AccountId = Guid.Parse(_accountId)
+                    };
+                    
+                    // Fire the avatar updated event
+                    AvatarUpdated?.Invoke(this, avatarDto);
+                    
+                    _logger.LogDebug("Updated nearby avatar display name (global cache) for {AvatarId} to '{NewName}'", 
+                        e.AvatarId, e.DisplayName.DisplayNameValue);
+                }
+                
+                // Check if this avatar has an active IM session and update the session name
+                var imSessionId = $"im-{e.AvatarId}";
+                if (_chatSessions.TryGetValue(imSessionId, out var imSession))
+                {
+                    var oldSessionName = imSession.SessionName;
+                    imSession.SessionName = e.DisplayName.DisplayNameValue;
+                    ChatSessionUpdated?.Invoke(this, imSession);
+                    
+                    _logger.LogDebug("Updated IM session display name (global cache) for {AvatarId} from '{OldName}' to '{NewName}'", 
+                        e.AvatarId, oldSessionName, e.DisplayName.DisplayNameValue);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling global display name change for avatar {AvatarId}", e.AvatarId);
             }
         }
         
@@ -1907,6 +2034,18 @@ namespace RadegastWeb.Core
                     
                     _logger.LogDebug("Updated nearby avatar display name for {AvatarId} to '{NewName}'", 
                         e.AvatarId, e.DisplayName.DisplayNameValue);
+                }
+                
+                // Check if this avatar has an active IM session and update the session name
+                var imSessionId = $"im-{e.AvatarId}";
+                if (_chatSessions.TryGetValue(imSessionId, out var imSession))
+                {
+                    var oldSessionName = imSession.SessionName;
+                    imSession.SessionName = e.DisplayName.DisplayNameValue;
+                    ChatSessionUpdated?.Invoke(this, imSession);
+                    
+                    _logger.LogDebug("Updated IM session display name for {AvatarId} from '{OldName}' to '{NewName}'", 
+                        e.AvatarId, oldSessionName, e.DisplayName.DisplayNameValue);
                 }
             }
             catch (Exception ex)

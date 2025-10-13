@@ -293,6 +293,27 @@ namespace RadegastWeb.Services
                         }
                     };
                     
+                    // Subscribe specifically to our own display name changes for immediate database updates
+                    instance.OwnDisplayNameChanged += async (sender, newDisplayName) =>
+                    {
+                        account.DisplayName = newDisplayName;
+                        try
+                        {
+                            using var context = CreateDbContext();
+                            var dbAccount = await context.Accounts.FindAsync(id);
+                            if (dbAccount != null)
+                            {
+                                dbAccount.DisplayName = newDisplayName;
+                                await context.SaveChangesAsync();
+                                _logger.LogInformation("Updated account {AccountId} display name in database to: '{DisplayName}'", id, newDisplayName);
+                            }
+                        }
+                        catch (Exception dbEx)
+                        {
+                            _logger.LogError(dbEx, "Failed to update account {AccountId} display name in database to '{DisplayName}'", id, newDisplayName);
+                        }
+                    };
+                    
                     // Update the database
                     try
                     {

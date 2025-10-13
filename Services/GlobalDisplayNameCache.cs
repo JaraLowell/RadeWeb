@@ -12,6 +12,11 @@ namespace RadegastWeb.Services
     /// Global display name cache that spans all accounts to reduce duplicate requests
     /// and improve performance across multiple concurrent Second Life connections.
     /// Based on Radegast's NameManager implementation.
+    /// 
+    /// IMPORTANT: This cache protects existing display names from being overwritten
+    /// with invalid names (null, "", "Loading...") or legacy names when a valid 
+    /// custom display name already exists. This prevents display name degradation
+    /// when multiple accounts login concurrently.
     /// </summary>
     public interface IGlobalDisplayNameCache
     {
@@ -270,17 +275,19 @@ namespace RadegastWeb.Services
             // Only update if:
             // 1. We don't have an existing name, OR
             // 2. The new name is valid and the existing name is invalid, OR  
-            // 3. Both names are valid but the new one is different (an actual update)
+            // 3. Both names are valid but the new one is different (an actual update), AND
+            // 4. Don't overwrite a custom display name with a default/legacy name unless the existing is invalid
             bool shouldUpdate = existingName == null ||
                                (isNewNameValid && !isExistingNameValid) ||
                                (isNewNameValid && isExistingNameValid && 
-                                !existingName.DisplayNameValue.Equals(displayName.DisplayNameValue, StringComparison.Ordinal));
+                                !existingName.DisplayNameValue.Equals(displayName.DisplayNameValue, StringComparison.Ordinal) &&
+                                !(displayName.IsDefaultDisplayName && !existingName.IsDefaultDisplayName)); // Don't overwrite custom with default
             
             if (!shouldUpdate)
             {
-                _logger.LogDebug("Skipping display name update for {AvatarId}: new='{NewName}' (valid={NewValid}), existing='{ExistingName}' (valid={ExistingValid})", 
-                    displayName.AvatarId, displayName.DisplayNameValue, isNewNameValid, 
-                    existingName?.DisplayNameValue, isExistingNameValid);
+                _logger.LogDebug("PROTECTED: Skipping display name update for {AvatarId}: new='{NewName}' (valid={NewValid}, default={NewDefault}), existing='{ExistingName}' (valid={ExistingValid}, default={ExistingDefault})", 
+                    displayName.AvatarId, displayName.DisplayNameValue, isNewNameValid, displayName.IsDefaultDisplayName,
+                    existingName?.DisplayNameValue, isExistingNameValid, existingName?.IsDefaultDisplayName ?? true);
                 return;
             }
 
@@ -361,6 +368,22 @@ namespace RadegastWeb.Services
                 var firstName = parts[0];
                 var lastName = parts[1];
                 var userName = lastName == "Resident" ? firstName.ToLower() : $"{firstName}.{lastName}".ToLower();
+
+                // Check if we already have a display name for this avatar
+                var existingName = _globalNameCache.TryGetValue(avatarId, out var existing) ? existing : null;
+                var isExistingNameValid = existingName != null && !IsInvalidNameValue(existingName.DisplayNameValue);
+                
+                // Only update with legacy name if:
+                // 1. We don't have an existing name, OR
+                // 2. The existing name is invalid/placeholder (Loading..., ???, etc.)
+                // 
+                // NEVER overwrite a valid display name with a legacy name
+                if (existingName != null && isExistingNameValid)
+                {
+                    _logger.LogDebug("PROTECTED: Skipping legacy name update for {AvatarId}: existing valid display name '{ExistingName}' (custom={IsCustom}), not overwriting with legacy name '{LegacyName}'", 
+                        avatarId, existingName.DisplayNameValue, !existingName.IsDefaultDisplayName, fullName);
+                    continue;
+                }
 
                 var displayName = new DisplayName
                 {
@@ -595,15 +618,35 @@ namespace RadegastWeb.Services
 
                     if (existing != null)
                     {
-                        // Update existing global record
-                        existing.DisplayNameValue = name.DisplayNameValue;
-                        existing.UserName = name.UserName;
-                        existing.LegacyFirstName = name.LegacyFirstName;
-                        existing.LegacyLastName = name.LegacyLastName;
-                        existing.IsDefaultDisplayName = name.IsDefaultDisplayName;
-                        existing.NextUpdate = name.NextUpdate;
-                        existing.LastUpdated = name.LastUpdated;
-                        existing.CachedAt = DateTime.UtcNow;
+                        // Only update if the new display name is valid or if the existing one is also invalid
+                        var isNewNameValid = !IsInvalidNameValue(name.DisplayNameValue);
+                        var isExistingNameValid = !IsInvalidNameValue(existing.DisplayNameValue);
+                        
+                        // Only update if:
+                        // 1. New name is valid and existing is invalid, OR
+                        // 2. Both names are valid but different (actual update)
+                        bool shouldUpdate = (isNewNameValid && !isExistingNameValid) ||
+                                          (isNewNameValid && isExistingNameValid && 
+                                           !existing.DisplayNameValue.Equals(name.DisplayNameValue, StringComparison.Ordinal));
+                        
+                        if (shouldUpdate)
+                        {
+                            // Update existing global record
+                            existing.DisplayNameValue = name.DisplayNameValue;
+                            existing.UserName = name.UserName;
+                            existing.LegacyFirstName = name.LegacyFirstName;
+                            existing.LegacyLastName = name.LegacyLastName;
+                            existing.IsDefaultDisplayName = name.IsDefaultDisplayName;
+                            existing.NextUpdate = name.NextUpdate;
+                            existing.LastUpdated = name.LastUpdated;
+                            existing.CachedAt = DateTime.UtcNow;
+                        }
+                        else
+                        {
+                            // Skip this update but still update LastUpdated to track processing
+                            existing.LastUpdated = name.LastUpdated;
+                            existing.CachedAt = DateTime.UtcNow;
+                        }
                     }
                     else
                     {
