@@ -295,6 +295,18 @@ namespace RadegastWeb.Hubs
             }
         }
 
+        public async Task HandleBrowserReturn()
+        {
+            try
+            {
+                await _presenceService.HandleBrowserReturnAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling browser return via SignalR");
+            }
+        }
+
         public async Task AcknowledgeNotice(string accountId, string noticeId)
         {
             try
@@ -559,6 +571,18 @@ namespace RadegastWeb.Hubs
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             _logger.LogInformation("Client disconnected: {ConnectionId}", Context.ConnectionId);
+            
+            // Automatically set all accounts to away when client disconnects unexpectedly
+            try
+            {
+                await _presenceService.HandleBrowserCloseAsync();
+                _logger.LogInformation("Set accounts to away due to client disconnect");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error setting accounts to away on client disconnect");
+            }
+            
             await base.OnDisconnectedAsync(exception);
         }
     }

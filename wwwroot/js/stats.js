@@ -253,7 +253,16 @@ class StatsManager {
             .slice(0, 20);
 
         tbody.innerHTML = recentVisitors.map(visitor => {
-            const displayName = visitor.displayName || visitor.avatarName || 'Unknown';
+            // Use the best available name, preferring display name over legacy name
+            let displayName = 'Unknown';
+            if (visitor.displayName && visitor.displayName !== 'Loading...' && visitor.displayName !== '???') {
+                displayName = visitor.displayName;
+            } else if (visitor.avatarName && visitor.avatarName !== 'Unknown User' && visitor.avatarName !== 'Loading...') {
+                displayName = visitor.avatarName;
+            } else if (visitor.avatarId) {
+                // Show a truncated avatar ID as last resort instead of just "Unknown"
+                displayName = `Avatar ${visitor.avatarId.substring(0, 8)}...`;
+            }
             const firstSeen = this.formatDateTime(visitor.firstSeen);
             const lastSeen = this.formatDateTime(visitor.lastSeen);
             

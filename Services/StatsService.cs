@@ -132,12 +132,30 @@ namespace RadegastWeb.Services
                 
                 if (existingRecord != null)
                 {
-                    // Update last seen time and names if provided
+                    // Update last seen time and names if provided and better than existing
                     existingRecord.LastSeenAt = now;
-                    if (!string.IsNullOrEmpty(avatarName))
+                    
+                    // Update avatar name if we have a better one (not null/empty and not generic)
+                    if (!string.IsNullOrEmpty(avatarName) && 
+                        avatarName != "Unknown User" && 
+                        avatarName != "Loading..." &&
+                        (string.IsNullOrEmpty(existingRecord.AvatarName) || 
+                         existingRecord.AvatarName == "Unknown User" ||
+                         existingRecord.AvatarName == "Loading..."))
+                    {
                         existingRecord.AvatarName = avatarName;
-                    if (!string.IsNullOrEmpty(displayName))
+                    }
+                    
+                    // Update display name if we have a better one
+                    if (!string.IsNullOrEmpty(displayName) && 
+                        displayName != "Loading..." &&
+                        displayName != "???" &&
+                        (string.IsNullOrEmpty(existingRecord.DisplayName) || 
+                         existingRecord.DisplayName == "Loading..." ||
+                         existingRecord.DisplayName == "???"))
+                    {
                         existingRecord.DisplayName = displayName;
+                    }
                 }
                 else
                 {

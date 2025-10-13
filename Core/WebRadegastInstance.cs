@@ -1216,12 +1216,23 @@ namespace RadegastWeb.Core
             AvatarAdded?.Invoke(this, avatarDto);
             UpdateRegionInfo();
             
-            // Record visitor statistics (fire and forget to avoid blocking)
+            // Record visitor statistics with delay for name resolution (fire and forget to avoid blocking)
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await RecordVisitorStatAsync(e.Avatar.ID.ToString(), avatarName, displayName);
+                    // Wait a few seconds to allow name resolution to complete
+                    await Task.Delay(3000);
+                    
+                    // Get the most current display name after delay
+                    var resolvedDisplayName = await _globalDisplayNameCache.GetDisplayNameAsync(e.Avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
+                    
+                    // Use resolved name if available, otherwise fall back to original
+                    var finalDisplayName = (!string.IsNullOrEmpty(resolvedDisplayName) && resolvedDisplayName != "Loading...") 
+                        ? resolvedDisplayName 
+                        : displayName;
+                    
+                    await RecordVisitorStatAsync(e.Avatar.ID.ToString(), avatarName, finalDisplayName);
                 }
                 catch (Exception ex)
                 {
