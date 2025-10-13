@@ -13,6 +13,7 @@ namespace RadegastWeb.Data
         public DbSet<ChatMessage> ChatMessages { get; set; }
         public DbSet<GlobalDisplayName> GlobalDisplayNames { get; set; }
         public DbSet<Notice> Notices { get; set; }
+        public DbSet<VisitorStats> VisitorStats { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -119,6 +120,39 @@ namespace RadegastWeb.Data
                 // Create index for last updated for efficient lookups
                 entity.HasIndex(e => e.LastUpdated)
                       .HasDatabaseName("IX_GlobalDisplayName_LastUpdated");
+            });
+
+            // Configure VisitorStats entity
+            modelBuilder.Entity<VisitorStats>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.AvatarId).IsRequired().HasMaxLength(36);
+                entity.Property(e => e.RegionName).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.SimHandle).IsRequired();
+                entity.Property(e => e.VisitDate).IsRequired();
+                entity.Property(e => e.FirstSeenAt).IsRequired();
+                entity.Property(e => e.LastSeenAt).IsRequired();
+                entity.Property(e => e.AvatarName).HasMaxLength(200);
+                entity.Property(e => e.DisplayName).HasMaxLength(200);
+                entity.Property(e => e.RegionX).IsRequired();
+                entity.Property(e => e.RegionY).IsRequired();
+
+                // Create composite unique index for avatar + region + date to prevent duplicates
+                entity.HasIndex(e => new { e.AvatarId, e.RegionName, e.VisitDate })
+                      .IsUnique()
+                      .HasDatabaseName("IX_VisitorStats_Avatar_Region_Date");
+
+                // Create index for querying by date range
+                entity.HasIndex(e => e.VisitDate)
+                      .HasDatabaseName("IX_VisitorStats_VisitDate");
+
+                // Create index for querying by region and date
+                entity.HasIndex(e => new { e.RegionName, e.VisitDate })
+                      .HasDatabaseName("IX_VisitorStats_Region_Date");
+
+                // Create index for cleanup operations
+                entity.HasIndex(e => e.FirstSeenAt)
+                      .HasDatabaseName("IX_VisitorStats_FirstSeenAt");
             });
         }
 

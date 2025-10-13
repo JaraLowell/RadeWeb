@@ -1,0 +1,398 @@
+/**
+ * RadegastWeb Visitor Statistics Dashboard
+ */
+
+class StatsManager {
+    constructor() {
+        this.charts = {};
+        this.currentPeriod = 30;
+        this.currentRegion = '';
+        this.lastUpdateTime = null;
+        
+        this.initializeEventListeners();
+        this.loadStatistics();
+        
+        // Auto-refresh every 5 minutes
+        setInterval(() => this.loadStatistics(), 5 * 60 * 1000);
+    }
+
+    initializeEventListeners() {
+        // Time period selector
+        document.querySelectorAll('input[name="timePeriod"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                this.currentPeriod = parseInt(e.target.value);
+                this.loadStatistics();
+            });
+        });
+
+        // Region filter
+        document.getElementById('regionFilter').addEventListener('change', (e) => {
+            this.currentRegion = e.target.value;
+            this.loadStatistics();
+        });
+    }
+
+    async loadStatistics() {
+        try {
+            this.showLoading();
+            
+            // Load dashboard summary
+            const dashboardData = await this.fetchAPI('/api/stats/dashboard');
+            this.updateDashboard(dashboardData);
+
+            // Load visitor statistics
+            const params = new URLSearchParams({
+                days: this.currentPeriod.toString()
+            });
+            if (this.currentRegion) {
+                params.append('region', this.currentRegion);
+            }
+
+            const visitorStats = await this.fetchAPI(`/api/stats/visitors?${params}`);
+            this.updateCharts(visitorStats);
+
+            // Load unique visitors
+            const uniqueVisitors = await this.fetchAPI(`/api/stats/visitors/unique?${params}`);
+            this.updateRecentVisitors(uniqueVisitors);
+
+            // Load monitored regions for filter
+            const regions = await this.fetchAPI('/api/stats/regions/monitored');
+            this.updateRegionFilter(regions);
+
+            this.updateLastUpdated();
+            this.showContent();
+        } catch (error) {
+            console.error('Error loading statistics:', error);
+            this.showError(error.message);
+        }
+    }
+
+    async fetchAPI(url) {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return await response.json();
+    }
+
+    updateDashboard(data) {
+        this.animateNumber('visitorsToday', data.totalVisitorsToday || 0);
+        this.animateNumber('visitors7Days', data.totalUniqueVisitors7Days || 0);
+        this.animateNumber('visitors30Days', data.totalUniqueVisitors30Days || 0);
+        this.animateNumber('monitoredRegions', data.monitoredRegionsCount || 0);
+
+        // Update region stats table
+        this.updateRegionStats(data.regionStats || []);
+    }
+
+    updateCharts(visitorStats) {
+        if (!Array.isArray(visitorStats) || visitorStats.length === 0) {
+            console.warn('No visitor statistics data available');
+            return;
+        }
+
+        this.updateDailyVisitorsChart(visitorStats);
+        this.updateRegionDistributionChart(visitorStats);
+    }
+
+    updateDailyVisitorsChart(visitorStats) {
+        const ctx = document.getElementById('dailyVisitorsChart').getContext('2d');
+        
+        // Destroy existing chart
+        if (this.charts.dailyVisitors) {
+            this.charts.dailyVisitors.destroy();
+        }
+
+        // Prepare data - combine all regions' daily stats
+        const dateMap = new Map();
+        
+        visitorStats.forEach(regionData => {
+            regionData.dailyStats.forEach(dayData => {
+                const date = dayData.date.split('T')[0]; // Get date part only
+                if (!dateMap.has(date)) {
+                    dateMap.set(date, { visitors: 0, visits: 0, regions: new Set() });
+                }
+                const existing = dateMap.get(date);
+                existing.visitors += dayData.uniqueVisitors;
+                existing.visits += dayData.totalVisits;
+                existing.regions.add(regionData.regionName);
+            });
+        });
+
+        // Sort by date and prepare chart data
+        const sortedDates = Array.from(dateMap.keys()).sort();
+        const labels = sortedDates.map(date => this.formatDate(date));
+        const visitorsData = sortedDates.map(date => dateMap.get(date).visitors);
+        const visitsData = sortedDates.map(date => dateMap.get(date).visits);
+
+        this.charts.dailyVisitors = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Unique Visitors',
+                    data: visitorsData,
+                    borderColor: 'rgb(0, 123, 255)',
+                    backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                    tension: 0.4,
+                    fill: true
+                }, {
+                    label: 'Total Visits',
+                    data: visitsData,
+                    borderColor: 'rgb(40, 167, 69)',
+                    backgroundColor: 'rgba(40, 167, 69, 0.1)',
+                    tension: 0.4,
+                    fill: false
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: false
+                    },
+                    legend: {
+                        position: 'top'
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    }
+                },
+                interaction: {
+                    intersect: false
+                }
+            }
+        });
+    }
+
+    updateRegionDistributionChart(visitorStats) {
+        const ctx = document.getElementById('regionDistributionChart').getContext('2d');
+        
+        // Destroy existing chart
+        if (this.charts.regionDistribution) {
+            this.charts.regionDistribution.destroy();
+        }
+
+        // Prepare data for top 10 regions
+        const regionData = visitorStats
+            .map(stat => ({
+                region: stat.regionName,
+                visitors: stat.totalUniqueVisitors
+            }))
+            .filter(item => item.visitors > 0)
+            .sort((a, b) => b.visitors - a.visitors)
+            .slice(0, 10);
+
+        if (regionData.length === 0) {
+            return;
+        }
+
+        const colors = [
+            '#007bff', '#28a745', '#ffc107', '#dc3545', '#17a2b8',
+            '#6f42c1', '#e83e8c', '#fd7e14', '#20c997', '#6c757d'
+        ];
+
+        this.charts.regionDistribution = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: regionData.map(item => item.region),
+                datasets: [{
+                    data: regionData.map(item => item.visitors),
+                    backgroundColor: colors.slice(0, regionData.length),
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 15,
+                            usePointStyle: true
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = ((context.parsed / total) * 100).toFixed(1);
+                                return `${context.label}: ${context.parsed} visitors (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    updateRecentVisitors(visitors) {
+        const tbody = document.getElementById('recentVisitorsList');
+        
+        if (!visitors || visitors.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No recent visitors</td></tr>';
+            return;
+        }
+
+        // Sort by last seen (most recent first) and take top 20
+        const recentVisitors = visitors
+            .sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen))
+            .slice(0, 20);
+
+        tbody.innerHTML = recentVisitors.map(visitor => {
+            const displayName = visitor.displayName || visitor.avatarName || 'Unknown';
+            const firstSeen = this.formatDateTime(visitor.firstSeen);
+            const lastSeen = this.formatDateTime(visitor.lastSeen);
+            
+            return `
+                <tr>
+                    <td>
+                        <div class="visitor-display-name" title="${visitor.avatarId}">
+                            ${this.escapeHtml(displayName)}
+                        </div>
+                        ${visitor.regionsVisited.length > 1 ? 
+                            `<small class="text-muted">${visitor.regionsVisited.length} regions</small>` : 
+                            `<small class="text-muted">${visitor.regionsVisited[0] || ''}</small>`
+                        }
+                    </td>
+                    <td><small>${firstSeen}</small></td>
+                    <td><small>${lastSeen}</small></td>
+                    <td><span class="badge bg-primary">${visitor.visitCount}</span></td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    updateRegionStats(regionStats) {
+        const tbody = document.getElementById('regionStatsList');
+        
+        if (!regionStats || regionStats.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No region data</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = regionStats.map(region => `
+            <tr>
+                <td>
+                    <span class="region-name">${this.escapeHtml(region.regionName)}</span>
+                    <span class="status-indicator status-monitoring" title="Currently monitoring"></span>
+                </td>
+                <td><strong>${region.totalUniqueVisitors}</strong></td>
+                <td>${region.totalVisits}</td>
+                <td><small>${region.averageVisitorsPerDay.toFixed(1)}</small></td>
+            </tr>
+        `).join('');
+    }
+
+    updateRegionFilter(regions) {
+        const select = document.getElementById('regionFilter');
+        const currentValue = select.value;
+        
+        // Clear existing options except "All Regions"
+        select.innerHTML = '<option value="">All Regions</option>';
+        
+        // Add region options
+        regions.forEach(region => {
+            const option = document.createElement('option');
+            option.value = region;
+            option.textContent = region;
+            select.appendChild(option);
+        });
+        
+        // Restore previous selection if still valid
+        if (currentValue && regions.includes(currentValue)) {
+            select.value = currentValue;
+        }
+    }
+
+    animateNumber(elementId, newValue) {
+        const element = document.getElementById(elementId);
+        const currentValue = parseInt(element.textContent) || 0;
+        
+        if (currentValue === newValue) return;
+        
+        element.classList.add('number-update');
+        element.textContent = newValue.toLocaleString();
+        
+        setTimeout(() => element.classList.remove('number-update'), 500);
+    }
+
+    updateLastUpdated() {
+        const now = new Date();
+        this.lastUpdateTime = now;
+        document.getElementById('lastUpdated').textContent = this.formatTime(now);
+    }
+
+    formatDate(dateString) {
+        return new Date(dateString).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric'
+        });
+    }
+
+    formatDateTime(dateString) {
+        return new Date(dateString).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    formatTime(date) {
+        return date.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    showLoading() {
+        document.getElementById('loadingSpinner').classList.remove('d-none');
+        document.getElementById('statsContent').classList.add('d-none');
+        document.getElementById('errorState').classList.add('d-none');
+    }
+
+    showContent() {
+        document.getElementById('loadingSpinner').classList.add('d-none');
+        document.getElementById('statsContent').classList.remove('d-none');
+        document.getElementById('errorState').classList.add('d-none');
+    }
+
+    showError(message) {
+        document.getElementById('loadingSpinner').classList.add('d-none');
+        document.getElementById('statsContent').classList.add('d-none');
+        document.getElementById('errorState').classList.remove('d-none');
+        document.getElementById('errorMessage').textContent = message;
+    }
+}
+
+// Initialize when DOM is loaded
+document.addEventListener('DOMContentLoaded', () => {
+    window.statsManager = new StatsManager();
+});
+
+// Global function for retry button
+function loadStatistics() {
+    if (window.statsManager) {
+        window.statsManager.loadStatistics();
+    }
+}

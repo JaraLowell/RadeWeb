@@ -11,8 +11,8 @@ using RadegastWeb.Data;
 namespace RadegastWeb.Migrations
 {
     [DbContext(typeof(RadegastDbContext))]
-    [Migration("20251013122037_RemoveDisplayNamesTable")]
-    partial class RemoveDisplayNamesTable
+    [Migration("20251013163043_InitialCreateWithVisitorStats")]
+    partial class InitialCreateWithVisitorStats
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -140,64 +140,6 @@ namespace RadegastWeb.Migrations
                         .HasDatabaseName("IX_ChatMessage_Account_Session_Time");
 
                     b.ToTable("ChatMessages");
-                });
-
-            modelBuilder.Entity("RadegastWeb.Models.DisplayName", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("AccountId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("AvatarId")
-                        .IsRequired()
-                        .HasMaxLength(36)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CachedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DisplayNameValue")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<bool>("IsDefaultDisplayName")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("LastUpdated")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LegacyFirstName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LegacyLastName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("NextUpdate")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("UserName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CachedAt")
-                        .HasDatabaseName("IX_DisplayName_CachedAt");
-
-                    b.HasIndex("AccountId", "AvatarId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_DisplayName_Account_Avatar");
-
-                    b.ToTable("DisplayNames");
                 });
 
             modelBuilder.Entity("RadegastWeb.Models.GlobalDisplayName", b =>
@@ -336,21 +278,70 @@ namespace RadegastWeb.Migrations
                     b.ToTable("Notices");
                 });
 
+            modelBuilder.Entity("RadegastWeb.Models.VisitorStats", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AvatarId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AvatarName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("FirstSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RegionName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<uint>("RegionX")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<uint>("RegionY")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<ulong>("SimHandle")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("VisitDate")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FirstSeenAt")
+                        .HasDatabaseName("IX_VisitorStats_FirstSeenAt");
+
+                    b.HasIndex("VisitDate")
+                        .HasDatabaseName("IX_VisitorStats_VisitDate");
+
+                    b.HasIndex("RegionName", "VisitDate")
+                        .HasDatabaseName("IX_VisitorStats_Region_Date");
+
+                    b.HasIndex("AvatarId", "RegionName", "VisitDate")
+                        .IsUnique()
+                        .HasDatabaseName("IX_VisitorStats_Avatar_Region_Date");
+
+                    b.ToTable("VisitorStats");
+                });
+
             modelBuilder.Entity("RadegastWeb.Models.ChatMessage", b =>
                 {
                     b.HasOne("RadegastWeb.Models.Account", "Account")
                         .WithMany("ChatMessages")
-                        .HasForeignKey("AccountId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Account");
-                });
-
-            modelBuilder.Entity("RadegastWeb.Models.DisplayName", b =>
-                {
-                    b.HasOne("RadegastWeb.Models.Account", "Account")
-                        .WithMany()
                         .HasForeignKey("AccountId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

@@ -15,6 +15,7 @@ namespace RadegastWeb.Core
         private readonly INameResolutionService _nameResolutionService;
         private readonly IGroupService _groupService;
         private readonly IGlobalDisplayNameCache _globalDisplayNameCache;
+        private readonly IStatsService _statsService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -53,7 +54,7 @@ namespace RadegastWeb.Core
         public event EventHandler<ChatSessionDto>? ChatSessionUpdated;
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -62,6 +63,7 @@ namespace RadegastWeb.Core
             _nameResolutionService = nameResolutionService;
             _groupService = groupService;
             _globalDisplayNameCache = globalDisplayNameCache;
+            _statsService = statsService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -1061,6 +1063,9 @@ namespace RadegastWeb.Core
             _nearbyAvatars.Clear();
             _chatSessions.Clear();
             _groups.Clear();
+            
+            // Remove account from stats service region tracking
+            _statsService.RemoveAccountRegion(Guid.Parse(_accountId));
         }
 
         private void Network_LoggedOut(object? sender, LoggedOutEventArgs e)
@@ -1210,6 +1215,19 @@ namespace RadegastWeb.Core
 
             AvatarAdded?.Invoke(this, avatarDto);
             UpdateRegionInfo();
+            
+            // Record visitor statistics (fire and forget to avoid blocking)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await RecordVisitorStatAsync(e.Avatar.ID.ToString(), avatarName, displayName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error recording visitor stat for avatar {AvatarId}", e.Avatar.ID);
+                }
+            });
             
             // Proactive display name loading strategies
             if (isNewAvatar)
@@ -1388,6 +1406,19 @@ namespace RadegastWeb.Core
                             IsDetailed = detailedAvatar != null
                         };
                         _coarseLocationAvatars.TryAdd(avatarPos.Key, coarseAvatar);
+                        
+                        // Record visitor statistics for new coarse location avatars (fire and forget)
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await RecordVisitorStatAsync(avatarPos.Key.ToString(), avatarName, null);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Error recording visitor stat for coarse avatar {AvatarId}", avatarPos.Key);
+                            }
+                        });
                     }
                     
                     _avatarSimHandles[avatarPos.Key] = e.Simulator.Handle;
@@ -2290,6 +2321,36 @@ namespace RadegastWeb.Core
             }
 
             return null;
+        }
+
+        #endregion
+
+        #region Visitor Statistics
+
+        /// <summary>
+        /// Records visitor statistics for an avatar sighting
+        /// </summary>
+        private async Task RecordVisitorStatAsync(string avatarId, string? avatarName, string? displayName)
+        {
+            if (_client.Network.CurrentSim == null || string.IsNullOrEmpty(_client.Network.CurrentSim.Name))
+                return;
+
+            var currentAccountId = Guid.Parse(_accountId);
+            var regionName = _client.Network.CurrentSim.Name;
+            var simHandle = _client.Network.CurrentSim.Handle;
+            
+            // Update the account's current region for deduplication
+            _statsService.SetAccountRegion(currentAccountId, regionName, simHandle);
+            
+            // Check if another account is already monitoring this region to avoid duplicates
+            if (_statsService.IsRegionAlreadyMonitored(regionName, currentAccountId))
+            {
+                _logger.LogDebug("Region {RegionName} already being monitored by another account, skipping visitor recording", regionName);
+                return;
+            }
+
+            // Record the visitor
+            await _statsService.RecordVisitorAsync(avatarId, regionName, simHandle, avatarName, displayName);
         }
 
         #endregion

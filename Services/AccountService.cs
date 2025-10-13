@@ -258,8 +258,9 @@ namespace RadegastWeb.Services
                 var nameResolutionService = scope.ServiceProvider.GetRequiredService<INameResolutionService>();
                 var groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
                 var globalDisplayNameCache = scope.ServiceProvider.GetRequiredService<IGlobalDisplayNameCache>();
+                var statsService = scope.ServiceProvider.GetRequiredService<IStatsService>();
                 
-                var instance = new WebRadegastInstance(account, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache);
+                var instance = new WebRadegastInstance(account, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService);
                 
                 var loginResult = await instance.LoginAsync();
                 

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visitor Statistics - RadegastWeb</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/stats.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/date-fns@2.28.0/index.min.js"></script>
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- Navigation -->
+        <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="index.html">
+                    <span class="radegast-logo">📊</span>
+                    RadegastWeb - Statistics
+                </a>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                    <span class="navbar-toggler-icon"></span>
+                </button>
+                <div class="collapse navbar-collapse" id="navbarNav">
+                    <ul class="navbar-nav me-auto">
+                        <li class="nav-item">
+                            <a class="nav-link" href="index.html">Dashboard</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link active" href="stats.html">Statistics</a>
+                        </li>
+                    </ul>
+                    <div class="navbar-nav">
+                        <div class="nav-item">
+                            <span class="navbar-text" id="refreshStatus">
+                                <span class="text-muted">Last Updated: </span>
+                                <span id="lastUpdated">Never</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- Loading Spinner -->
+        <div id="loadingSpinner" class="text-center p-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading visitor statistics...</p>
+        </div>
+
+        <!-- Main Stats Content -->
+        <div id="statsContent" class="d-none">
+            <!-- Dashboard Summary -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="card stats-card bg-primary text-white">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <i class="bi bi-people-fill"></i> Today
+                            </h5>
+                            <h2 id="visitorsToday" class="card-text mb-0">-</h2>
+                            <small class="text-light">Unique Visitors</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stats-card bg-success text-white">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <i class="bi bi-calendar-week"></i> 7 Days
+                            </h5>
+                            <h2 id="visitors7Days" class="card-text mb-0">-</h2>
+                            <small class="text-light">Unique Visitors</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stats-card bg-info text-white">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <i class="bi bi-calendar-month"></i> 30 Days
+                            </h5>
+                            <h2 id="visitors30Days" class="card-text mb-0">-</h2>
+                            <small class="text-light">Unique Visitors</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card stats-card bg-warning text-dark">
+                        <div class="card-body">
+                            <h5 class="card-title">
+                                <i class="bi bi-geo-alt"></i> Regions
+                            </h5>
+                            <h2 id="monitoredRegions" class="card-text mb-0">-</h2>
+                            <small>Currently Monitored</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Time Period Selector -->
+            <div class="row mb-3">
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-body">
+                            <h6 class="card-title">Time Period</h6>
+                            <div class="btn-group" role="group" aria-label="Time period selection">
+                                <input type="radio" class="btn-check" name="timePeriod" id="period7" value="7">
+                                <label class="btn btn-outline-primary btn-sm" for="period7">7 Days</label>
+                                
+                                <input type="radio" class="btn-check" name="timePeriod" id="period14" value="14">
+                                <label class="btn btn-outline-primary btn-sm" for="period14">14 Days</label>
+                                
+                                <input type="radio" class="btn-check" name="timePeriod" id="period30" value="30" checked>
+                                <label class="btn btn-outline-primary btn-sm" for="period30">30 Days</label>
+                                
+                                <input type="radio" class="btn-check" name="timePeriod" id="period60" value="60">
+                                <label class="btn btn-outline-primary btn-sm" for="period60">60 Days</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="card">
+                        <div class="card-body">
+                            <h6 class="card-title">Region Filter</h6>
+                            <select class="form-select" id="regionFilter">
+                                <option value="">All Regions</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Row -->
+            <div class="row mb-4">
+                <!-- Daily Visitors Chart -->
+                <div class="col-lg-8">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">
+                                <i class="bi bi-graph-up"></i> Daily Unique Visitors
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="dailyVisitorsChart" width="800" height="400"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Region Distribution -->
+                <div class="col-lg-4">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">
+                                <i class="bi bi-pie-chart"></i> Top Regions
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <canvas id="regionDistributionChart" width="400" height="400"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Visitors and Region Details -->
+            <div class="row">
+                <!-- Recent Visitors -->
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">
+                                <i class="bi bi-person-plus"></i> Recent Visitors
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Visitor</th>
+                                            <th>First Seen</th>
+                                            <th>Last Seen</th>
+                                            <th>Visits</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recentVisitorsList">
+                                        <tr>
+                                            <td colspan="4" class="text-center text-muted">Loading...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Region Statistics -->
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="card-title mb-0">
+                                <i class="bi bi-geo"></i> Region Statistics
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Region</th>
+                                            <th>Unique</th>
+                                            <th>Total Visits</th>
+                                            <th>Avg/Day</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="regionStatsList">
+                                        <tr>
+                                            <td colspan="4" class="text-center text-muted">Loading...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="errorState" class="d-none">
+            <div class="alert alert-danger" role="alert">
+                <h4 class="alert-heading">Error Loading Statistics</h4>
+                <p id="errorMessage">There was an error loading the visitor statistics. Please try refreshing the page.</p>
+                <hr>
+                <button class="btn btn-outline-danger" onclick="loadStatistics()">Retry</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Charts and Statistics JS -->
+    <script src="js/stats.js"></script>
+</body>
+</html>
