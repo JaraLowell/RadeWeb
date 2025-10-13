@@ -11,13 +11,19 @@ var builder = WebApplication.CreateBuilder(args);
 // Configure URLs - allow binding to all interfaces
 builder.WebHost.UseUrls("http://*:5269", "https://*:7077");
 
-// Configure Serilog
+// Configure Serilog with additional filters
 builder.Host.UseSerilog((context, configuration) =>
 {
     configuration
         .WriteTo.Console()
         .WriteTo.File("logs/radegast-web-.log", rollingInterval: RollingInterval.Day)
-        .ReadFrom.Configuration(context.Configuration);
+        .ReadFrom.Configuration(context.Configuration)
+        .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.Extensions.Hosting", Serilog.Events.LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.AspNetCore.Hosting", Serilog.Events.LogEventLevel.Error)
+        .MinimumLevel.Override("Microsoft.AspNetCore.Server.Kestrel", Serilog.Events.LogEventLevel.Error)
+        .MinimumLevel.Override("Microsoft.AspNetCore.HttpLogging", Serilog.Events.LogEventLevel.Warning)
+        .MinimumLevel.Override("Microsoft.AspNetCore.Routing", Serilog.Events.LogEventLevel.Warning);
 });
 
 // Configure Entity Framework with SQLite
@@ -83,6 +89,7 @@ builder.Services.AddMemoryCache();
 
 // Register custom services - Use singleton for account management
 builder.Services.AddSingleton<IGlobalDisplayNameCache, GlobalDisplayNameCache>();
+builder.Services.AddSingleton<IPeriodicDisplayNameService, PeriodicDisplayNameService>();
 builder.Services.AddSingleton<IAccountService, AccountService>();
 builder.Services.AddSingleton<IDisplayNameService, DisplayNameService>();
 builder.Services.AddSingleton<INoticeService, NoticeService>();
@@ -93,12 +100,19 @@ builder.Services.AddSingleton<ISlUrlParser, SlUrlParser>();
 builder.Services.AddSingleton<IGroupService, GroupService>();
 builder.Services.AddScoped<IChatHistoryService, ChatHistoryService>();
 builder.Services.AddHostedService<RadegastBackgroundService>();
+builder.Services.AddHostedService<PeriodicDisplayNameService>();
 
-// Add logging configuration
+// Add logging configuration with additional filters
 builder.Services.AddLogging(logging =>
 {
     logging.ClearProviders();
     logging.AddSerilog();
+    logging.AddFilter("Microsoft.AspNetCore.Hosting", LogLevel.Error);
+    logging.AddFilter("Microsoft.AspNetCore.Server.Kestrel", LogLevel.Error);
+    logging.AddFilter("Microsoft.Extensions.Hosting", LogLevel.Warning);
+    logging.AddFilter("Microsoft.AspNetCore.HttpLogging", LogLevel.Warning);
+    logging.AddFilter("Microsoft.AspNetCore.Routing", LogLevel.Warning);
+    logging.AddFilter("Microsoft.AspNetCore.StaticFiles", LogLevel.Warning);
 });
 
 var app = builder.Build();

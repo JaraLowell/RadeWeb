@@ -535,8 +535,6 @@ namespace RadegastWeb.Hubs
                     sittingOnLocalId = sittingOnLocalId,
                     sittingOnGround = instance.Client.Self.Movement.SitOnGround
                 });
-
-                _logger.LogInformation("Sitting status retrieved for account {AccountId}", accountId);
             }
             catch (Exception ex)
             {

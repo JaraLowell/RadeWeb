@@ -121,6 +121,10 @@ body {
 	flex-shrink: 0;
 }
 
+.mb-4 {
+    margin-bottom: 1.0rem !important;
+}
+
 a {
     color: var(--text-color);
     text-decoration: none;

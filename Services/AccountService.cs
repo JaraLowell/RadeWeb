@@ -40,12 +40,14 @@ namespace RadegastWeb.Services
         private readonly string _connectionString;
         private readonly ConcurrentDictionary<Guid, Account> _accounts = new();
         private readonly ConcurrentDictionary<Guid, WebRadegastInstance> _instances = new();
+        private readonly IPeriodicDisplayNameService _periodicDisplayNameService;
         private bool _disposed;
 
-        public AccountService(ILogger<AccountService> logger, IServiceProvider serviceProvider, IConfiguration configuration)
+        public AccountService(ILogger<AccountService> logger, IServiceProvider serviceProvider, IConfiguration configuration, IPeriodicDisplayNameService periodicDisplayNameService)
         {
             _logger = logger;
             _serviceProvider = serviceProvider;
+            _periodicDisplayNameService = periodicDisplayNameService;
             
             // Get the connection string from configuration or build it
             var contentRoot = configuration.GetValue<string>("ContentRoot") ?? Directory.GetCurrentDirectory();
@@ -332,6 +334,17 @@ namespace RadegastWeb.Services
                             {
                                 _logger.LogError(ex, "Failed to start region stats updates for account {AccountId}", id);
                             }
+                            
+                            // Register account for periodic display name processing
+                            try
+                            {
+                                _periodicDisplayNameService.RegisterAccount(id);
+                                _logger.LogInformation("Registered account {AccountId} for periodic display name processing", id);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Failed to register account {AccountId} for periodic display name processing", id);
+                            }
                         }
                     });
                     
@@ -399,6 +412,17 @@ namespace RadegastWeb.Services
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Failed to stop region stats updates for account {AccountId}", id);
+                }
+                
+                // Unregister account from periodic display name processing
+                try
+                {
+                    _periodicDisplayNameService.UnregisterAccount(id);
+                    _logger.LogInformation("Unregistered account {AccountId} from periodic display name processing", id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to unregister account {AccountId} from periodic display name processing", id);
                 }
                 
                 _logger.LogInformation("Successfully logged out account {AccountId}", id);

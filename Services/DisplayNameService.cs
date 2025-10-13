@@ -143,6 +143,16 @@ namespace RadegastWeb.Services
             // Update memory cache
             cache.AddOrUpdate(displayName.AvatarId, displayName, (key, existing) => displayName);
 
+            // Update global cache to keep it synchronized
+            try
+            {
+                _globalCache.UpdateDisplayName(displayName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update global cache for {AvatarId}", displayName.AvatarId);
+            }
+
             // Update database cache with retry logic for race conditions
             var maxRetries = 3;
             for (int attempt = 0; attempt < maxRetries; attempt++)
@@ -826,14 +836,23 @@ namespace RadegastWeb.Services
         
         /// <summary>
         /// Proactively fetch display names for multiple avatars (e.g., when they enter the sim)
-        /// This is more efficient than individual requests
+        /// This is more efficient than individual requests and integrates with the global cache
         /// </summary>
         public async Task PreloadDisplayNamesAsync(Guid accountId, IEnumerable<string> avatarIds)
         {
             var uncachedIds = new List<string>();
             
+            // Check both account-specific cache and global cache
             foreach (var avatarId in avatarIds)
             {
+                // First check global cache (more efficient)
+                var globalCached = await _globalCache.GetCachedDisplayNameAsync(avatarId);
+                if (globalCached != null && DateTime.UtcNow <= globalCached.NextUpdate)
+                {
+                    continue; // Already cached globally and fresh
+                }
+                
+                // Then check account-specific cache
                 var cached = await GetCachedDisplayNameAsync(accountId, avatarId);
                 if (cached == null || DateTime.UtcNow > cached.NextUpdate)
                 {
@@ -843,21 +862,13 @@ namespace RadegastWeb.Services
             
             if (uncachedIds.Count > 0)
             {
-                _logger.LogDebug("Preloading {Count} display names for account {AccountId}", uncachedIds.Count, accountId);
+                _logger.LogDebug("Preloading {Count} display names for account {AccountId} via global cache", uncachedIds.Count, accountId);
                 
-                // Split into batches if needed
-                const int batchSize = 100; // Radegast's max batch size
-                for (int i = 0; i < uncachedIds.Count; i += batchSize)
-                {
-                    var batch = uncachedIds.Skip(i).Take(batchSize);
-                    await FetchDisplayNamesFromGridAsync(accountId, batch.ToList());
-                    
-                    // Small delay between batches to avoid overwhelming the server
-                    if (i + batchSize < uncachedIds.Count)
-                    {
-                        await Task.Delay(100);
-                    }
-                }
+                // Use global cache for efficient batched requests instead of direct grid calls
+                // This integrates with the PeriodicDisplayNameService pool
+                await _globalCache.PreloadDisplayNamesAsync(uncachedIds);
+                
+                _logger.LogDebug("Successfully queued {Count} display names for global cache processing", uncachedIds.Count);
             }
         }
 
