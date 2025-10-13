@@ -137,6 +137,10 @@ class RadegastWebClient {
                 this.updateSittingStatus(status);
             });
 
+            this.connection.on("PresenceStatusChanged", (accountId, status, statusText) => {
+                this.updatePresenceStatusDisplay(accountId, status, statusText);
+            });
+
             await this.connection.start();
         } catch (err) {
             console.error("SignalR Connection Error:", err);
@@ -886,6 +890,19 @@ class RadegastWebClient {
         document.getElementById('radarToggleBtn').addEventListener('click', () => {
             this.toggleRadarStats();
         });
+
+        // Manual presence control buttons
+        document.getElementById('setAwayBtn').addEventListener('click', () => {
+            this.toggleAwayStatus();
+        });
+
+        document.getElementById('setBusyBtn').addEventListener('click', () => {
+            this.toggleBusyStatus();
+        });
+
+        document.getElementById('setOnlineBtn').addEventListener('click', () => {
+            this.setOnlineStatus();
+        });
     }
 
     async loadAccounts() {
@@ -1175,6 +1192,18 @@ class RadegastWebClient {
                 console.error("Error managing account groups:", error);
             }
         }
+
+        // Initialize presence status display with current account status
+        this.initializePresenceStatusForAccount(account);
+    }
+
+    // Initialize the presence status display based on current account status
+    initializePresenceStatusForAccount(account) {
+        // For now, default to Online status since we don't have real-time presence tracking yet
+        // This will be updated by SignalR events when status actually changes
+        const status = 'Online'; // Could be enhanced to track actual status
+        const statusText = 'Online';
+        this.updatePresenceStatusDisplay(account.accountId, status, statusText);
     }
 
     async saveAccount() {
@@ -2224,6 +2253,108 @@ class RadegastWebClient {
         } else {
             radarStats.style.display = 'none';
             toggleIcon.className = 'fas fa-chart-bar';
+        }
+    }
+
+    // Manual presence control methods
+    async toggleAwayStatus() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        const awayBtn = document.getElementById('setAwayBtn');
+        const isCurrentlyAway = awayBtn.dataset.status === 'active';
+        
+        try {
+            if (this.connection) {
+                await this.connection.invoke("SetAwayStatus", this.currentAccountId, !isCurrentlyAway);
+                this.showAlert(isCurrentlyAway ? "Away status cleared" : "Set to Away", "success");
+            }
+        } catch (error) {
+            console.error('Error setting away status:', error);
+            this.showAlert(`Failed to update away status: ${error.message}`, "danger");
+        }
+    }
+
+    async toggleBusyStatus() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        const busyBtn = document.getElementById('setBusyBtn');
+        const isCurrentlyBusy = busyBtn.dataset.status === 'active';
+        
+        try {
+            if (this.connection) {
+                await this.connection.invoke("SetBusyStatus", this.currentAccountId, !isCurrentlyBusy);
+                this.showAlert(isCurrentlyBusy ? "Busy status cleared" : "Set to Busy", "success");
+            }
+        } catch (error) {
+            console.error('Error setting busy status:', error);
+            this.showAlert(`Failed to update busy status: ${error.message}`, "danger");
+        }
+    }
+
+    async setOnlineStatus() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            if (this.connection) {
+                // Clear both away and busy status
+                await this.connection.invoke("SetAwayStatus", this.currentAccountId, false);
+                await this.connection.invoke("SetBusyStatus", this.currentAccountId, false);
+                this.showAlert("Set to Online", "success");
+            }
+        } catch (error) {
+            console.error('Error setting online status:', error);
+            this.showAlert(`Failed to set online status: ${error.message}`, "danger");
+        }
+    }
+
+    // Update presence status display based on SignalR events
+    updatePresenceStatusDisplay(accountId, status, statusText) {
+        // Only update if this is for the current account
+        if (accountId !== this.currentAccountId) {
+            return;
+        }
+
+        const currentStatusSpan = document.getElementById('currentPresenceStatus');
+        const awayBtn = document.getElementById('setAwayBtn');
+        const busyBtn = document.getElementById('setBusyBtn');
+        const awayBtnText = document.getElementById('awayBtnText');
+        const busyBtnText = document.getElementById('busyBtnText');
+
+        // Update current status display
+        currentStatusSpan.textContent = statusText;
+        currentStatusSpan.className = `fw-bold status-${status.toLowerCase()}`;
+
+        // Update button states
+        if (status === 'Away') {
+            awayBtn.className = 'btn btn-warning btn-sm w-100';
+            awayBtn.dataset.status = 'active';
+            awayBtnText.textContent = 'Clear Away';
+            busyBtn.className = 'btn btn-outline-danger btn-sm w-100';
+            busyBtn.dataset.status = 'inactive';
+            busyBtnText.textContent = 'Set Busy';
+        } else if (status === 'Busy') {
+            busyBtn.className = 'btn btn-danger btn-sm w-100';
+            busyBtn.dataset.status = 'active';
+            busyBtnText.textContent = 'Clear Busy';
+            awayBtn.className = 'btn btn-outline-warning btn-sm w-100';
+            awayBtn.dataset.status = 'inactive';
+            awayBtnText.textContent = 'Set Away';
+        } else { // Online
+            awayBtn.className = 'btn btn-outline-warning btn-sm w-100';
+            awayBtn.dataset.status = 'inactive';
+            awayBtnText.textContent = 'Set Away';
+            busyBtn.className = 'btn btn-outline-danger btn-sm w-100';
+            busyBtn.dataset.status = 'inactive';
+            busyBtnText.textContent = 'Set Busy';
         }
     }
 

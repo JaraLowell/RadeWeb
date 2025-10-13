@@ -66,6 +66,11 @@ class RadegastWebClient {
             await this.connection.start();
             this.isConnected = true;
             console.log("SignalR connected");
+            
+            // Sync presence status for current account after connection
+            if (this.currentAccount) {
+                await this.syncCurrentPresenceStatus();
+            }
         } catch (err) {
             console.error("SignalR connection failed:", err);
             this.showError("Failed to connect to real-time services");
@@ -78,6 +83,19 @@ class RadegastWebClient {
             if (response.ok) {
                 this.accounts = await response.json();
                 this.updateAccountsList();
+                
+                // Auto-select first connected account if none is currently selected
+                if (!this.currentAccount && this.accounts.length > 0) {
+                    const connectedAccount = this.accounts.find(a => a.isConnected);
+                    if (connectedAccount) {
+                        await this.setActiveAccount(connectedAccount.accountId);
+                    }
+                }
+                
+                // If there's a current account and we're connected, sync its presence status
+                if (this.currentAccount && this.isConnected) {
+                    await this.syncCurrentPresenceStatus();
+                }
             } else {
                 console.error('Failed to load accounts');
             }
@@ -87,34 +105,28 @@ class RadegastWebClient {
     }
 
     setupBrowserVisibilityDetection() {
-        // Handle browser visibility changes
+        // Note: Automatic away/busy status changes on browser visibility disabled.
+        // Users can manually set their status using the UI controls.
+        
+        // Still keep the event listeners for potential future use, but don't call handlers
         document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                this.handleBrowserClose();
-            } else {
-                this.handleBrowserReturn();
-            }
+            // Automatic status changes disabled
+            console.log('Browser visibility changed (auto-status disabled)');
         });
 
-        // Handle browser/tab close
         window.addEventListener('beforeunload', () => {
-            this.handleBrowserClose();
+            // Automatic status changes disabled
+            console.log('Browser closing (auto-status disabled)');
         });
 
-        // Handle page focus/blur as backup
         window.addEventListener('focus', () => {
-            if (!document.hidden) {
-                this.handleBrowserReturn();
-            }
+            // Automatic status changes disabled
+            console.log('Browser focused (auto-status disabled)');
         });
 
         window.addEventListener('blur', () => {
-            // Small delay to avoid triggering on quick focus changes
-            setTimeout(() => {
-                if (document.hidden) {
-                    this.handleBrowserClose();
-                }
-            }, 1000);
+            // Automatic status changes disabled
+            console.log('Browser blurred (auto-status disabled)');
         });
     }
 
@@ -162,6 +174,8 @@ class RadegastWebClient {
                 if (accountId) {
                     await this.connection.invoke("JoinAccountGroup", accountId);
                     await this.connection.invoke("SetActiveAccount", accountId);
+                    // Sync presence status for the newly active account
+                    await this.syncCurrentPresenceStatus();
                 }
             } catch (error) {
                 console.error('Error setting active account:', error);
@@ -204,8 +218,9 @@ class RadegastWebClient {
         // Update local presence state
         this.presenceStates.set(accountId, { status, statusText });
         
-        // Update UI
+        // Update UI (both account list and sitting controls)
         this.updateAccountPresenceDisplay(accountId, status, statusText);
+        this.updatePresenceStatusDisplay(accountId, status, statusText);
         
         // Show notification
         this.showInfo(`Account ${this.getAccountDisplayName(accountId)} is now ${statusText}`);
@@ -260,6 +275,29 @@ class RadegastWebClient {
                 e.target.dataset.busy = (!isBusy).toString();
             }
         });
+
+        // Manual presence control buttons (for sitting controls panel)
+        const setAwayBtn = document.getElementById('setAwayBtn');
+        const setBusyBtn = document.getElementById('setBusyBtn');
+        const setOnlineBtn = document.getElementById('setOnlineBtn');
+
+        if (setAwayBtn) {
+            setAwayBtn.addEventListener('click', () => {
+                this.toggleAwayStatus();
+            });
+        }
+
+        if (setBusyBtn) {
+            setBusyBtn.addEventListener('click', () => {
+                this.toggleBusyStatus();
+            });
+        }
+
+        if (setOnlineBtn) {
+            setOnlineBtn.addEventListener('click', () => {
+                this.setOnlineStatus();
+            });
+        }
     }
 
     updateAccountsList() {
@@ -339,6 +377,134 @@ class RadegastWebClient {
         setTimeout(() => {
             notification.remove();
         }, 5000);
+    }
+
+    // Sync current presence status from SL client
+    async syncCurrentPresenceStatus() {
+        if (!this.currentAccount || !this.connection || !this.isConnected) {
+            return;
+        }
+
+        try {
+            await this.connection.invoke("GetCurrentPresenceStatus", this.currentAccount);
+        } catch (error) {
+            console.error('Error syncing presence status:', error);
+        }
+    }
+
+    // Manual presence control methods (for sitting controls panel)
+    async toggleAwayStatus() {
+        if (!this.currentAccount) {
+            this.showError("No account selected");
+            return;
+        }
+
+        const awayBtn = document.getElementById('setAwayBtn');
+        const isCurrentlyAway = awayBtn && awayBtn.dataset.status === 'active';
+        
+        try {
+            if (this.connection && this.isConnected) {
+                await this.connection.invoke("SetAwayStatus", this.currentAccount, !isCurrentlyAway);
+                this.showInfo(isCurrentlyAway ? "Away status cleared" : "Set to Away");
+            }
+        } catch (error) {
+            console.error('Error setting away status:', error);
+            this.showError(`Failed to update away status: ${error.message}`);
+        }
+    }
+
+    async toggleBusyStatus() {
+        if (!this.currentAccount) {
+            this.showError("No account selected");
+            return;
+        }
+
+        const busyBtn = document.getElementById('setBusyBtn');
+        const isCurrentlyBusy = busyBtn && busyBtn.dataset.status === 'active';
+        
+        try {
+            if (this.connection && this.isConnected) {
+                await this.connection.invoke("SetBusyStatus", this.currentAccount, !isCurrentlyBusy);
+                this.showInfo(isCurrentlyBusy ? "Busy status cleared" : "Set to Busy");
+            }
+        } catch (error) {
+            console.error('Error setting busy status:', error);
+            this.showError(`Failed to update busy status: ${error.message}`);
+        }
+    }
+
+    async setOnlineStatus() {
+        if (!this.currentAccount) {
+            this.showError("No account selected");
+            return;
+        }
+
+        try {
+            if (this.connection && this.isConnected) {
+                // Clear both away and busy status
+                await this.connection.invoke("SetAwayStatus", this.currentAccount, false);
+                await this.connection.invoke("SetBusyStatus", this.currentAccount, false);
+                this.showInfo("Set to Online");
+            }
+        } catch (error) {
+            console.error('Error setting online status:', error);
+            this.showError(`Failed to set online status: ${error.message}`);
+        }
+    }
+
+    // Update presence status display based on SignalR events
+    updatePresenceStatusDisplay(accountId, status, statusText) {
+        // Only update if this is for the current account
+        if (accountId !== this.currentAccount) {
+            return;
+        }
+
+        const currentStatusSpan = document.getElementById('currentPresenceStatus');
+        const awayBtn = document.getElementById('setAwayBtn');
+        const busyBtn = document.getElementById('setBusyBtn');
+        const awayBtnText = document.getElementById('awayBtnText');
+        const busyBtnText = document.getElementById('busyBtnText');
+
+        if (currentStatusSpan) {
+            currentStatusSpan.textContent = statusText;
+            currentStatusSpan.className = `fw-bold status-${status.toLowerCase()}`;
+        }
+
+        // Update button states
+        if (status === 'Away') {
+            if (awayBtn) {
+                awayBtn.className = 'btn btn-warning btn-sm w-100';
+                awayBtn.dataset.status = 'active';
+            }
+            if (awayBtnText) awayBtnText.textContent = 'Clear Away';
+            if (busyBtn) {
+                busyBtn.className = 'btn btn-outline-danger btn-sm w-100';
+                busyBtn.dataset.status = 'inactive';
+            }
+            if (busyBtnText) busyBtnText.textContent = 'Set Busy';
+        } else if (status === 'Busy') {
+            if (busyBtn) {
+                busyBtn.className = 'btn btn-danger btn-sm w-100';
+                busyBtn.dataset.status = 'active';
+            }
+            if (busyBtnText) busyBtnText.textContent = 'Clear Busy';
+            if (awayBtn) {
+                awayBtn.className = 'btn btn-outline-warning btn-sm w-100';
+                awayBtn.dataset.status = 'inactive';
+            }
+            if (awayBtnText) awayBtnText.textContent = 'Set Away';
+        } else { // Online
+            if (awayBtn) {
+                awayBtn.className = 'btn btn-outline-warning btn-sm w-100';
+                awayBtn.dataset.status = 'inactive';
+            }
+            if (awayBtnText) awayBtnText.textContent = 'Set Away';
+            if (busyBtn) {
+                busyBtn.className = 'btn btn-outline-danger btn-sm w-100';
+                busyBtn.dataset.status = 'inactive';
+            }
+            if (busyBtnText) busyBtnText.textContent = 'Set Busy';
+        }
     }
 }
 

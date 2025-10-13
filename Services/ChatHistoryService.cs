@@ -19,12 +19,14 @@ namespace RadegastWeb.Services
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<ChatHistoryService> _logger;
+        private readonly IChatLogService _chatLogService;
         private readonly string _connectionString;
 
-        public ChatHistoryService(IServiceProvider serviceProvider, ILogger<ChatHistoryService> logger, IConfiguration configuration)
+        public ChatHistoryService(IServiceProvider serviceProvider, ILogger<ChatHistoryService> logger, IChatLogService chatLogService, IConfiguration configuration)
         {
             _serviceProvider = serviceProvider;
             _logger = logger;
+            _chatLogService = chatLogService;
             
             // Get the connection string from configuration or build it
             var contentRoot = configuration.GetValue<string>("ContentRoot") ?? Directory.GetCurrentDirectory();
@@ -72,6 +74,9 @@ namespace RadegastWeb.Services
 
                 context.ChatMessages.Add(chatMessage);
                 await context.SaveChangesAsync();
+                
+                // Also log to text files
+                await _chatLogService.LogChatMessageAsync(messageDto);
                 
                 _logger.LogDebug("Saved chat message for account {AccountId}, session {SessionId}",
                     messageDto.AccountId, messageDto.SessionId);

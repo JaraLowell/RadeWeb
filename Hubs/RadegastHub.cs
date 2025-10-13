@@ -568,19 +568,47 @@ namespace RadegastWeb.Hubs
             await base.OnConnectedAsync();
         }
 
+        public async Task GetCurrentPresenceStatus(string accountId)
+        {
+            try
+            {
+                if (!Guid.TryParse(accountId, out var accountGuid))
+                {
+                    await Clients.Caller.PresenceError("Invalid account ID");
+                    return;
+                }
+
+                var status = _presenceService.GetAccountStatus(accountGuid);
+                var statusText = status switch
+                {
+                    PresenceStatus.Away => "Away",
+                    PresenceStatus.Busy => "Busy",
+                    _ => "Online"
+                };
+
+                await Clients.Caller.PresenceStatusChanged(accountId, status.ToString(), statusText);
+                _logger.LogInformation("Retrieved current presence status for account {AccountId}: {Status}", 
+                    accountId, status);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting current presence status for account {AccountId}", accountId);
+                await Clients.Caller.PresenceError("Error retrieving presence status");
+            }
+        }
+
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             _logger.LogInformation("Client disconnected: {ConnectionId}", Context.ConnectionId);
             
-            // Automatically set all accounts to away when client disconnects unexpectedly
+            // Handle browser close event (automatic status changes disabled)
             try
             {
                 await _presenceService.HandleBrowserCloseAsync();
-                _logger.LogInformation("Set accounts to away due to client disconnect");
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error setting accounts to away on client disconnect");
+                _logger.LogError(ex, "Error handling browser close event");
             }
             
             await base.OnDisconnectedAsync(exception);

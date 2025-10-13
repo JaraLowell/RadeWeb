@@ -1006,3 +1006,50 @@ a {
     border-color: #f8f9fa;
     box-shadow: 0 0 4px rgba(255,255,255,0.3);
 }
+
+/* Presence Status Styles */
+.status-online {
+    color: #28a745 !important;
+}
+
+.status-away {
+    color: #ffc107 !important;
+}
+
+.status-busy {
+    color: #dc3545 !important;
+}
+
+/* Button states for presence controls */
+#setAwayBtn[data-status="active"],
+#setBusyBtn[data-status="active"] {
+    transition: all 0.2s ease;
+}
+
+#setAwayBtn[data-status="active"] i,
+#setBusyBtn[data-status="active"] i {
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.7; }
+    100% { opacity: 1; }
+}
+
+/* Dark mode adjustments for presence controls */
+[data-theme="dark"] #currentPresenceStatus {
+    color: #f8f9fa;
+}
+
+[data-theme="dark"] .status-online {
+    color: #20c997 !important;
+}
+
+[data-theme="dark"] .status-away {
+    color: #ffc107 !important;
+}
+
+[data-theme="dark"] .status-busy {
+    color: #dc3545 !important;
+}

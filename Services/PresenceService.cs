@@ -36,7 +36,6 @@ namespace RadegastWeb.Services
         private readonly ILogger<PresenceService> _logger;
         private readonly ConcurrentDictionary<Guid, PresenceStatus> _accountStatuses = new();
         private Guid? _activeAccountId;
-        private bool _browserIsAway = false;
 
         public event EventHandler<PresenceStatusChangedEventArgs>? PresenceStatusChanged;
 
@@ -57,9 +56,17 @@ namespace RadegastWeb.Services
 
             try
             {
-                // Use the same logic as Radegast StateManager.SetAway
-                var awayAnim = new Dictionary<UUID, bool> { { Animations.AWAY, away } };
-                instance.Client.Self.Animate(awayAnim, true);
+                // Set away animation - this is how SL clients properly indicate away status
+                var awayAnimations = new Dictionary<UUID, bool>();
+                
+                // Use the standard away animation UUID (from Second Life client)
+                var awayAnimUUID = new UUID("fd037134-85d4-f241-72c6-4f42164fedee"); // Standard away animation
+                awayAnimations.Add(awayAnimUUID, away);
+                
+                // Send the animation change
+                instance.Client.Self.Animate(awayAnimations, true);
+                
+                // Also set the Movement.Away flag for compatibility
                 instance.Client.Self.Movement.Away = away;
 
                 var newStatus = away ? PresenceStatus.Away : PresenceStatus.Online;
@@ -94,9 +101,15 @@ namespace RadegastWeb.Services
 
             try
             {
-                // Use the same logic as Radegast StateManager.SetBusy
-                var busyAnim = new Dictionary<UUID, bool> { { Animations.BUSY, busy } };
-                instance.Client.Self.Animate(busyAnim, true);
+                // Set busy animation - this is how SL clients properly indicate busy status
+                var busyAnimations = new Dictionary<UUID, bool>();
+                
+                // Use the standard busy animation UUID (from Second Life client)
+                var busyAnimUUID = new UUID("efcf670c-2d18-8128-973a-034ebc806b67"); // Standard busy animation
+                busyAnimations.Add(busyAnimUUID, busy);
+                
+                // Send the animation change
+                instance.Client.Self.Animate(busyAnimations, true);
 
                 var newStatus = busy ? PresenceStatus.Busy : PresenceStatus.Online;
                 _accountStatuses.AddOrUpdate(accountId, newStatus, (key, oldValue) => newStatus);
@@ -119,7 +132,7 @@ namespace RadegastWeb.Services
             return Task.CompletedTask;
         }
 
-        public async Task SetActiveAccountAsync(Guid? accountId)
+        public Task SetActiveAccountAsync(Guid? accountId)
         {
             var previousActiveAccount = _activeAccountId;
             _activeAccountId = accountId;
@@ -127,108 +140,27 @@ namespace RadegastWeb.Services
             _logger.LogInformation("Active account changed from {PreviousAccountId} to {NewAccountId}", 
                 previousActiveAccount, accountId);
 
-            // Set previous active account to busy (if it exists and is different)
-            if (previousActiveAccount.HasValue && 
-                previousActiveAccount != accountId &&
-                _accountService.GetInstance(previousActiveAccount.Value)?.IsConnected == true)
-            {
-                await SetBusyAsync(previousActiveAccount.Value, true);
-            }
-
-            // Set new active account back to online (if it exists)
-            if (accountId.HasValue && 
-                _accountService.GetInstance(accountId.Value)?.IsConnected == true)
-            {
-                // First clear any busy status
-                await SetBusyAsync(accountId.Value, false);
-                
-                // If browser was away, don't override that with online
-                if (!_browserIsAway)
-                {
-                    // Make sure we're not busy either (unless manually set)
-                    var currentStatus = GetAccountStatus(accountId.Value);
-                    if (currentStatus == PresenceStatus.Busy)
-                    {
-                        _accountStatuses.AddOrUpdate(accountId.Value, PresenceStatus.Online, (key, oldValue) => PresenceStatus.Online);
-                        
-                        PresenceStatusChanged?.Invoke(this, new PresenceStatusChangedEventArgs
-                        {
-                            AccountId = accountId.Value,
-                            Status = PresenceStatus.Online,
-                            StatusText = "Online"
-                        });
-                    }
-                }
-            }
+            // Note: Removed automatic busy/away status changes when switching accounts.
+            // Users can now manually set busy/away status as desired.
+            return Task.CompletedTask;
         }
 
-        public async Task HandleBrowserCloseAsync()
+        public Task HandleBrowserCloseAsync()
         {
-            _browserIsAway = true;
-            _logger.LogInformation("Browser closed - setting all connected accounts to away");
+            _logger.LogInformation("Browser closed - automatic away status disabled, users can set status manually");
 
-            var tasks = new List<Task>();
-            
-            foreach (var account in await _accountService.GetAccountsAsync())
-            {
-                var instance = _accountService.GetInstance(account.Id);
-                if (instance?.IsConnected == true)
-                {
-                    // Set away and ensure busy is disabled for browser close
-                    tasks.Add(Task.Run(async () =>
-                    {
-                        try
-                        {
-                            // First disable busy if it was set
-                            await SetBusyAsync(account.Id, false);
-                            // Then set away
-                            await SetAwayAsync(account.Id, true);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error setting account {AccountId} to away on browser close", account.Id);
-                        }
-                    }));
-                }
-            }
-
-            await Task.WhenAll(tasks);
+            // Note: Removed automatic setting of accounts to away on browser close.
+            // Users can manually set away/busy status as desired using the UI controls.
+            return Task.CompletedTask;
         }
 
-        public async Task HandleBrowserReturnAsync()
+        public Task HandleBrowserReturnAsync()
         {
-            _browserIsAway = false;
-            _logger.LogInformation("Browser returned - updating account statuses");
+            _logger.LogInformation("Browser returned - automatic status changes disabled, users can set status manually");
 
-            var tasks = new List<Task>();
-            
-            foreach (var account in await _accountService.GetAccountsAsync())
-            {
-                var instance = _accountService.GetInstance(account.Id);
-                if (instance?.IsConnected == true)
-                {
-                    tasks.Add(Task.Run(async () =>
-                    {
-                        try
-                        {
-                            // Clear away status
-                            await SetAwayAsync(account.Id, false);
-                            
-                            // If this is not the active account, set it to busy
-                            if (_activeAccountId != account.Id)
-                            {
-                                await SetBusyAsync(account.Id, true);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error updating account {AccountId} status on browser return", account.Id);
-                        }
-                    }));
-                }
-            }
-
-            await Task.WhenAll(tasks);
+            // Note: Removed automatic clearing of away status and setting busy on browser return.
+            // Users can manually manage their away/busy status as desired using the UI controls.
+            return Task.CompletedTask;
         }
 
         public PresenceStatus GetAccountStatus(Guid accountId)
