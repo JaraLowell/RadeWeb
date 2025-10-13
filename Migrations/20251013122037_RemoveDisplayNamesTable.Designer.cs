@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using RadegastWeb.Data;
 
@@ -10,9 +11,11 @@ using RadegastWeb.Data;
 namespace RadegastWeb.Migrations
 {
     [DbContext(typeof(RadegastDbContext))]
-    partial class RadegastDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251013122037_RemoveDisplayNamesTable")]
+    partial class RemoveDisplayNamesTable
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.9");
@@ -70,7 +73,7 @@ namespace RadegastWeb.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Accounts", (string)null);
+                    b.ToTable("Accounts");
                 });
 
             modelBuilder.Entity("RadegastWeb.Models.ChatMessage", b =>
@@ -136,7 +139,7 @@ namespace RadegastWeb.Migrations
                     b.HasIndex("AccountId", "SessionId", "Timestamp")
                         .HasDatabaseName("IX_ChatMessage_Account_Session_Time");
 
-                    b.ToTable("ChatMessages", (string)null);
+                    b.ToTable("ChatMessages");
                 });
 
             modelBuilder.Entity("RadegastWeb.Models.DisplayName", b =>
@@ -194,7 +197,7 @@ namespace RadegastWeb.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_DisplayName_Account_Avatar");
 
-                    b.ToTable("DisplayNames", (string)null);
+                    b.ToTable("DisplayNames");
                 });
 
             modelBuilder.Entity("RadegastWeb.Models.GlobalDisplayName", b =>
@@ -252,7 +255,7 @@ namespace RadegastWeb.Migrations
                     b.HasIndex("LastUpdated")
                         .HasDatabaseName("IX_GlobalDisplayName_LastUpdated");
 
-                    b.ToTable("GlobalDisplayNames", (string)null);
+                    b.ToTable("GlobalDisplayNames");
                 });
 
             modelBuilder.Entity("RadegastWeb.Models.Notice", b =>
@@ -330,7 +333,7 @@ namespace RadegastWeb.Migrations
                     b.HasIndex("AccountId", "Type", "Timestamp")
                         .HasDatabaseName("IX_Notice_Account_Type_Time");
 
-                    b.ToTable("Notices", (string)null);
+                    b.ToTable("Notices");
                 });
 
             modelBuilder.Entity("RadegastWeb.Models.ChatMessage", b =>

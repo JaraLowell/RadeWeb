@@ -56,8 +56,8 @@ namespace RadegastWeb.Models
                 IsDefaultDisplayName = this.IsDefaultDisplayName,
                 NextUpdate = this.NextUpdate,
                 LastUpdated = this.LastUpdated,
-                CachedAt = this.CachedAt,
-                AccountId = Guid.Empty // No account association
+                CachedAt = this.CachedAt
+                // Note: AccountId removed from DisplayName model - no longer needed
             };
         }
         

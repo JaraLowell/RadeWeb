@@ -11,7 +11,6 @@ namespace RadegastWeb.Data
 
         public DbSet<Account> Accounts { get; set; }
         public DbSet<ChatMessage> ChatMessages { get; set; }
-        public DbSet<DisplayName> DisplayNames { get; set; }
         public DbSet<GlobalDisplayName> GlobalDisplayNames { get; set; }
         public DbSet<Notice> Notices { get; set; }
 
@@ -61,37 +60,6 @@ namespace RadegastWeb.Data
                       .HasDatabaseName("IX_ChatMessage_Account_Type_Time");
                 entity.HasIndex(e => e.SessionId)
                       .HasDatabaseName("IX_ChatMessage_SessionId");
-            });
-
-            // Configure DisplayName entity
-            modelBuilder.Entity<DisplayName>(entity =>
-            {
-                entity.HasKey(e => e.Id);
-                entity.Property(e => e.AvatarId).IsRequired().HasMaxLength(36);
-                entity.Property(e => e.DisplayNameValue).IsRequired().HasMaxLength(200);
-                entity.Property(e => e.UserName).IsRequired().HasMaxLength(100);
-                entity.Property(e => e.LegacyFirstName).IsRequired().HasMaxLength(100);
-                entity.Property(e => e.LegacyLastName).IsRequired().HasMaxLength(100);
-                entity.Property(e => e.IsDefaultDisplayName).IsRequired();
-                entity.Property(e => e.NextUpdate).IsRequired();
-                entity.Property(e => e.LastUpdated).IsRequired();
-                entity.Property(e => e.CachedAt).IsRequired();
-
-                // Configure foreign key relationship
-                entity.HasOne(e => e.Account)
-                      .WithMany()
-                      .HasForeignKey(e => e.AccountId)
-                      .IsRequired()
-                      .OnDelete(DeleteBehavior.Cascade);
-
-                // Create unique index for avatar per account
-                entity.HasIndex(e => new { e.AccountId, e.AvatarId })
-                      .IsUnique()
-                      .HasDatabaseName("IX_DisplayName_Account_Avatar");
-
-                // Create index for cache expiry cleanup
-                entity.HasIndex(e => e.CachedAt)
-                      .HasDatabaseName("IX_DisplayName_CachedAt");
             });
 
             // Configure Notice entity

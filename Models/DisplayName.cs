@@ -2,6 +2,10 @@ using System.ComponentModel.DataAnnotations;
 
 namespace RadegastWeb.Models
 {
+    /// <summary>
+    /// Display name model - now represents global display names (no account association)
+    /// This is compatible with GlobalDisplayName for easier migration.
+    /// </summary>
     public class DisplayName
     {
         public Guid Id { get; set; } = Guid.NewGuid();
@@ -35,9 +39,8 @@ namespace RadegastWeb.Models
         
         public DateTime CachedAt { get; set; } = DateTime.UtcNow;
         
-        // Foreign key to associate with account
-        public Guid AccountId { get; set; }
-        public virtual Account Account { get; set; } = null!;
+        // Note: AccountId removed - display names are now global
+        // Use GlobalDisplayName directly if you need database operations
     }
     
     public enum NameDisplayMode

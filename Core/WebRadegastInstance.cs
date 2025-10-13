@@ -1899,7 +1899,7 @@ namespace RadegastWeb.Core
                         DisplayName = e.DisplayName.DisplayNameValue,
                         Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
                         Status = "Online",
-                        AccountId = e.DisplayName.AccountId
+                        AccountId = Guid.Parse(_accountId)
                     };
                     
                     // Fire the avatar updated event

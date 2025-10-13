@@ -107,11 +107,8 @@ namespace RadegastWeb.Services
                 {
                     return cachedName;
                 }
-                else
-                {
-                    // Remove expired entry
-                    _globalNameCache.TryRemove(avatarId, out _);
-                }
+                // Don't remove expired entries here to avoid race conditions
+                // Let the cleanup process handle expired entries periodically
             }
 
             // Check memory cache (faster than DB)
@@ -135,7 +132,7 @@ namespace RadegastWeb.Services
                 var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
                 using var context = dbContextFactory.CreateDbContext();
                 
-                // Try GlobalDisplayNames table first (preferred)
+                // Try GlobalDisplayNames table
                 var globalDbName = await context.GlobalDisplayNames
                     .FirstOrDefaultAsync(dn => dn.AvatarId == avatarId);
 
@@ -144,54 +141,6 @@ namespace RadegastWeb.Services
                     var globalName = globalDbName.ToDisplayName();
                     _globalNameCache.TryAdd(avatarId, globalName);
                     _memoryCache.Set(cacheKey, globalName, _cacheExpiry);
-                    return globalName;
-                }
-                
-                // Fallback to old DisplayNames table for migration compatibility
-                var dbName = await context.DisplayNames
-                    .Where(dn => dn.AvatarId == avatarId)
-                    .OrderByDescending(dn => dn.LastUpdated)
-                    .FirstOrDefaultAsync();
-
-                if (dbName != null && dbName.CachedAt > DateTime.UtcNow.Subtract(_cacheExpiry))
-                {
-                    // Remove account-specific data for global cache
-                    var globalName = new DisplayName
-                    {
-                        AvatarId = dbName.AvatarId,
-                        DisplayNameValue = dbName.DisplayNameValue,
-                        UserName = dbName.UserName,
-                        LegacyFirstName = dbName.LegacyFirstName,
-                        LegacyLastName = dbName.LegacyLastName,
-                        IsDefaultDisplayName = dbName.IsDefaultDisplayName,
-                        NextUpdate = dbName.NextUpdate,
-                        LastUpdated = dbName.LastUpdated,
-                        CachedAt = dbName.CachedAt,
-                        AccountId = Guid.Empty // Global cache doesn't need account ID
-                    };
-                    
-                    _globalNameCache.TryAdd(avatarId, globalName);
-                    _memoryCache.Set(cacheKey, globalName, _cacheExpiry);
-                    
-                    // Migrate to GlobalDisplayNames table for future use
-                    try
-                    {
-                        var globalDbEntry = GlobalDisplayName.FromDisplayName(globalName);
-                        var existingGlobal = await context.GlobalDisplayNames
-                            .FirstOrDefaultAsync(gdn => gdn.AvatarId == avatarId);
-                        
-                        if (existingGlobal == null)
-                        {
-                            context.GlobalDisplayNames.Add(globalDbEntry);
-                            await context.SaveChangesAsync();
-                            _logger.LogDebug("Migrated display name for {AvatarId} to GlobalDisplayNames table", avatarId);
-                        }
-                    }
-                    catch (Exception migrationEx)
-                    {
-                        _logger.LogWarning(migrationEx, "Failed to migrate display name for {AvatarId} to GlobalDisplayNames table", avatarId);
-                    }
-                    
                     return globalName;
                 }
             }
@@ -213,51 +162,30 @@ namespace RadegastWeb.Services
             if (string.IsNullOrEmpty(avatarId))
                 return null;
 
+            var cacheKey = $"global_display_name_{avatarId}";
+
             // Check in-memory cache first
             if (_globalNameCache.TryGetValue(avatarId, out var cachedName))
             {
                 // Check if cache is still valid
                 if (DateTime.UtcNow - cachedName.CachedAt < _cacheExpiry)
                 {
-                    return mode switch
-                    {
-                        NameDisplayMode.Smart => !string.IsNullOrEmpty(cachedName.DisplayNameValue) 
-                            ? cachedName.DisplayNameValue 
-                            : $"{cachedName.LegacyFirstName} {cachedName.LegacyLastName}".Trim(),
-                        NameDisplayMode.OnlyDisplayName => cachedName.DisplayNameValue ?? $"{cachedName.LegacyFirstName} {cachedName.LegacyLastName}".Trim(),
-                        NameDisplayMode.Standard => $"{cachedName.LegacyFirstName} {cachedName.LegacyLastName}".Trim(),
-                        NameDisplayMode.DisplayNameAndUserName => !string.IsNullOrEmpty(cachedName.UserName) 
-                            ? $"{cachedName.DisplayNameValue} ({cachedName.UserName})"
-                            : cachedName.DisplayNameValue ?? $"{cachedName.LegacyFirstName} {cachedName.LegacyLastName}".Trim(),
-                        _ => cachedName.DisplayNameValue ?? $"{cachedName.LegacyFirstName} {cachedName.LegacyLastName}".Trim()
-                    };
+                    // Also ensure it's in memory cache for consistency
+                    _memoryCache.Set(cacheKey, cachedName, _cacheExpiry);
+                    return FormatDisplayName(cachedName, mode);
                 }
-                else
-                {
-                    // Remove expired entry
-                    _globalNameCache.TryRemove(avatarId, out _);
-                }
+                // Don't remove expired entries here to avoid race conditions
+                // Let the cleanup process handle expired entries periodically
             }
 
             // Check memory cache (faster than DB)
-            var cacheKey = $"global_display_name_{avatarId}";
             if (_memoryCache.TryGetValue(cacheKey, out DisplayName? memoryCached))
             {
                 if (memoryCached != null && DateTime.UtcNow - memoryCached.CachedAt < _cacheExpiry)
                 {
-                    _globalNameCache.TryAdd(avatarId, memoryCached);
-                    return mode switch
-                    {
-                        NameDisplayMode.Smart => !string.IsNullOrEmpty(memoryCached.DisplayNameValue) 
-                            ? memoryCached.DisplayNameValue 
-                            : $"{memoryCached.LegacyFirstName} {memoryCached.LegacyLastName}".Trim(),
-                        NameDisplayMode.OnlyDisplayName => memoryCached.DisplayNameValue ?? $"{memoryCached.LegacyFirstName} {memoryCached.LegacyLastName}".Trim(),
-                        NameDisplayMode.Standard => $"{memoryCached.LegacyFirstName} {memoryCached.LegacyLastName}".Trim(),
-                        NameDisplayMode.DisplayNameAndUserName => !string.IsNullOrEmpty(memoryCached.UserName) 
-                            ? $"{memoryCached.DisplayNameValue} ({memoryCached.UserName})"
-                            : memoryCached.DisplayNameValue ?? $"{memoryCached.LegacyFirstName} {memoryCached.LegacyLastName}".Trim(),
-                        _ => memoryCached.DisplayNameValue ?? $"{memoryCached.LegacyFirstName} {memoryCached.LegacyLastName}".Trim()
-                    };
+                    // Sync the in-memory cache with memory cache to keep layers consistent
+                    _globalNameCache.AddOrUpdate(avatarId, memoryCached, (key, existing) => memoryCached);
+                    return FormatDisplayName(memoryCached, mode);
                 }
             }
 
@@ -366,8 +294,7 @@ namespace RadegastWeb.Services
                 IsDefaultDisplayName = displayName.IsDefaultDisplayName,
                 NextUpdate = displayName.NextUpdate,
                 LastUpdated = DateTime.UtcNow,
-                CachedAt = DateTime.UtcNow,
-                AccountId = Guid.Empty
+                CachedAt = DateTime.UtcNow
             };
 
             _globalNameCache.AddOrUpdate(displayName.AvatarId, globalName, (key, existingCache) => globalName);
@@ -406,8 +333,7 @@ namespace RadegastWeb.Services
                     IsDefaultDisplayName = agentDisplayName.IsDefaultDisplayName,
                     NextUpdate = agentDisplayName.NextUpdate,
                     LastUpdated = DateTime.UtcNow,
-                    CachedAt = DateTime.UtcNow,
-                    AccountId = Guid.Empty
+                    CachedAt = DateTime.UtcNow
                 };
 
                 UpdateDisplayName(displayName);
@@ -446,8 +372,7 @@ namespace RadegastWeb.Services
                     IsDefaultDisplayName = true,
                     NextUpdate = DateTime.UtcNow.AddHours(24),
                     LastUpdated = DateTime.UtcNow,
-                    CachedAt = DateTime.UtcNow,
-                    AccountId = Guid.Empty
+                    CachedAt = DateTime.UtcNow
                 };
 
                 UpdateDisplayName(displayName);
@@ -559,6 +484,30 @@ namespace RadegastWeb.Services
             client.Avatars.DisplayNameUpdate += OnDisplayNameUpdate;
             client.Avatars.UUIDNameReply += OnUUIDNameReply;
             
+            // If this is the first client being registered and cache is empty, 
+            // trigger a background reload of cached names from database
+            if (_activeClients.Count == 1 && _globalNameCache.IsEmpty)
+            {
+                _logger.LogInformation("Global display name cache is empty with first client registration, triggering cache pre-load");
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await LoadCachedNamesAsync();
+                        _logger.LogInformation("Pre-loaded {Count} cached display names for new grid client registration", _globalNameCache.Count);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to pre-load cached display names for grid client registration");
+                    }
+                });
+            }
+            else
+            {
+                _logger.LogDebug("Global display name cache has {Count} entries with {ClientCount} active clients", 
+                    _globalNameCache.Count, _activeClients.Count);
+            }
+            
             _logger.LogDebug("Registered grid client for account {AccountId}", accountId);
         }
 
@@ -599,53 +548,7 @@ namespace RadegastWeb.Services
                     _memoryCache.Set(cacheKey, displayName, _cacheExpiry);
                 }
                 
-                _logger.LogDebug("Loaded {Count} display names from GlobalDisplayNames table", globalNames.Count);
-                
-                // Also load from legacy DisplayNames table for migration compatibility
-                var cachedNames = await context.DisplayNames
-                    .Where(dn => dn.CachedAt > DateTime.UtcNow.AddDays(-2)) // Load recent cache
-                    .ToListAsync();
-
-                var legacyNames = new Dictionary<string, DisplayName>();
-                
-                foreach (var name in cachedNames)
-                {
-                    // Skip if we already have this from GlobalDisplayNames
-                    if (_globalNameCache.ContainsKey(name.AvatarId))
-                        continue;
-                        
-                    var globalName = new DisplayName
-                    {
-                        AvatarId = name.AvatarId,
-                        DisplayNameValue = name.DisplayNameValue,
-                        UserName = name.UserName,
-                        LegacyFirstName = name.LegacyFirstName,
-                        LegacyLastName = name.LegacyLastName,
-                        IsDefaultDisplayName = name.IsDefaultDisplayName,
-                        NextUpdate = name.NextUpdate,
-                        LastUpdated = name.LastUpdated,
-                        CachedAt = name.CachedAt,
-                        AccountId = Guid.Empty
-                    };
-                    
-                    // Keep the most recent version for each avatar
-                    if (!legacyNames.TryGetValue(name.AvatarId, out var existing) ||
-                        name.LastUpdated > existing.LastUpdated)
-                    {
-                        legacyNames[name.AvatarId] = globalName;
-                    }
-                }
-                
-                foreach (var kvp in legacyNames)
-                {
-                    _globalNameCache.TryAdd(kvp.Key, kvp.Value);
-                    var cacheKey = $"global_display_name_{kvp.Key}";
-                    _memoryCache.Set(cacheKey, kvp.Value, _cacheExpiry);
-                }
-                
-                var totalLoaded = globalNames.Count + legacyNames.Count;
-                _logger.LogInformation("Loaded {Total} cached display names into global cache ({Global} from global, {Legacy} from legacy)", 
-                    totalLoaded, globalNames.Count, legacyNames.Count);
+                _logger.LogInformation("Loaded {Total} cached display names into global cache", globalNames.Count);
             }
             catch (ObjectDisposedException)
             {
