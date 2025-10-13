@@ -137,12 +137,18 @@
             <div class="col-md-3">
                 <div id="peoplePanel" class="d-none">
                     <div class="card">
-                        <div class="card-header">
-                            <h6><i class="fas fa-eye me-2"></i>People Nearby</h6>
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0"><i class="fas fa-eye me-2"></i>People Nearby</h6>
+                            <button id="radarToggleBtn" class="btn btn-sm btn-outline-secondary" type="button" title="Toggle Radar Stats">
+                                <i id="radarToggleIcon" class="fas fa-chart-bar"></i>
+                            </button>
                         </div>
                         <div class="card-body p-0">
                             <div id="peopleList" class="people-list">
                                 <!-- People in region will appear here -->
+                            </div>
+                            <div id="radarStats" class="p-2 border-top text-muted" style="display: none;">
+                                <!-- Radar statistics will appear here -->
                             </div>
                         </div>
                     </div>

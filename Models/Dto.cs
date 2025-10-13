@@ -104,6 +104,15 @@ namespace RadegastWeb.Models
         public string? ObjectId { get; set; } // UUID string, null or empty for ground
     }
 
+    public class RadarStatsDto
+    {
+        public int DetailedAvatarCount { get; set; }
+        public int CoarseLocationAvatarCount { get; set; }
+        public int TotalUniqueAvatars { get; set; }
+        public double MaxDetectionRange { get; set; }
+        public int SimAvatarCount { get; set; }
+    }
+
     public class SitStateChangedEventArgs : EventArgs
     {
         public bool IsSitting { get; set; }

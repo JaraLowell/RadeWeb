@@ -18,6 +18,7 @@ class RadegastWebClient {
         this.setupTabs();
         this.initializeDarkMode();
         this.initializeGroupsToggleState();
+        this.initializeRadarToggleState();
         
         // Load accounts after initialization and set up periodic refresh
         this.loadAccounts().catch(error => {
@@ -592,6 +593,34 @@ class RadegastWebClient {
                 </div>
             </div>
         `).join('');
+        
+        // Update radar statistics if the debug panel is visible
+        this.updateRadarStats();
+    }
+
+    async updateRadarStats() {
+        if (!this.currentAccountId) return;
+        
+        const radarStatsElement = document.getElementById('radarStats');
+        if (!radarStatsElement) return; // Only update if stats element exists
+        
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/radar-stats`);
+            if (response.ok) {
+                const stats = await response.json();
+                radarStatsElement.innerHTML = `
+                    <div class="small">
+                        <div>Detailed Avatars: ${stats.detailedAvatarCount}</div>
+                        <div>Coarse Location Avatars: ${stats.coarseLocationAvatarCount}</div>
+                        <div>Total Unique Avatars: ${stats.totalUniqueAvatars}</div>
+                        <div>Sim Total: ${stats.simAvatarCount}</div>
+                        <div>Max Range: ${stats.maxDetectionRange}m</div>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.debug("Error fetching radar stats:", error);
+        }
     }
 
     async loadGroups() {
@@ -802,6 +831,11 @@ class RadegastWebClient {
         // Groups toggle button
         document.getElementById('groupsToggleBtn').addEventListener('click', () => {
             this.toggleGroupsList();
+        });
+
+        // Radar stats toggle button
+        document.getElementById('radarToggleBtn').addEventListener('click', () => {
+            this.toggleRadarStats();
         });
     }
 
@@ -2097,6 +2131,39 @@ class RadegastWebClient {
         } else {
             groupsCardBody.style.display = 'block';
             toggleIcon.className = 'fas fa-chevron-up';
+        }
+    }
+
+    toggleRadarStats() {
+        const radarStats = document.getElementById('radarStats');
+        const toggleIcon = document.getElementById('radarToggleIcon');
+        
+        if (radarStats.style.display === 'none') {
+            // Show the radar stats
+            radarStats.style.display = 'block';
+            toggleIcon.className = 'fas fa-chart-line';
+            localStorage.setItem('radarStatsVisible', 'true');
+            this.updateRadarStats(); // Update immediately when shown
+        } else {
+            // Hide the radar stats
+            radarStats.style.display = 'none';
+            toggleIcon.className = 'fas fa-chart-bar';
+            localStorage.setItem('radarStatsVisible', 'false');
+        }
+    }
+
+    initializeRadarToggleState() {
+        // Restore the toggle state from localStorage
+        const isVisible = localStorage.getItem('radarStatsVisible') === 'true';
+        const radarStats = document.getElementById('radarStats');
+        const toggleIcon = document.getElementById('radarToggleIcon');
+        
+        if (isVisible) {
+            radarStats.style.display = 'block';
+            toggleIcon.className = 'fas fa-chart-line';
+        } else {
+            radarStats.style.display = 'none';
+            toggleIcon.className = 'fas fa-chart-bar';
         }
     }
 }

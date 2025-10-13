@@ -222,6 +222,30 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
+        /// Get radar statistics for debugging
+        /// </summary>
+        [HttpGet("{id}/radar-stats")]
+        public ActionResult<RadarStatsDto> GetRadarStats(Guid id)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(id);
+                if (instance == null)
+                {
+                    return NotFound("Account instance not found");
+                }
+
+                var stats = instance.GetRadarStats();
+                return Ok(stats);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting radar statistics for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
         /// Get chat sessions
         /// </summary>
         [HttpGet("{id}/sessions")]

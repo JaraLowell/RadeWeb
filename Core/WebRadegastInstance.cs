@@ -20,7 +20,16 @@ namespace RadegastWeb.Core
         private readonly string _cacheDir;
         private readonly string _logDir;
         private bool _disposed;
+        
+        // Constants for radar functionality (matching Radegast behavior)
+        private const double MAX_DISTANCE = 362.0; // One sim corner-to-corner distance
+        
         private readonly ConcurrentDictionary<UUID, Avatar> _nearbyAvatars = new();
+        
+        // Dictionary to store coarse location avatars (extended range detection)
+        private readonly ConcurrentDictionary<UUID, CoarseLocationAvatar> _coarseLocationAvatars = new();
+        private readonly ConcurrentDictionary<UUID, ulong> _avatarSimHandles = new();
+        
         private readonly ConcurrentDictionary<string, ChatSessionDto> _chatSessions = new();
         private readonly ConcurrentDictionary<UUID, Group> _groups = new();
         private System.Threading.Timer? _displayNameRefreshTimer;
@@ -462,15 +471,20 @@ namespace RadegastWeb.Core
         public async Task<IEnumerable<AvatarDto>> GetNearbyAvatarsAsync()
         {
             // First, proactively ensure all nearby avatar display names are loading
-            if (_nearbyAvatars.Count > 0)
+            var allAvatarIds = new List<string>();
+            
+            // Collect IDs from both detailed and coarse location avatars
+            allAvatarIds.AddRange(_nearbyAvatars.Keys.Select(id => id.ToString()));
+            allAvatarIds.AddRange(_coarseLocationAvatars.Keys.Select(id => id.ToString()));
+            
+            if (allAvatarIds.Count > 0)
             {
-                var allAvatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
                 // Fire and forget - start loading names in background
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), allAvatarIds);
+                        await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), allAvatarIds.Distinct().ToList());
                     }
                     catch (Exception ex)
                     {
@@ -479,22 +493,24 @@ namespace RadegastWeb.Core
                 });
             }
 
-            var avatarTasks = _nearbyAvatars.Values.Select(async avatar => 
+            var avatarTasks = new List<Task<AvatarDto>>();
+            var processedIds = new HashSet<UUID>();
+
+            // Process detailed avatars first (they have priority)
+            foreach (var avatar in _nearbyAvatars.Values)
             {
-                var avatarName = avatar.Name ?? "Unknown";
-                var displayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
-                var legacyName = await _displayNameService.GetLegacyNameAsync(Guid.Parse(_accountId), avatar.ID.ToString(), avatarName);
-                
-                return new AvatarDto
+                processedIds.Add(avatar.ID);
+                avatarTasks.Add(CreateAvatarDtoAsync(avatar));
+            }
+
+            // Process coarse location avatars that don't have detailed info
+            foreach (var coarseAvatar in _coarseLocationAvatars.Values)
+            {
+                if (!processedIds.Contains(coarseAvatar.ID))
                 {
-                    Id = avatar.ID.ToString(),
-                    Name = legacyName,
-                    DisplayName = displayName,
-                    Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
-                    Status = "Online", // TODO: Get actual status if available
-                    AccountId = Guid.Parse(_accountId)
-                };
-            });
+                    avatarTasks.Add(CreateAvatarDtoFromCoarseAsync(coarseAvatar));
+                }
+            }
 
             var avatars = await Task.WhenAll(avatarTasks);
             return avatars.OrderBy(a => a.Distance);
@@ -502,52 +518,170 @@ namespace RadegastWeb.Core
 
         public IEnumerable<AvatarDto> GetNearbyAvatars()
         {
-            return _nearbyAvatars.Values.Select(avatar =>
-            {
-                var avatarName = avatar.Name ?? "Unknown";
-                string displayName = avatarName;
-                
-                // Try to get display name from global cache synchronously
-                try
-                {
-                    // Check if we have the display name in global cache
-                    var cachedName = _globalDisplayNameCache.GetCachedDisplayName(avatar.ID.ToString());
-                    if (!string.IsNullOrEmpty(cachedName) && cachedName != "Loading...")
-                    {
-                        displayName = cachedName;
-                    }
-                    // If not in cache, use the avatar name and trigger async loading for next time
-                    else
-                    {
-                        // Fire and forget - load for next time
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                await _globalDisplayNameCache.GetDisplayNameAsync(avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogDebug(ex, "Background display name load failed for {AvatarId}", avatar.ID);
-                            }
-                        });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "Error accessing global display name cache for {AvatarId}", avatar.ID);
-                }
+            var processedIds = new HashSet<UUID>();
+            var avatars = new List<AvatarDto>();
 
-                return new AvatarDto
+            // Process detailed avatars first (they have priority)
+            foreach (var avatar in _nearbyAvatars.Values)
+            {
+                processedIds.Add(avatar.ID);
+                avatars.Add(CreateAvatarDto(avatar));
+            }
+
+            // Process coarse location avatars that don't have detailed info
+            foreach (var coarseAvatar in _coarseLocationAvatars.Values)
+            {
+                if (!processedIds.Contains(coarseAvatar.ID))
                 {
-                    Id = avatar.ID.ToString(),
-                    Name = avatarName,
-                    DisplayName = displayName,
-                    Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
-                    Status = "Online", // TODO: Get actual status if available
-                    AccountId = Guid.Parse(_accountId)
-                };
-            }).OrderBy(a => a.Distance);
+                    avatars.Add(CreateAvatarDtoFromCoarse(coarseAvatar));
+                }
+            }
+
+            return avatars.OrderBy(a => a.Distance);
+        }
+
+        private async Task<AvatarDto> CreateAvatarDtoAsync(Avatar avatar)
+        {
+            var avatarName = avatar.Name ?? "Unknown";
+            var displayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
+            var legacyName = await _displayNameService.GetLegacyNameAsync(Guid.Parse(_accountId), avatar.ID.ToString(), avatarName);
+            
+            return new AvatarDto
+            {
+                Id = avatar.ID.ToString(),
+                Name = legacyName,
+                DisplayName = displayName,
+                Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
+                Status = "Online", // TODO: Get actual status if available
+                AccountId = Guid.Parse(_accountId)
+            };
+        }
+
+        private AvatarDto CreateAvatarDto(Avatar avatar)
+        {
+            var avatarName = avatar.Name ?? "Unknown";
+            string displayName = avatarName;
+            
+            // Try to get display name from global cache synchronously
+            try
+            {
+                // Check if we have the display name in global cache
+                var cachedName = _globalDisplayNameCache.GetCachedDisplayName(avatar.ID.ToString());
+                if (!string.IsNullOrEmpty(cachedName) && cachedName != "Loading...")
+                {
+                    displayName = cachedName;
+                }
+                // If not in cache, use the avatar name and trigger async loading for next time
+                else
+                {
+                    // Fire and forget - load for next time
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _globalDisplayNameCache.GetDisplayNameAsync(avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Background display name load failed for {AvatarId}", avatar.ID);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error accessing global display name cache for {AvatarId}", avatar.ID);
+            }
+
+            return new AvatarDto
+            {
+                Id = avatar.ID.ToString(),
+                Name = avatarName,
+                DisplayName = displayName,
+                Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
+                Status = "Online", // TODO: Get actual status if available
+                AccountId = Guid.Parse(_accountId)
+            };
+        }
+
+        private async Task<AvatarDto> CreateAvatarDtoFromCoarseAsync(CoarseLocationAvatar coarseAvatar)
+        {
+            var avatarName = coarseAvatar.Name;
+            if (string.IsNullOrEmpty(avatarName) || avatarName == "Loading...")
+            {
+                avatarName = "Loading...";
+                // Try to get the name asynchronously
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), coarseAvatar.ID.ToString(), NameDisplayMode.Smart, "");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error loading name for coarse avatar {AvatarId}", coarseAvatar.ID);
+                    }
+                });
+            }
+
+            var displayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), coarseAvatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
+            var legacyName = await _displayNameService.GetLegacyNameAsync(Guid.Parse(_accountId), coarseAvatar.ID.ToString(), avatarName);
+            
+            return new AvatarDto
+            {
+                Id = coarseAvatar.ID.ToString(),
+                Name = legacyName,
+                DisplayName = displayName,
+                Distance = CalculateHorizontalDistance(_client.Self.SimPosition, coarseAvatar.Position),
+                Status = "Online", // Coarse location avatars are assumed online
+                AccountId = Guid.Parse(_accountId)
+            };
+        }
+
+        private AvatarDto CreateAvatarDtoFromCoarse(CoarseLocationAvatar coarseAvatar)
+        {
+            var avatarName = coarseAvatar.Name;
+            if (string.IsNullOrEmpty(avatarName) || avatarName == "Loading...")
+            {
+                avatarName = "Loading...";
+                // Request name lookup
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), coarseAvatar.ID.ToString(), NameDisplayMode.Smart, "");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error loading name for coarse avatar {AvatarId}", coarseAvatar.ID);
+                    }
+                });
+            }
+
+            // Try to get display name from global cache
+            var displayName = avatarName;
+            try
+            {
+                var cachedName = _globalDisplayNameCache.GetCachedDisplayName(coarseAvatar.ID.ToString());
+                if (!string.IsNullOrEmpty(cachedName) && cachedName != "Loading...")
+                {
+                    displayName = cachedName;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error accessing global display name cache for coarse avatar {AvatarId}", coarseAvatar.ID);
+            }
+
+            return new AvatarDto
+            {
+                Id = coarseAvatar.ID.ToString(),
+                Name = avatarName,
+                DisplayName = displayName,
+                Distance = CalculateHorizontalDistance(_client.Self.SimPosition, coarseAvatar.Position),
+                Status = "Online", // Coarse location avatars are assumed online
+                AccountId = Guid.Parse(_accountId)
+            };
         }
 
         public IEnumerable<ChatSessionDto> GetChatSessions()
@@ -631,6 +765,31 @@ namespace RadegastWeb.Core
             {
                 _logger.LogError(ex, "Error manually refreshing nearby avatar display names for account {AccountId}", _accountId);
             }
+        }
+
+        /// <summary>
+        /// Get radar statistics for debugging and monitoring
+        /// </summary>
+        public RadarStatsDto GetRadarStats()
+        {
+            return new RadarStatsDto
+            {
+                DetailedAvatarCount = _nearbyAvatars.Count,
+                CoarseLocationAvatarCount = _coarseLocationAvatars.Count,
+                TotalUniqueAvatars = GetUniqueAvatarCount(),
+                MaxDetectionRange = MAX_DISTANCE,
+                SimAvatarCount = _client.Network.CurrentSim?.AvatarPositions.Count ?? 0
+            };
+        }
+
+        private int GetUniqueAvatarCount()
+        {
+            var uniqueIds = new HashSet<UUID>();
+            foreach (var id in _nearbyAvatars.Keys)
+                uniqueIds.Add(id);
+            foreach (var id in _coarseLocationAvatars.Keys)
+                uniqueIds.Add(id);
+            return uniqueIds.Count;
         }
 
         /// <summary>
@@ -775,6 +934,8 @@ namespace RadegastWeb.Core
             AccountInfo.CurrentRegion = e.PreviousSimulator?.Name;
             UpdateRegionInfo();
             _nearbyAvatars.Clear(); // Clear avatars from previous sim
+            _coarseLocationAvatars.Clear(); // Clear coarse location avatars from previous sim
+            _avatarSimHandles.Clear(); // Clear sim handles
             
             // Proactively start loading display names for the new region
             _ = Task.Run(async () =>
@@ -785,10 +946,14 @@ namespace RadegastWeb.Core
                     await Task.Delay(3000);
                     
                     // Preload any avatars that have appeared in the new region
-                    if (_nearbyAvatars.Count > 0)
+                    var totalAvatars = _nearbyAvatars.Count + _coarseLocationAvatars.Count;
+                    if (totalAvatars > 0)
                     {
-                        var avatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
-                        await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), avatarIds);
+                        var avatarIds = new List<string>();
+                        avatarIds.AddRange(_nearbyAvatars.Keys.Select(id => id.ToString()));
+                        avatarIds.AddRange(_coarseLocationAvatars.Keys.Select(id => id.ToString()));
+                        
+                        await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), avatarIds.Distinct().ToList());
                         _logger.LogInformation("Preloaded display names for {Count} avatars after sim change", avatarIds.Count);
                     }
                 }
@@ -826,6 +991,18 @@ namespace RadegastWeb.Core
 
             var isNewAvatar = !_nearbyAvatars.ContainsKey(e.Avatar.ID);
             _nearbyAvatars.AddOrUpdate(e.Avatar.ID, e.Avatar, (key, oldValue) => e.Avatar);
+
+            // Mark corresponding coarse location avatar as detailed if it exists
+            if (_coarseLocationAvatars.TryGetValue(e.Avatar.ID, out var coarseAvatar))
+            {
+                coarseAvatar.IsDetailed = true;
+                coarseAvatar.Position = e.Avatar.Position; // Update position from detailed data
+                coarseAvatar.LastUpdate = DateTime.UtcNow;
+                if (!string.IsNullOrEmpty(e.Avatar.Name))
+                {
+                    coarseAvatar.Name = e.Avatar.Name;
+                }
+            }
 
             // Get display name for the avatar with fallback to avatar name
             // Try global cache first, then fall back to account-specific service
@@ -891,8 +1068,11 @@ namespace RadegastWeb.Core
                 {
                     try
                     {
-                        // Get all current avatar IDs
-                        var currentAvatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
+                        // Get all current avatar IDs from both detailed and coarse location avatars
+                        var avatarIds = new List<string>();
+                        avatarIds.AddRange(_nearbyAvatars.Keys.Select(id => id.ToString()));
+                        avatarIds.AddRange(_coarseLocationAvatars.Keys.Select(id => id.ToString()));
+                        var currentAvatarIds = avatarIds.Distinct().ToList();
                         
                         // Use global cache for preloading - more efficient across accounts
                         await _globalDisplayNameCache.PreloadDisplayNamesAsync(currentAvatarIds);
@@ -907,13 +1087,18 @@ namespace RadegastWeb.Core
             }
             
             // Strategy 2: Periodic bulk preloading for larger groups (every 5 avatars)
-            if (_nearbyAvatars.Count % 5 == 0 && _nearbyAvatars.Count > 0)
+            var totalAvatarCount = _nearbyAvatars.Count + _coarseLocationAvatars.Count;
+            if (totalAvatarCount % 5 == 0 && totalAvatarCount > 0)
             {
                 _ = Task.Run(async () =>
                 {
                     try
                     {
-                        var allAvatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
+                        var avatarIds = new List<string>();
+                        avatarIds.AddRange(_nearbyAvatars.Keys.Select(id => id.ToString()));
+                        avatarIds.AddRange(_coarseLocationAvatars.Keys.Select(id => id.ToString()));
+                        var allAvatarIds = avatarIds.Distinct().ToList();
+                        
                         await _globalDisplayNameCache.PreloadDisplayNamesAsync(allAvatarIds);
                         
                         _logger.LogDebug("Bulk preloaded display names for {Count} nearby avatars (periodic)", allAvatarIds.Count);
@@ -932,6 +1117,10 @@ namespace RadegastWeb.Core
             var avatarToRemove = _nearbyAvatars.Values.FirstOrDefault(a => a.LocalID == e.ObjectLocalID);
             if (avatarToRemove != null && _nearbyAvatars.TryRemove(avatarToRemove.ID, out var removedAvatar))
             {
+                // Also remove from coarse location tracking if it exists
+                _coarseLocationAvatars.TryRemove(avatarToRemove.ID, out _);
+                _avatarSimHandles.TryRemove(avatarToRemove.ID, out _);
+                
                 AvatarRemoved?.Invoke(this, removedAvatar.ID.ToString());
                 UpdateRegionInfo();
             }
@@ -968,11 +1157,136 @@ namespace RadegastWeb.Core
         {
             // This gives us a more complete list of all avatars in the sim, 
             // not just those within draw distance that trigger AvatarUpdate
-            if (e.Simulator == _client.Network.CurrentSim)
+            if (e.Simulator != _client.Network.CurrentSim)
             {
-                // Update the region info with the total avatar count from coarse location data
-                UpdateRegionInfo();
+                // Handle cross-sim avatars if within range
+                return;
             }
+
+            try
+            {
+                // Get our current position for distance calculations
+                var agentPosition = e.Simulator.AvatarPositions.TryGetValue(_client.Self.AgentID, out var ourPos)
+                    ? ToVector3D(e.Simulator.Handle, ourPos)
+                    : _client.Self.GlobalPosition;
+
+                // Handle removed avatars
+                var removedAvatars = new List<UUID>();
+                foreach (var removedId in e.RemovedEntries)
+                {
+                    if (_coarseLocationAvatars.TryRemove(removedId, out var removed))
+                    {
+                        _avatarSimHandles.TryRemove(removedId, out _);
+                        removedAvatars.Add(removedId);
+                    }
+                }
+
+                // Process all avatar positions
+                var existingAvatars = new HashSet<UUID>();
+                foreach (var avatarPos in e.Simulator.AvatarPositions)
+                {
+                    existingAvatars.Add(avatarPos.Key);
+                    
+                    // Skip self
+                    if (avatarPos.Key == _client.Self.AgentID)
+                        continue;
+
+                    var pos = avatarPos.Value;
+                    
+                    // Get detailed avatar object if available
+                    var detailedAvatar = e.Simulator.ObjectsAvatars.Values.FirstOrDefault(av => av.ID == avatarPos.Key);
+                    
+                    // Handle altitude issues (SecondLife uses 1020f, OpenSim uses 0f for high altitudes)
+                    bool unknownAltitude = _client.Settings.LOGIN_SERVER.Contains("secondlife") ? pos.Z == 1020f : pos.Z == 0f;
+                    if (unknownAltitude && detailedAvatar != null)
+                    {
+                        if (detailedAvatar.ParentID == 0)
+                        {
+                            pos.Z = detailedAvatar.Position.Z;
+                        }
+                        else if (e.Simulator.ObjectsPrimitives.TryGetValue(detailedAvatar.ParentID, out var seatObject))
+                        {
+                            pos.Z = seatObject.Position.Z;
+                        }
+                    }
+
+                    // Calculate distance from agent
+                    var distance = Vector3d.Distance(ToVector3D(e.Simulator.Handle, pos), agentPosition);
+                    
+                    // Apply maximum distance filter (362m = corner to corner of sim)
+                    if (distance > MAX_DISTANCE)
+                        continue;
+
+                    // Update or create coarse location avatar
+                    var avatarName = detailedAvatar?.Name ?? "Loading...";
+                    
+                    if (_coarseLocationAvatars.TryGetValue(avatarPos.Key, out var existing))
+                    {
+                        existing.Position = pos;
+                        existing.LastUpdate = DateTime.UtcNow;
+                        existing.IsDetailed = detailedAvatar != null;
+                        if (!string.IsNullOrEmpty(avatarName) && avatarName != "Loading...")
+                        {
+                            existing.Name = avatarName;
+                        }
+                    }
+                    else
+                    {
+                        var coarseAvatar = new CoarseLocationAvatar(avatarPos.Key, pos, e.Simulator.Handle, avatarName)
+                        {
+                            IsDetailed = detailedAvatar != null
+                        };
+                        _coarseLocationAvatars.TryAdd(avatarPos.Key, coarseAvatar);
+                    }
+                    
+                    _avatarSimHandles[avatarPos.Key] = e.Simulator.Handle;
+                }
+
+                // Remove avatars that are no longer in the position update
+                var toRemove = new List<UUID>();
+                foreach (var kvp in _coarseLocationAvatars)
+                {
+                    if (_avatarSimHandles.TryGetValue(kvp.Key, out var simHandle) && 
+                        simHandle == e.Simulator.Handle && 
+                        !existingAvatars.Contains(kvp.Key))
+                    {
+                        toRemove.Add(kvp.Key);
+                    }
+                }
+
+                foreach (var removeId in toRemove)
+                {
+                    _coarseLocationAvatars.TryRemove(removeId, out _);
+                    _avatarSimHandles.TryRemove(removeId, out _);
+                    removedAvatars.Add(removeId);
+                }
+
+                // Trigger avatar removed events for all removed avatars
+                foreach (var removedId in removedAvatars)
+                {
+                    AvatarRemoved?.Invoke(this, removedId.ToString());
+                }
+
+                // Update the region info with the total avatar count
+                UpdateRegionInfo();
+                
+                _logger.LogDebug("Coarse location update processed: {Count} avatars, {Removed} removed", 
+                    _coarseLocationAvatars.Count, removedAvatars.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing coarse location update for account {AccountId}", _accountId);
+            }
+        }
+
+        /// <summary>
+        /// Converts sim handle and local position to global Vector3d
+        /// </summary>
+        private static Vector3d ToVector3D(ulong handle, Vector3 localPosition)
+        {
+            var regionX = (double)((handle >> 32) & 0xFFFF) * 256.0;
+            var regionY = (double)(handle & 0xFFFF) * 256.0;
+            return new Vector3d(regionX + localPosition.X, regionY + localPosition.Y, localPosition.Z);
         }
 
         private async void Self_ChatFromSimulator(object? sender, ChatEventArgs e)
