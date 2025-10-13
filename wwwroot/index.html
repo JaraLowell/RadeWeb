@@ -10,7 +10,7 @@
     <link href="/css/region-info.css" rel="stylesheet">
 </head>
 <body>
-    <div class="container-fluid">
+    <div class="container-fluid main-content">
         <header class="bg-primary text-white p-3 mb-4">
             <div class="row align-items-center">
                 <div class="col">
@@ -28,7 +28,7 @@
             </div>
         </header>
 
-        <div class="row">
+        <div class="row content-row">
             <!-- Accounts Sidebar -->
             <div class="col-md-3">
                 <div class="card">
@@ -44,7 +44,7 @@
             </div>
 
             <!-- Main Content Area -->
-            <div class="col-md-6">
+            <div class="col-md-6 chat-column">
                 <div id="welcomeMessage" class="text-center py-5">
                     <i class="fas fa-robot fa-3x text-muted mb-3"></i>
                     <h3>Welcome to RadegastWeb</h3>
@@ -53,7 +53,7 @@
 
                 <!-- Account Chat Interface (hidden by default) -->
                 <div id="chatInterface" class="d-none">
-                    <div class="card">
+                    <div class="card h-100">
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <div>
                                 <h5 id="chatAccountName" class="mb-0"></h5>
@@ -283,8 +283,93 @@
         </div>
     </div>
 
+    <!-- Footer -->
+    <footer style="background-color: #4a73a9; color: white; text-align: right; padding: 5px; margin-top: auto;">
+        <p class="mb-0">Created by <a target="_blank" rel="noopener noreferrer" href="https://github.com/JaraLowell/RadeWeb">Jara Lowell</a> and <a target="_blank" rel="noopener noreferrer" href="https://github.com/cinderblocks/radegast">Radegast Metaverse Client</a> </p>
+    </footer>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://unpkg.com/@microsoft/signalr@latest/dist/browser/signalr.min.js"></script>
+    <script>
+        // Dynamic height calculation for chat interface
+        function calculateChatHeight() {
+            const header = document.querySelector('header');
+            const footer = document.querySelector('footer');
+            const chatInterface = document.getElementById('chatInterface');
+            const chatCard = chatInterface ? chatInterface.querySelector('.card') : null;
+            const chatHeader = chatCard ? chatCard.querySelector('.card-header') : null;
+            const chatTabs = document.getElementById('chatTabs');
+            const chatInputArea = document.querySelector('.chat-input-area');
+            
+            if (!chatInterface || chatInterface.classList.contains('d-none')) {
+                return; // Don't calculate if chat interface is hidden
+            }
+            
+            // Get viewport height
+            const viewportHeight = window.innerHeight;
+            
+            // Calculate heights of fixed elements
+            const headerHeight = header ? header.offsetHeight : 0;
+            const footerHeight = footer ? footer.offsetHeight : 0;
+            const chatHeaderHeight = chatHeader ? chatHeader.offsetHeight : 0;
+            const chatTabsHeight = chatTabs ? chatTabs.offsetHeight : 0;
+            const chatInputHeight = chatInputArea ? chatInputArea.offsetHeight : 0;
+            
+            // Add some padding/margin space (approximation)
+            const spacing = 40; // Account for margins, paddings, borders
+            
+            // Calculate available height for chat messages
+            const availableHeight = viewportHeight - headerHeight - footerHeight - chatHeaderHeight - chatTabsHeight - chatInputHeight - spacing;
+            
+            // Set the height for all chat message containers
+            const chatMessages = document.querySelectorAll('.chat-messages');
+            chatMessages.forEach(container => {
+                container.style.height = Math.max(200, availableHeight) + 'px';
+                container.style.maxHeight = Math.max(200, availableHeight) + 'px';
+            });
+            
+            console.log('Chat height calculated:', {
+                viewport: viewportHeight,
+                header: headerHeight,
+                footer: footerHeight,
+                chatHeader: chatHeaderHeight,
+                chatTabs: chatTabsHeight,
+                chatInput: chatInputHeight,
+                spacing: spacing,
+                available: availableHeight,
+                final: Math.max(200, availableHeight)
+            });
+        }
+        
+        // Initial calculation when DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            // Wait a bit for all elements to be rendered
+            setTimeout(calculateChatHeight, 100);
+        });
+        
+        // Recalculate on window resize
+        window.addEventListener('resize', calculateChatHeight);
+        
+        // Recalculate when chat interface becomes visible
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                    const chatInterface = document.getElementById('chatInterface');
+                    if (chatInterface && !chatInterface.classList.contains('d-none')) {
+                        setTimeout(calculateChatHeight, 100);
+                    }
+                }
+            });
+        });
+        
+        // Start observing the chat interface for class changes
+        document.addEventListener('DOMContentLoaded', function() {
+            const chatInterface = document.getElementById('chatInterface');
+            if (chatInterface) {
+                observer.observe(chatInterface, { attributes: true });
+            }
+        });
+    </script>
     <script src="/js/auth.js"></script>
     <script src="/js/main.js"></script>
     <script src="/js/presence-client.js"></script>
