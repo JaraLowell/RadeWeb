@@ -228,6 +228,39 @@ namespace RadegastWeb.Core
                     AccountInfo.IsConnected = true;
                     AccountInfo.LastLoginAt = DateTime.UtcNow;
                     AccountInfo.AvatarUuid = _client.Self.AgentID.ToString();
+                    
+                    // Update account's own display name with actual SL display name
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            // Wait a moment for the client to fully initialize
+                            await Task.Delay(3000);
+                            
+                            // Get our own display name from the display name service
+                            var ownDisplayName = await _displayNameService.GetDisplayNameAsync(
+                                Guid.Parse(_accountId), 
+                                _client.Self.AgentID.ToString(), 
+                                NameDisplayMode.Smart, 
+                                $"{AccountInfo.FirstName} {AccountInfo.LastName}");
+                            
+                            // Update the account's display name if it's different from the legacy format
+                            var legacyName = $"{AccountInfo.FirstName} {AccountInfo.LastName}";
+                            if (!string.IsNullOrEmpty(ownDisplayName) && ownDisplayName != legacyName && ownDisplayName != "Loading...")
+                            {
+                                AccountInfo.DisplayName = ownDisplayName;
+                                _logger.LogInformation("Updated account display name to: {DisplayName}", ownDisplayName);
+                                
+                                // Trigger a status update to refresh the UI
+                                UpdateStatus(AccountInfo.Status);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to update account's own display name");
+                        }
+                    });
+                    
                     UpdateStatus("Connected");
                     ConnectionChanged?.Invoke(this, true);
                     return true;
@@ -294,7 +327,9 @@ namespace RadegastWeb.Core
                 var chatMessage = new ChatMessageDto
                 {
                     AccountId = Guid.Parse(_accountId),
-                    SenderName = $"{AccountInfo.FirstName} {AccountInfo.LastName}",
+                    SenderName = !string.IsNullOrEmpty(AccountInfo.DisplayName) && AccountInfo.DisplayName != $"{AccountInfo.FirstName} {AccountInfo.LastName}"
+                        ? AccountInfo.DisplayName 
+                        : $"{AccountInfo.FirstName} {AccountInfo.LastName}",
                     Message = message,
                     ChatType = chatType.ToString(),
                     Channel = channel.ToString(),
@@ -356,7 +391,9 @@ namespace RadegastWeb.Core
                     var chatMessage = new ChatMessageDto
                     {
                         AccountId = Guid.Parse(_accountId),
-                        SenderName = $"{AccountInfo.FirstName} {AccountInfo.LastName}",
+                        SenderName = !string.IsNullOrEmpty(AccountInfo.DisplayName) && AccountInfo.DisplayName != $"{AccountInfo.FirstName} {AccountInfo.LastName}"
+                            ? AccountInfo.DisplayName 
+                            : $"{AccountInfo.FirstName} {AccountInfo.LastName}",
                         Message = message,
                         ChatType = "IM",
                         Channel = "IM",
@@ -472,7 +509,9 @@ namespace RadegastWeb.Core
                     var chatMessage = new ChatMessageDto
                     {
                         AccountId = Guid.Parse(_accountId),
-                        SenderName = $"{AccountInfo.FirstName} {AccountInfo.LastName}",
+                        SenderName = !string.IsNullOrEmpty(AccountInfo.DisplayName) && AccountInfo.DisplayName != $"{AccountInfo.FirstName} {AccountInfo.LastName}"
+                            ? AccountInfo.DisplayName 
+                            : $"{AccountInfo.FirstName} {AccountInfo.LastName}",
                         Message = message,
                         ChatType = "Group",
                         Channel = "Group",
@@ -884,6 +923,14 @@ namespace RadegastWeb.Core
                     {
                         // Wait a bit for initial avatar updates to populate
                         await Task.Delay(2000);
+                        
+                        // Request our own display name first
+                        if (_client.Network.Connected)
+                        {
+                            await _globalDisplayNameCache.RequestDisplayNamesAsync(
+                                new List<string> { _client.Self.AgentID.ToString() }, 
+                                Guid.Parse(_accountId));
+                        }
                         
                         // Preload any avatars that appeared during login
                         if (_nearbyAvatars.Count > 0)
@@ -1782,6 +1829,25 @@ namespace RadegastWeb.Core
                 };
                 
                 await _displayNameService.UpdateDisplayNamesAsync(Guid.Parse(_accountId), displayNames);
+                
+                // Check if this is our own display name being updated
+                if (e.DisplayName.ID == _client.Self.AgentID)
+                {
+                    var newDisplayName = e.DisplayName.IsDefaultDisplayName
+                        ? e.DisplayName.DisplayName
+                        : $"{e.DisplayName.DisplayName} ({e.DisplayName.UserName})";
+                        
+                    var legacyName = $"{AccountInfo.FirstName} {AccountInfo.LastName}";
+                    
+                    if (!string.IsNullOrEmpty(newDisplayName) && newDisplayName != legacyName)
+                    {
+                        AccountInfo.DisplayName = newDisplayName;
+                        _logger.LogInformation("Updated own display name to: {DisplayName}", newDisplayName);
+                        
+                        // Trigger status update to broadcast the change
+                        UpdateStatus(AccountInfo.Status);
+                    }
+                }
                 
                 _logger.LogInformation("Display name updated for {AvatarId}: {DisplayName}", 
                     e.DisplayName.ID, e.DisplayName.DisplayName);

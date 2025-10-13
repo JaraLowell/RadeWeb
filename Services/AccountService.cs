@@ -267,6 +267,30 @@ namespace RadegastWeb.Services
                     account.IsConnected = true;
                     account.LastLoginAt = DateTime.UtcNow;
                     
+                    // Subscribe to display name changes for this account to update the database
+                    instance.StatusChanged += async (sender, status) =>
+                    {
+                        if (sender is WebRadegastInstance webInstance && webInstance.AccountInfo.DisplayName != account.DisplayName)
+                        {
+                            account.DisplayName = webInstance.AccountInfo.DisplayName;
+                            try
+                            {
+                                using var context = CreateDbContext();
+                                var dbAccount = await context.Accounts.FindAsync(id);
+                                if (dbAccount != null)
+                                {
+                                    dbAccount.DisplayName = account.DisplayName;
+                                    await context.SaveChangesAsync();
+                                    _logger.LogDebug("Updated account display name in database: {DisplayName}", account.DisplayName);
+                                }
+                            }
+                            catch (Exception dbEx)
+                            {
+                                _logger.LogWarning(dbEx, "Failed to update account display name in database");
+                            }
+                        }
+                    };
+                    
                     // Update the database
                     try
                     {
