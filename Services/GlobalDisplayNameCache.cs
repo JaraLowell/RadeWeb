@@ -135,12 +135,25 @@ namespace RadegastWeb.Services
                 var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
                 using var context = dbContextFactory.CreateDbContext();
                 
+                // Try GlobalDisplayNames table first (preferred)
+                var globalDbName = await context.GlobalDisplayNames
+                    .FirstOrDefaultAsync(dn => dn.AvatarId == avatarId);
+
+                if (globalDbName != null && globalDbName.CachedAt > DateTime.UtcNow.Subtract(_cacheExpiry))
+                {
+                    var globalName = globalDbName.ToDisplayName();
+                    _globalNameCache.TryAdd(avatarId, globalName);
+                    _memoryCache.Set(cacheKey, globalName, _cacheExpiry);
+                    return globalName;
+                }
+                
+                // Fallback to old DisplayNames table for migration compatibility
                 var dbName = await context.DisplayNames
                     .Where(dn => dn.AvatarId == avatarId)
                     .OrderByDescending(dn => dn.LastUpdated)
                     .FirstOrDefaultAsync();
 
-                if (dbName != null && DateTime.UtcNow - dbName.CachedAt < _cacheExpiry)
+                if (dbName != null && dbName.CachedAt > DateTime.UtcNow.Subtract(_cacheExpiry))
                 {
                     // Remove account-specific data for global cache
                     var globalName = new DisplayName
@@ -159,6 +172,26 @@ namespace RadegastWeb.Services
                     
                     _globalNameCache.TryAdd(avatarId, globalName);
                     _memoryCache.Set(cacheKey, globalName, _cacheExpiry);
+                    
+                    // Migrate to GlobalDisplayNames table for future use
+                    try
+                    {
+                        var globalDbEntry = GlobalDisplayName.FromDisplayName(globalName);
+                        var existingGlobal = await context.GlobalDisplayNames
+                            .FirstOrDefaultAsync(gdn => gdn.AvatarId == avatarId);
+                        
+                        if (existingGlobal == null)
+                        {
+                            context.GlobalDisplayNames.Add(globalDbEntry);
+                            await context.SaveChangesAsync();
+                            _logger.LogDebug("Migrated display name for {AvatarId} to GlobalDisplayNames table", avatarId);
+                        }
+                    }
+                    catch (Exception migrationEx)
+                    {
+                        _logger.LogWarning(migrationEx, "Failed to migrate display name for {AvatarId} to GlobalDisplayNames table", avatarId);
+                    }
+                    
                     return globalName;
                 }
             }
@@ -299,6 +332,30 @@ namespace RadegastWeb.Services
             if (displayName == null || string.IsNullOrEmpty(displayName.AvatarId))
                 return;
 
+            // Check if the new display name is valid (not blank, null, or "Loading...")
+            var isNewNameValid = !IsInvalidNameValue(displayName.DisplayNameValue);
+            
+            // Get existing cached name to compare
+            var existingName = _globalNameCache.TryGetValue(displayName.AvatarId, out var existing) ? existing : null;
+            var isExistingNameValid = existingName != null && !IsInvalidNameValue(existingName.DisplayNameValue);
+            
+            // Only update if:
+            // 1. We don't have an existing name, OR
+            // 2. The new name is valid and the existing name is invalid, OR  
+            // 3. Both names are valid but the new one is different (an actual update)
+            bool shouldUpdate = existingName == null ||
+                               (isNewNameValid && !isExistingNameValid) ||
+                               (isNewNameValid && isExistingNameValid && 
+                                !existingName.DisplayNameValue.Equals(displayName.DisplayNameValue, StringComparison.Ordinal));
+            
+            if (!shouldUpdate)
+            {
+                _logger.LogDebug("Skipping display name update for {AvatarId}: new='{NewName}' (valid={NewValid}), existing='{ExistingName}' (valid={ExistingValid})", 
+                    displayName.AvatarId, displayName.DisplayNameValue, isNewNameValid, 
+                    existingName?.DisplayNameValue, isExistingNameValid);
+                return;
+            }
+
             var globalName = new DisplayName
             {
                 AvatarId = displayName.AvatarId,
@@ -313,12 +370,15 @@ namespace RadegastWeb.Services
                 AccountId = Guid.Empty
             };
 
-            _globalNameCache.AddOrUpdate(displayName.AvatarId, globalName, (key, existing) => globalName);
+            _globalNameCache.AddOrUpdate(displayName.AvatarId, globalName, (key, existingCache) => globalName);
             
             var cacheKey = $"global_display_name_{displayName.AvatarId}";
             _memoryCache.Set(cacheKey, globalName, _cacheExpiry);
             
             _hasUpdates = true;
+            
+            _logger.LogDebug("Updated global display name for {AvatarId}: '{DisplayName}' (valid={Valid})", 
+                displayName.AvatarId, displayName.DisplayNameValue, isNewNameValid);
             
             // Fire event for real-time updates
             DisplayNameChanged?.Invoke(this, new DisplayNameChangedEventArgs(displayName.AvatarId, globalName));
@@ -525,14 +585,35 @@ namespace RadegastWeb.Services
                 var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
                 using var context = dbContextFactory.CreateDbContext();
                 
+                // Load from GlobalDisplayNames table first (preferred)
+                var cutoffTime = DateTime.UtcNow.Subtract(_cacheExpiry);
+                var globalNames = await context.GlobalDisplayNames
+                    .Where(dn => dn.CachedAt > cutoffTime)
+                    .ToListAsync();
+                
+                foreach (var globalName in globalNames)
+                {
+                    var displayName = globalName.ToDisplayName();
+                    _globalNameCache.TryAdd(globalName.AvatarId, displayName);
+                    var cacheKey = $"global_display_name_{globalName.AvatarId}";
+                    _memoryCache.Set(cacheKey, displayName, _cacheExpiry);
+                }
+                
+                _logger.LogDebug("Loaded {Count} display names from GlobalDisplayNames table", globalNames.Count);
+                
+                // Also load from legacy DisplayNames table for migration compatibility
                 var cachedNames = await context.DisplayNames
                     .Where(dn => dn.CachedAt > DateTime.UtcNow.AddDays(-2)) // Load recent cache
                     .ToListAsync();
 
-                var globalNames = new Dictionary<string, DisplayName>();
+                var legacyNames = new Dictionary<string, DisplayName>();
                 
                 foreach (var name in cachedNames)
                 {
+                    // Skip if we already have this from GlobalDisplayNames
+                    if (_globalNameCache.ContainsKey(name.AvatarId))
+                        continue;
+                        
                     var globalName = new DisplayName
                     {
                         AvatarId = name.AvatarId,
@@ -548,21 +629,23 @@ namespace RadegastWeb.Services
                     };
                     
                     // Keep the most recent version for each avatar
-                    if (!globalNames.TryGetValue(name.AvatarId, out var existing) ||
+                    if (!legacyNames.TryGetValue(name.AvatarId, out var existing) ||
                         name.LastUpdated > existing.LastUpdated)
                     {
-                        globalNames[name.AvatarId] = globalName;
+                        legacyNames[name.AvatarId] = globalName;
                     }
                 }
                 
-                foreach (var kvp in globalNames)
+                foreach (var kvp in legacyNames)
                 {
                     _globalNameCache.TryAdd(kvp.Key, kvp.Value);
                     var cacheKey = $"global_display_name_{kvp.Key}";
                     _memoryCache.Set(cacheKey, kvp.Value, _cacheExpiry);
                 }
                 
-                _logger.LogInformation("Loaded {Count} cached display names into global cache", globalNames.Count);
+                var totalLoaded = globalNames.Count + legacyNames.Count;
+                _logger.LogInformation("Loaded {Total} cached display names into global cache ({Global} from global, {Legacy} from legacy)", 
+                    totalLoaded, globalNames.Count, legacyNames.Count);
             }
             catch (ObjectDisposedException)
             {
@@ -592,16 +675,24 @@ namespace RadegastWeb.Services
                 
                 var namesToSave = _globalNameCache.Values.Where(n => n.LastUpdated > _lastSave).ToList();
                 
-                // Process all names and prepare changes
+                if (namesToSave.Count == 0)
+                {
+                    _logger.LogDebug("No names to save to global cache");
+                    return;
+                }
+                
+                _logger.LogDebug("Saving {Count} display names to global cache", namesToSave.Count);
+                
+                // Process all names and save to GlobalDisplayNames table
                 foreach (var name in namesToSave)
                 {
-                    // Find if there's already a record for this avatar (use any account's record)
-                    var existing = await context.DisplayNames
+                    // Check if we already have this in GlobalDisplayNames table
+                    var existing = await context.GlobalDisplayNames
                         .FirstOrDefaultAsync(dn => dn.AvatarId == name.AvatarId);
 
                     if (existing != null)
                     {
-                        // Update existing
+                        // Update existing global record
                         existing.DisplayNameValue = name.DisplayNameValue;
                         existing.UserName = name.UserName;
                         existing.LegacyFirstName = name.LegacyFirstName;
@@ -613,14 +704,10 @@ namespace RadegastWeb.Services
                     }
                     else
                     {
-                        // Create new with a placeholder account (we'll use the first available account)
-                        var firstAccount = await context.Accounts.FirstOrDefaultAsync();
-                        if (firstAccount != null)
-                        {
-                            name.AccountId = firstAccount.Id;
-                            name.CachedAt = DateTime.UtcNow;
-                            context.DisplayNames.Add(name);
-                        }
+                        // Create new global record
+                        var globalDisplayName = GlobalDisplayName.FromDisplayName(name);
+                        globalDisplayName.CachedAt = DateTime.UtcNow;
+                        context.GlobalDisplayNames.Add(globalDisplayName);
                     }
                 }
                 
@@ -646,30 +733,15 @@ namespace RadegastWeb.Services
                             // Re-process the problematic records by refreshing from database
                             foreach (var name in namesToSave)
                             {
-                                var existing = await context.DisplayNames
+                                var existing = await context.GlobalDisplayNames
                                     .FirstOrDefaultAsync(dn => dn.AvatarId == name.AvatarId);
 
                                 if (existing == null)
                                 {
                                     // Still doesn't exist, try to add again
-                                    var firstAccount = await context.Accounts.FirstOrDefaultAsync();
-                                    if (firstAccount != null)
-                                    {
-                                        var newName = new DisplayName
-                                        {
-                                            AvatarId = name.AvatarId,
-                                            DisplayNameValue = name.DisplayNameValue,
-                                            UserName = name.UserName,
-                                            LegacyFirstName = name.LegacyFirstName,
-                                            LegacyLastName = name.LegacyLastName,
-                                            IsDefaultDisplayName = name.IsDefaultDisplayName,
-                                            NextUpdate = name.NextUpdate,
-                                            LastUpdated = name.LastUpdated,
-                                            CachedAt = DateTime.UtcNow,
-                                            AccountId = firstAccount.Id
-                                        };
-                                        context.DisplayNames.Add(newName);
-                                    }
+                                    var globalDisplayName = GlobalDisplayName.FromDisplayName(name);
+                                    globalDisplayName.CachedAt = DateTime.UtcNow;
+                                    context.GlobalDisplayNames.Add(globalDisplayName);
                                 }
                                 else
                                 {

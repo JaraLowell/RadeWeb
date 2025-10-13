@@ -36,7 +36,7 @@ namespace RadegastWeb.Services
         // Event for display name changes
         public event EventHandler<DisplayNameChangedEventArgs>? DisplayNameChanged;
         
-        // Cache for display names per account
+        // Legacy cache for display names per account (now mainly for compatibility)
         private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, DisplayName>> _nameCache = new();
         
         // Request channels per account for efficient batching (like Radegast)
@@ -97,6 +97,14 @@ namespace RadegastWeb.Services
 
         private async Task<DisplayName?> GetCachedDisplayNameAsync(Guid accountId, string avatarId)
         {
+            // First check the global cache - this is our primary source now
+            var globalCached = await _globalCache.GetCachedDisplayNameAsync(avatarId);
+            if (globalCached != null && DateTime.UtcNow - globalCached.CachedAt < _cacheExpiry)
+            {
+                return globalCached;
+            }
+            
+            // Legacy fallback: check account-specific cache for compatibility
             var cache = GetAccountCache(accountId);
             
             // Try memory cache first
@@ -105,6 +113,15 @@ namespace RadegastWeb.Services
                 // Check if cache is still valid
                 if (DateTime.UtcNow - cachedName.CachedAt < _cacheExpiry)
                 {
+                    // Also update global cache with this information
+                    try
+                    {
+                        _globalCache.UpdateDisplayName(cachedName);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to update global cache from account cache for {AvatarId}", avatarId);
+                    }
                     return cachedName;
                 }
                 else
@@ -114,17 +131,28 @@ namespace RadegastWeb.Services
                 }
             }
 
-            // Try database cache
+            // Legacy fallback: try account-specific database cache
             try
             {
                 using var context = CreateDbContext();
                 var dbName = await context.DisplayNames
                     .FirstOrDefaultAsync(dn => dn.AccountId == accountId && dn.AvatarId == avatarId);
 
-                if (dbName != null && DateTime.UtcNow - dbName.CachedAt < _cacheExpiry)
+                if (dbName != null && dbName.CachedAt > DateTime.UtcNow.Subtract(_cacheExpiry))
                 {
                     // Restore to memory cache
                     cache.TryAdd(avatarId, dbName);
+                    
+                    // Also update global cache with this information
+                    try
+                    {
+                        _globalCache.UpdateDisplayName(dbName);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to update global cache from database for {AvatarId}", avatarId);
+                    }
+                    
                     return dbName;
                 }
             }
@@ -138,22 +166,22 @@ namespace RadegastWeb.Services
 
         private async Task SaveDisplayNameToCacheAsync(Guid accountId, DisplayName displayName)
         {
-            var cache = GetAccountCache(accountId);
-            
-            // Update memory cache
-            cache.AddOrUpdate(displayName.AvatarId, displayName, (key, existing) => displayName);
-
-            // Update global cache to keep it synchronized
+            // Primary action: Update global cache first
             try
             {
                 _globalCache.UpdateDisplayName(displayName);
+                _logger.LogDebug("Updated global cache for {AvatarId}", displayName.AvatarId);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to update global cache for {AvatarId}", displayName.AvatarId);
             }
+            
+            // Legacy compatibility: Update account-specific memory cache
+            var cache = GetAccountCache(accountId);
+            cache.AddOrUpdate(displayName.AvatarId, displayName, (key, existing) => displayName);
 
-            // Update database cache with retry logic for race conditions
+            // Legacy compatibility: Update account-specific database cache with retry logic for race conditions
             var maxRetries = 3;
             for (int attempt = 0; attempt < maxRetries; attempt++)
             {
@@ -184,6 +212,7 @@ namespace RadegastWeb.Services
                     }
 
                     await context.SaveChangesAsync();
+                    _logger.LogDebug("Updated account-specific cache for {AvatarId} on account {AccountId}", displayName.AvatarId, accountId);
                     return; // Success, exit the retry loop
                 }
                 catch (DbUpdateException dbEx) when (dbEx.InnerException?.Message?.Contains("UNIQUE constraint failed") == true)
@@ -200,8 +229,8 @@ namespace RadegastWeb.Services
                     }
                     else
                     {
-                        // Final attempt failed, log error but don't throw - memory cache is updated
-                        _logger.LogWarning(dbEx, "Failed to save display name to database after {MaxRetries} attempts for {AvatarId} on account {AccountId}. Memory cache updated.", 
+                        // Final attempt failed, log error but don't throw - global cache is updated
+                        _logger.LogWarning(dbEx, "Failed to save display name to account-specific database after {MaxRetries} attempts for {AvatarId} on account {AccountId}. Global cache updated.", 
                             maxRetries, displayName.AvatarId, accountId);
                         return;
                     }
@@ -375,6 +404,19 @@ namespace RadegastWeb.Services
 
         private async Task QueueNameRequestAsync(Guid accountId, string avatarId)
         {
+            // Prefer using global cache for requests instead of account-specific queues
+            try
+            {
+                await _globalCache.PreloadDisplayNamesAsync(new[] { avatarId });
+                _logger.LogDebug("Queued display name request for {AvatarId} via global cache", avatarId);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to queue request via global cache for {AvatarId}, falling back to account-specific queue", avatarId);
+            }
+            
+            // Fallback to account-specific queue for compatibility
             var channel = _requestChannels.GetOrAdd(accountId, _ => 
                 Channel.CreateUnbounded<string>());
 
@@ -680,8 +722,19 @@ namespace RadegastWeb.Services
                         // Valid display name received
                         var cachedName = await GetCachedDisplayNameAsync(accountId, avatarId);
                         
-                        // Check if the new display name is different from cached one
-                        if (cachedName == null || !cachedName.DisplayNameValue.Equals(agentDisplayName.DisplayName, StringComparison.Ordinal))
+                        // Only update if we have a legitimate improvement:
+                        // 1. No cached name exists, OR
+                        // 2. The cached name is invalid and new name is valid, OR
+                        // 3. Both are valid but different (actual name change)
+                        var cachedNameIsValid = cachedName != null && !IsInvalidNameValue(cachedName.DisplayNameValue);
+                        var newNameIsValid = !IsInvalidNameValue(agentDisplayName.DisplayName);
+                        
+                        bool shouldUpdate = cachedName == null ||
+                                          (!cachedNameIsValid && newNameIsValid) ||
+                                          (cachedNameIsValid && newNameIsValid && 
+                                           !cachedName.DisplayNameValue.Equals(agentDisplayName.DisplayName, StringComparison.Ordinal));
+                        
+                        if (shouldUpdate)
                         {
                             var oldDisplayName = cachedName?.DisplayNameValue ?? "";
                             
@@ -704,22 +757,28 @@ namespace RadegastWeb.Services
                             
                             if (cachedName != null)
                             {
-                                _logger.LogDebug("Updated display name for {AvatarId} from '{OldName}' to '{NewName}'", 
-                                    avatarId, cachedName.DisplayNameValue, agentDisplayName.DisplayName);
+                                _logger.LogDebug("Updated display name for {AvatarId} from '{OldName}' to '{NewName}' (cached valid: {CachedValid}, new valid: {NewValid})", 
+                                    avatarId, cachedName.DisplayNameValue, agentDisplayName.DisplayName, cachedNameIsValid, newNameIsValid);
                             }
                             else
                             {
-                                _logger.LogDebug("Cached new display name for {AvatarId}: '{DisplayName}'", 
-                                    avatarId, agentDisplayName.DisplayName);
+                                _logger.LogDebug("Cached new display name for {AvatarId}: '{DisplayName}' (new valid: {NewValid})", 
+                                    avatarId, agentDisplayName.DisplayName, newNameIsValid);
                             }
                         }
                         else
                         {
-                            // Display name hasn't changed, just update the timestamp
-                            cachedName.LastUpdated = DateTime.UtcNow;
-                            cachedName.NextUpdate = agentDisplayName.NextUpdate;
-                            await SaveDisplayNameToCacheAsync(accountId, cachedName);
-                            _logger.LogDebug("Display name for {AvatarId} unchanged, updated timestamp only", avatarId);
+                            _logger.LogDebug("Skipping display name update for {AvatarId}: cached='{CachedName}' (valid={CachedValid}), new='{NewName}' (valid={NewValid})", 
+                                avatarId, cachedName?.DisplayNameValue, cachedNameIsValid, agentDisplayName.DisplayName, newNameIsValid);
+                            
+                            // If we have a cached name, just update the timestamp
+                            if (cachedName != null)
+                            {
+                                cachedName.LastUpdated = DateTime.UtcNow;
+                                cachedName.NextUpdate = agentDisplayName.NextUpdate;
+                                await SaveDisplayNameToCacheAsync(accountId, cachedName);
+                                _logger.LogDebug("Display name for {AvatarId} unchanged, updated timestamp only", avatarId);
+                            }
                         }
                     }
                 }
@@ -771,10 +830,21 @@ namespace RadegastWeb.Services
                         var lastName = parts[1];
                         var userName = lastName == "Resident" ? firstName.ToLower() : $"{firstName}.{lastName}".ToLower();
                         
-                        // Check if we have a cached version and if it's different
+                        // Check if we have a cached version and determine if we should update
                         var cachedName = await GetCachedDisplayNameAsync(accountId, avatarId);
                         
-                        if (cachedName == null || !cachedName.LegacyFullName.Equals(fullName, StringComparison.Ordinal))
+                        // Only update if:
+                        // 1. No cached name exists, OR
+                        // 2. Cached name has invalid DisplayNameValue and we have a valid legacy name, OR
+                        // 3. Both are valid but legacy name is different (actual change)
+                        var cachedDisplayNameIsValid = cachedName != null && !IsInvalidNameValue(cachedName.DisplayNameValue);
+                        var newLegacyNameIsValid = !IsInvalidNameValue(fullName);
+                        
+                        bool shouldUpdate = cachedName == null ||
+                                          (!cachedDisplayNameIsValid && newLegacyNameIsValid) ||
+                                          (cachedName != null && !cachedName.LegacyFullName.Equals(fullName, StringComparison.Ordinal));
+                        
+                        if (shouldUpdate)
                         {
                             var oldDisplayName = cachedName?.DisplayNameValue ?? "";
                             
@@ -797,21 +867,27 @@ namespace RadegastWeb.Services
                             
                             if (cachedName != null)
                             {
-                                _logger.LogDebug("Updated legacy name for {AvatarId} from '{OldName}' to '{NewName}'", 
-                                    avatarId, cachedName.LegacyFullName, fullName);
+                                _logger.LogDebug("Updated legacy name for {AvatarId} from '{OldName}' to '{NewName}' (cached valid: {CachedValid})", 
+                                    avatarId, cachedName.LegacyFullName, fullName, cachedDisplayNameIsValid);
                             }
                             else
                             {
-                                _logger.LogDebug("Cached new legacy name for {AvatarId}: '{LegacyName}'", 
-                                    avatarId, fullName);
+                                _logger.LogDebug("Cached new legacy name for {AvatarId}: '{LegacyName}' (valid: {Valid})", 
+                                    avatarId, fullName, newLegacyNameIsValid);
                             }
                         }
                         else
                         {
-                            // Legacy name hasn't changed, just update the timestamp
-                            cachedName.LastUpdated = DateTime.UtcNow;
-                            await SaveDisplayNameToCacheAsync(accountId, cachedName);
-                            _logger.LogDebug("Legacy name for {AvatarId} unchanged, updated timestamp only", avatarId);
+                            _logger.LogDebug("Skipping legacy name update for {AvatarId}: cached='{CachedName}' (valid={CachedValid}), new='{NewName}' (valid={NewValid})", 
+                                avatarId, cachedName?.DisplayNameValue, cachedDisplayNameIsValid, fullName, newLegacyNameIsValid);
+                            
+                            // If we have a cached name, just update the timestamp
+                            if (cachedName != null)
+                            {
+                                cachedName.LastUpdated = DateTime.UtcNow;
+                                await SaveDisplayNameToCacheAsync(accountId, cachedName);
+                                _logger.LogDebug("Legacy name for {AvatarId} unchanged, updated timestamp only", avatarId);
+                            }
                         }
                     }
                     else
@@ -842,30 +918,23 @@ namespace RadegastWeb.Services
         {
             var uncachedIds = new List<string>();
             
-            // Check both account-specific cache and global cache
+            // Check global cache first - this is our primary source
             foreach (var avatarId in avatarIds)
             {
-                // First check global cache (more efficient)
                 var globalCached = await _globalCache.GetCachedDisplayNameAsync(avatarId);
                 if (globalCached != null && DateTime.UtcNow <= globalCached.NextUpdate)
                 {
                     continue; // Already cached globally and fresh
                 }
                 
-                // Then check account-specific cache
-                var cached = await GetCachedDisplayNameAsync(accountId, avatarId);
-                if (cached == null || DateTime.UtcNow > cached.NextUpdate)
-                {
-                    uncachedIds.Add(avatarId);
-                }
+                uncachedIds.Add(avatarId);
             }
             
             if (uncachedIds.Count > 0)
             {
                 _logger.LogDebug("Preloading {Count} display names for account {AccountId} via global cache", uncachedIds.Count, accountId);
                 
-                // Use global cache for efficient batched requests instead of direct grid calls
-                // This integrates with the PeriodicDisplayNameService pool
+                // Use global cache for efficient batched requests instead of account-specific requests
                 await _globalCache.PreloadDisplayNamesAsync(uncachedIds);
                 
                 _logger.LogDebug("Successfully queued {Count} display names for global cache processing", uncachedIds.Count);

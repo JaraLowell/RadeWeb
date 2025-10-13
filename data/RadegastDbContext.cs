@@ -12,6 +12,7 @@ namespace RadegastWeb.Data
         public DbSet<Account> Accounts { get; set; }
         public DbSet<ChatMessage> ChatMessages { get; set; }
         public DbSet<DisplayName> DisplayNames { get; set; }
+        public DbSet<GlobalDisplayName> GlobalDisplayNames { get; set; }
         public DbSet<Notice> Notices { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -122,6 +123,34 @@ namespace RadegastWeb.Data
                       .HasDatabaseName("IX_Notice_Account_Type_Time");
                 entity.HasIndex(e => new { e.AccountId, e.IsRead, e.Timestamp })
                       .HasDatabaseName("IX_Notice_Account_Read_Time");
+            });
+
+            // Configure GlobalDisplayName entity
+            modelBuilder.Entity<GlobalDisplayName>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.AvatarId).IsRequired().HasMaxLength(36);
+                entity.Property(e => e.DisplayNameValue).IsRequired().HasMaxLength(200);
+                entity.Property(e => e.UserName).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.LegacyFirstName).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.LegacyLastName).IsRequired().HasMaxLength(100);
+                entity.Property(e => e.IsDefaultDisplayName).IsRequired();
+                entity.Property(e => e.NextUpdate).IsRequired();
+                entity.Property(e => e.LastUpdated).IsRequired();
+                entity.Property(e => e.CachedAt).IsRequired();
+
+                // Create unique index for avatar ID (only one global entry per avatar)
+                entity.HasIndex(e => e.AvatarId)
+                      .IsUnique()
+                      .HasDatabaseName("IX_GlobalDisplayName_Avatar");
+
+                // Create index for cache expiry cleanup
+                entity.HasIndex(e => e.CachedAt)
+                      .HasDatabaseName("IX_GlobalDisplayName_CachedAt");
+                      
+                // Create index for last updated for efficient lookups
+                entity.HasIndex(e => e.LastUpdated)
+                      .HasDatabaseName("IX_GlobalDisplayName_LastUpdated");
             });
         }
 

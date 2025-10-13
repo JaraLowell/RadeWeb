@@ -5,6 +5,7 @@ class RadegastWebClient {
         this.connection = null;
         this.accounts = [];
         this.currentAccountId = null;
+        this.previousAccountId = null; // Track previous account for SignalR group management
         this.isConnecting = false;
         this.nearbyAvatars = [];
         this.chatSessions = {};
@@ -76,6 +77,10 @@ class RadegastWebClient {
 
             this.connection.on("NearbyAvatarsUpdated", (avatars) => {
                 this.updateNearbyAvatars(avatars);
+            });
+
+            this.connection.on("AvatarUpdated", (avatar) => {
+                this.updateSingleAvatar(avatar);
             });
 
             this.connection.on("RegionInfoUpdated", (regionInfo) => {
@@ -565,7 +570,46 @@ class RadegastWebClient {
 
     updateNearbyAvatars(avatars) {
         console.log('Updating nearby avatars:', avatars);
-        this.nearbyAvatars = avatars;
+        
+        // Only update if avatars belong to the currently selected account
+        if (!this.currentAccountId || avatars.length === 0) {
+            this.nearbyAvatars = avatars;
+            this.renderPeopleList();
+            return;
+        }
+        
+        // Filter avatars to only include those from the current account
+        const currentAccountAvatars = avatars.filter(avatar => 
+            avatar.accountId === this.currentAccountId
+        );
+        
+        // Only update if these avatars are for the current account
+        if (currentAccountAvatars.length > 0 && currentAccountAvatars[0].accountId === this.currentAccountId) {
+            this.nearbyAvatars = currentAccountAvatars;
+            this.renderPeopleList();
+        } else if (avatars.length > 0 && avatars[0].accountId !== this.currentAccountId) {
+            // Don't update if avatars are for a different account
+            console.log(`Ignoring avatar update for account ${avatars[0].accountId}, current account is ${this.currentAccountId}`);
+        }
+    }
+
+    updateSingleAvatar(avatar) {
+        console.log('Updating single avatar:', avatar);
+        
+        // Only update if avatar belongs to the currently selected account
+        if (!this.currentAccountId || avatar.accountId !== this.currentAccountId) {
+            console.log(`Ignoring single avatar update for account ${avatar.accountId}, current account is ${this.currentAccountId}`);
+            return;
+        }
+        
+        // Find and update the avatar in our list
+        const existingIndex = this.nearbyAvatars.findIndex(a => a.id === avatar.id);
+        if (existingIndex >= 0) {
+            this.nearbyAvatars[existingIndex] = avatar;
+        } else {
+            this.nearbyAvatars.push(avatar);
+        }
+        
         this.renderPeopleList();
     }
 
@@ -746,6 +790,11 @@ class RadegastWebClient {
     }
 
     bindEvents() {
+        // Page unload cleanup
+        window.addEventListener('beforeunload', () => {
+            this.cleanup();
+        });
+
         // Grid URL selection
         document.getElementById('gridUrl').addEventListener('change', (e) => {
             const customDiv = document.getElementById('customGridDiv');
@@ -1025,6 +1074,8 @@ class RadegastWebClient {
     }
 
     async selectAccount(accountId) {
+        // Store previous account for cleanup
+        this.previousAccountId = this.currentAccountId;
         this.currentAccountId = accountId;
         const account = this.accounts.find(a => a.accountId === accountId);
         
@@ -1097,10 +1148,19 @@ class RadegastWebClient {
         // Reset to local chat tab
         this.setActiveTab('local-chat');
 
-        // Join SignalR group for this account
+        // Manage SignalR account groups
         if (this.connection) {
             try {
+                // Leave previous account group if switching accounts
+                if (this.previousAccountId && this.previousAccountId !== accountId) {
+                    await this.connection.invoke("LeaveAccountGroup", this.previousAccountId);
+                    console.log(`Left account group for ${this.previousAccountId}`);
+                }
+                
+                // Join SignalR group for the new account
                 await this.connection.invoke("JoinAccountGroup", accountId);
+                console.log(`Joined account group for ${accountId}`);
+                
                 // Load recent chat sessions for this account
                 await this.connection.invoke("GetRecentSessions", accountId);
                 // Load local chat history
@@ -1112,7 +1172,7 @@ class RadegastWebClient {
                     this.loadGroups();
                 }
             } catch (error) {
-                console.error("Error joining account group:", error);
+                console.error("Error managing account groups:", error);
             }
         }
     }
@@ -2165,6 +2225,21 @@ class RadegastWebClient {
             radarStats.style.display = 'none';
             toggleIcon.className = 'fas fa-chart-bar';
         }
+    }
+
+    async cleanup() {
+        // Leave current account group on page unload
+        if (this.connection && this.currentAccountId) {
+            try {
+                await this.connection.invoke("LeaveAccountGroup", this.currentAccountId);
+                console.log(`Left account group for ${this.currentAccountId} during cleanup`);
+            } catch (error) {
+                console.error("Error leaving account group during cleanup:", error);
+            }
+        }
+        
+        // Stop avatar refresh
+        this.stopAvatarRefresh();
     }
 }
 

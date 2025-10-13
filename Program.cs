@@ -9,7 +9,7 @@ using Serilog;
 var builder = WebApplication.CreateBuilder(args);
 
 // Configure URLs - allow binding to all interfaces
-builder.WebHost.UseUrls("http://*:5269", "https://*:7077");
+builder.WebHost.UseUrls("http://*:15269", "https://*:15277");
 
 // Configure Serilog with additional filters
 builder.Host.UseSerilog((context, configuration) =>
