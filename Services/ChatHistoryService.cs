@@ -11,6 +11,8 @@ namespace RadegastWeb.Services
         Task<IEnumerable<ChatMessageDto>> GetChatHistoryAsync(Guid accountId, string sessionId, int count = 50, int skip = 0);
         Task<IEnumerable<ChatSessionDto>> GetRecentSessionsAsync(Guid accountId);
         Task CleanupOldMessagesAsync(TimeSpan olderThan);
+        Task<bool> ClearChatHistoryAsync(Guid accountId, string sessionId);
+        Task<IEnumerable<string>> GetSessionIdsForAccountAsync(Guid accountId);
     }
 
     public class ChatHistoryService : IChatHistoryService
@@ -183,6 +185,85 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error cleaning up old chat messages");
+            }
+        }
+
+        public async Task<bool> ClearChatHistoryAsync(Guid accountId, string sessionId)
+        {
+            try
+            {
+                _logger.LogInformation("Attempting to clear chat history for account {AccountId}, session {SessionId}", accountId, sessionId);
+                
+                if (string.IsNullOrWhiteSpace(sessionId))
+                {
+                    _logger.LogWarning("SessionId is null or empty for account {AccountId}", accountId);
+                    return false;
+                }
+                
+                // Debug: List all session IDs for this account
+                var allSessionIds = await GetSessionIdsForAccountAsync(accountId);
+                
+                using var context = CreateDbContext();
+                
+                // First, check if there are any messages to delete
+                var messageCount = await context.ChatMessages
+                    .Where(m => m.AccountId == accountId && m.SessionId == sessionId)
+                    .CountAsync();
+                
+                _logger.LogInformation("Found {MessageCount} messages to delete for account {AccountId}, session {SessionId}", 
+                    messageCount, accountId, sessionId);
+                
+                if (messageCount == 0)
+                {
+                    _logger.LogInformation("No chat messages found to clear for account {AccountId}, session {SessionId} - this is considered successful",
+                        accountId, sessionId);
+                    return true; // Return true even if no messages to delete
+                }
+                
+                var messagesToDelete = await context.ChatMessages
+                    .Where(m => m.AccountId == accountId && m.SessionId == sessionId)
+                    .ToListAsync();
+
+                if (messagesToDelete.Any())
+                {
+                    context.ChatMessages.RemoveRange(messagesToDelete);
+                    await context.SaveChangesAsync();
+                    
+                    _logger.LogInformation("Successfully cleared {Count} chat messages for account {AccountId}, session {SessionId}",
+                        messagesToDelete.Count, accountId, sessionId);
+                }
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error clearing chat history for account {AccountId}, session {SessionId}",
+                    accountId, sessionId);
+                return false;
+            }
+        }
+
+        public async Task<IEnumerable<string>> GetSessionIdsForAccountAsync(Guid accountId)
+        {
+            try
+            {
+                using var context = CreateDbContext();
+                
+                var sessionIds = await context.ChatMessages
+                    .Where(m => m.AccountId == accountId && !string.IsNullOrEmpty(m.SessionId))
+                    .Select(m => m.SessionId!)
+                    .Distinct()
+                    .ToListAsync();
+                
+                _logger.LogInformation("Found {Count} unique session IDs for account {AccountId}: {SessionIds}", 
+                    sessionIds.Count, accountId, string.Join(", ", sessionIds));
+                
+                return sessionIds;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting session IDs for account {AccountId}", accountId);
+                return Enumerable.Empty<string>();
             }
         }
     }

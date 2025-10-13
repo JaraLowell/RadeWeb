@@ -97,6 +97,10 @@ class RadegastWebClient {
                 this.loadChatHistory(accountId, sessionId, messages);
             });
 
+            this.connection.on("ChatHistoryCleared", (accountId, sessionId) => {
+                this.handleChatHistoryCleared(accountId, sessionId);
+            });
+
             this.connection.on("RecentSessionsLoaded", (accountId, sessions) => {
                 this.loadRecentSessions(accountId, sessions);
             });
@@ -276,11 +280,30 @@ class RadegastWebClient {
                     ${session.sessionName}
                     <span class="badge bg-danger ms-2" id="badge-${sessionId}" style="display: none;">0</span>
                 </span>
-                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="event.stopPropagation(); radegastClient.closeTab('${sessionId}', 'IM')" title="Close">
-                    <i class="fas fa-times"></i>
-                </button>
+                <div class="btn-group btn-group-sm ms-2" role="group">
+                    <button class="btn btn-outline-secondary chat-close-btn" data-session-id="${sessionId}" data-chat-type="IM" title="Close">
+                        <i class="fas fa-times"></i>
+                    </button>
+                    <button class="btn btn-outline-danger chat-clear-btn" data-session-id="${sessionId}" data-chat-type="IM" title="Close and Clear History">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
             </a>
         `;
+        
+        // Add event listeners for the buttons
+        const closeBtn = newTabItem.querySelector('.chat-close-btn');
+        const clearBtn = newTabItem.querySelector('.chat-clear-btn');
+        
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.closeTab(sessionId, 'IM');
+        });
+        
+        clearBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.closeAndClearTab(sessionId, 'IM');
+        });
         imDropdown.appendChild(newTabItem);
         
         // Create content pane
@@ -337,11 +360,30 @@ class RadegastWebClient {
                     ${session.sessionName}
                     <span class="badge bg-success ms-2" id="badge-${sessionId}" style="display: none;">0</span>
                 </span>
-                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="event.stopPropagation(); radegastClient.closeTab('${sessionId}', 'Group')" title="Close">
-                    <i class="fas fa-times"></i>
-                </button>
+                <div class="btn-group btn-group-sm ms-2" role="group">
+                    <button class="btn btn-outline-secondary chat-close-btn" data-session-id="${sessionId}" data-chat-type="Group" title="Close">
+                        <i class="fas fa-times"></i>
+                    </button>
+                    <button class="btn btn-outline-danger chat-clear-btn" data-session-id="${sessionId}" data-chat-type="Group" title="Close and Clear History">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
             </a>
         `;
+        
+        // Add event listeners for the buttons
+        const closeBtn = newTabItem.querySelector('.chat-close-btn');
+        const clearBtn = newTabItem.querySelector('.chat-clear-btn');
+        
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.closeTab(sessionId, 'Group');
+        });
+        
+        clearBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.closeAndClearTab(sessionId, 'Group');
+        });
         groupDropdown.appendChild(newTabItem);
         
         // Create content pane
@@ -406,6 +448,92 @@ class RadegastWebClient {
         // If we were on this tab, switch to local chat
         if (this.currentChatSession === `chat-${sessionId}`) {
             this.setActiveTab('local-chat');
+        }
+    }
+
+    async closeAndClearTab(sessionId, chatType) {
+        console.log(`Closing and clearing ${chatType} tab: ${sessionId}`);
+        
+        if (!sessionId) {
+            console.error("SessionId is null or undefined");
+            this.showAlert("Invalid session ID", "danger");
+            return;
+        }
+        
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+    }
+
+    async closeAndClearTab(sessionId, chatType) {
+        console.log(`Closing and clearing ${chatType} tab: ${sessionId}`);
+        
+        if (!sessionId) {
+            console.error("SessionId is null or undefined");
+            this.showAlert("Invalid session ID", "danger");
+            return;
+        }
+        
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        console.log(`SignalR connection state: ${this.connection ? this.connection.state : 'null'}`);
+        
+        // Check connection and attempt to reconnect if needed
+        if (!this.connection) {
+            console.error("SignalR connection object is null");
+            this.showAlert("Connection error - please refresh the page", "danger");
+            return;
+        }
+        
+        if (this.connection.state !== "Connected") {
+            console.log(`Connection state is ${this.connection.state}, attempting to reconnect...`);
+            try {
+                if (this.connection.state === "Disconnected") {
+                    await this.connection.start();
+                    console.log("Reconnected to SignalR hub");
+                } else {
+                    // Wait a bit for connection to establish
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    if (this.connection.state !== "Connected") {
+                        console.error("Still not connected after waiting");
+                        this.showAlert("Not connected to server - please try again", "danger");
+                        return;
+                    }
+                }
+            } catch (error) {
+                console.error("Failed to reconnect:", error);
+                this.showAlert("Failed to reconnect - please refresh the page", "danger");
+                return;
+            }
+        }
+
+        console.log(`Account ID: ${this.currentAccountId}, Session ID: ${sessionId}`);
+
+        try {
+            // Clear the chat history from the database
+            console.log(`Calling ClearChatHistory with accountId: ${this.currentAccountId}, sessionId: ${sessionId}`);
+            await this.connection.invoke('ClearChatHistory', this.currentAccountId, sessionId);
+            
+            // Clear the messages from the UI immediately
+            const messagesContainer = document.getElementById(`messages-${sessionId}`);
+            if (messagesContainer) {
+                messagesContainer.innerHTML = '';
+                console.log(`UI cleared for session: ${sessionId}`);
+            }
+            
+            console.log(`Chat history cleared for session: ${sessionId}`);
+            this.showAlert(`Chat history cleared for ${chatType.toLowerCase()}`, "success");
+            
+            // Then close the tab normally
+            this.closeTab(sessionId, chatType);
+            
+        } catch (error) {
+            console.error("Error clearing chat history:", error);
+            this.showAlert("Failed to clear chat history", "danger");
         }
     }
 
@@ -1585,6 +1713,26 @@ class RadegastWebClient {
             
             // Scroll to bottom
             chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+    }
+
+    handleChatHistoryCleared(accountId, sessionId) {
+        // Only handle for the current account
+        if (accountId !== this.currentAccountId) return;
+        
+        console.log(`Chat history cleared for session: ${sessionId}`);
+        
+        // Clear the messages from the UI
+        let chatContainer;
+        if (sessionId === 'local-chat') {
+            chatContainer = document.getElementById('localChatMessages');
+        } else {
+            chatContainer = document.getElementById(`messages-${sessionId}`);
+        }
+        
+        if (chatContainer) {
+            chatContainer.innerHTML = '';
+            console.log(`UI cleared for session: ${sessionId}`);
         }
     }
 

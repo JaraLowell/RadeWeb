@@ -349,6 +349,29 @@
     opacity: 1;
 }
 
+/* Chat tab button group styling */
+.dropdown-item .btn-group-sm .btn {
+    padding: 0.125rem 0.25rem;
+    font-size: 0.7rem;
+    line-height: 1;
+    border-radius: 0.25rem;
+}
+
+.dropdown-item .btn-group-sm .btn:first-child {
+    margin-right: 2px;
+}
+
+.dropdown-item .btn-outline-danger {
+    border-color: #dc3545;
+    color: #dc3545;
+}
+
+.dropdown-item .btn-outline-danger:hover {
+    background-color: #dc3545;
+    color: white;
+    opacity: 1;
+}
+
 /* People List Styling */
 .people-list {
     max-height: 400px;

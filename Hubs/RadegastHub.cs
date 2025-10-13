@@ -177,6 +177,48 @@ namespace RadegastWeb.Hubs
             }
         }
 
+        public async Task ClearChatHistory(string accountId, string sessionId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to clear chat history for account {AccountId}, session {SessionId}", accountId, sessionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("ClearChatHistory request received for account {AccountId}, session {SessionId}", accountId, sessionId);
+                
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    _logger.LogDebug("Parsed account ID successfully: {AccountGuid}", accountGuid);
+                    
+                    var success = await _chatHistoryService.ClearChatHistoryAsync(accountGuid, sessionId);
+                    if (success)
+                    {
+                        await Clients.Caller.ChatHistoryCleared(accountId, sessionId);
+                        _logger.LogInformation("Chat history cleared successfully for account {AccountId}, session {SessionId}", accountId, sessionId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Failed to clear chat history for account {AccountId}, session {SessionId}", accountId, sessionId);
+                        await Clients.Caller.ChatError("Failed to clear chat history");
+                    }
+                }
+                else
+                {
+                    _logger.LogError("Invalid account ID format: {AccountId}", accountId);
+                    await Clients.Caller.ChatError("Invalid account ID");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error clearing chat history via SignalR for account {AccountId}, session {SessionId}", accountId, sessionId);
+                await Clients.Caller.ChatError("Error clearing chat history");
+            }
+        }
+
         public async Task SetAwayStatus(string accountId, bool away)
         {
             try
@@ -542,6 +584,7 @@ namespace RadegastWeb.Hubs
         Task RecentSessionsLoaded(string accountId, List<ChatSessionDto> sessions);
         Task NoticeReceived(NoticeReceivedEventDto noticeEvent);
         Task RecentNoticesLoaded(string accountId, List<NoticeDto> notices);
+        Task ChatHistoryCleared(string accountId, string sessionId);
         
         // Sit/Stand methods
         Task SitStandSuccess(string message);

@@ -35,7 +35,7 @@ namespace RadegastWeb.Services
         event EventHandler<DisplayNameChangedEventArgs>? DisplayNameChanged;
     }
 
-    public class GlobalDisplayNameCache : IGlobalDisplayNameCache, IDisposable
+    public class GlobalDisplayNameCache : IGlobalDisplayNameCache, IDisposable, IAsyncDisposable
     {
         private readonly ILogger<GlobalDisplayNameCache> _logger;
         private readonly IServiceProvider _serviceProvider;
@@ -863,7 +863,7 @@ namespace RadegastWeb.Services
             };
         }
 
-        public void Dispose()
+        public async ValueTask DisposeAsync()
         {
             if (_disposed)
                 return;
@@ -878,7 +878,7 @@ namespace RadegastWeb.Services
             {
                 if (_hasUpdates && !_disposed)
                 {
-                    SaveCacheAsync().GetAwaiter().GetResult();
+                    await SaveCacheAsync();
                 }
             }
             catch (ObjectDisposedException)
@@ -891,7 +891,31 @@ namespace RadegastWeb.Services
                 _logger.LogError(ex, "Error saving cache during disposal");
             }
             
-            _processingTask?.Dispose();
+            // Wait for processing task to complete before disposing
+            try
+            {
+                if (_processingTask != null)
+                {
+                    await _processingTask.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when cancellation token is triggered
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error waiting for processing task to complete during async disposal");
+            }
+            finally
+            {
+                // Only dispose if task is in a completion state
+                if (_processingTask?.IsCompleted == true)
+                {
+                    _processingTask.Dispose();
+                }
+            }
+            
             _requestSemaphore?.Dispose();
             _cancellationTokenSource?.Dispose();
             
@@ -899,6 +923,18 @@ namespace RadegastWeb.Services
             foreach (var accountId in _activeClients.Keys.ToList())
             {
                 UnregisterGridClient(accountId);
+            }
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Error during synchronous disposal");
             }
         }
 
