@@ -206,6 +206,7 @@ canvas {
     --chart-warning: #ffc107;
     --chart-danger: #dc3545;
     --chart-secondary: #6c757d;
+    --bs-body-bg: #1a1a1a;
 }
 
 /* Gradient backgrounds for cards */
