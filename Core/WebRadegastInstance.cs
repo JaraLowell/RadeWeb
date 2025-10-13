@@ -1502,8 +1502,33 @@ namespace RadegastWeb.Core
             {
                 case InstantMessageDialog.SessionSend:
                     // This could be either group chat or conference IM
-                    // First check our in-memory groups cache
-                    if (_groups.ContainsKey(e.IM.IMSessionID))
+                    // First check persistent cache to ensure we catch all groups we're members of
+                    var cachedGroupName = await _groupService.GetGroupNameAsync(Guid.Parse(_accountId), 
+                        e.IM.IMSessionID.ToString(), string.Empty);
+                    
+                    if (!string.IsNullOrEmpty(cachedGroupName))
+                    {
+                        // Found in persistent cache, this is definitely a group message
+                        sessionId = $"group-{e.IM.IMSessionID}";
+                        sessionName = cachedGroupName;
+                        chatType = "Group";
+                        targetId = e.IM.IMSessionID.ToString();
+                        
+                        // Add to in-memory cache for faster future lookups
+                        var cachedGroups = await _groupService.GetCachedGroupsAsync(Guid.Parse(_accountId));
+                        if (cachedGroups.TryGetValue(e.IM.IMSessionID, out var cachedGroup))
+                        {
+                            _groups.TryAdd(e.IM.IMSessionID, cachedGroup);
+                        }
+                        
+                        // Try to join the group chat if we're not already in it
+                        RequestJoinGroupChatIfNeeded(e.IM.IMSessionID);
+                        
+                        _logger.LogInformation("Using cached group name {GroupName} for group {GroupId} (loaded from persistent cache)", 
+                            cachedGroupName, e.IM.IMSessionID);
+                    }
+                    // Then check our in-memory groups cache for known groups
+                    else if (_groups.ContainsKey(e.IM.IMSessionID))
                     {
                         // Known group chat
                         sessionId = $"group-{e.IM.IMSessionID}";
@@ -1516,73 +1541,28 @@ namespace RadegastWeb.Core
                     }
                     else
                     {
-                        // Check if this group exists in the persistent cached groups
-                        var cachedGroupName = await _groupService.GetGroupNameAsync(Guid.Parse(_accountId), 
-                            e.IM.IMSessionID.ToString(), string.Empty);
+                        // Extract group name from binary bucket (this is the standard approach in Radegast)
+                        var binaryBucketContent = System.Text.Encoding.UTF8.GetString(e.IM.BinaryBucket).Trim('\0');
                         
-                        if (!string.IsNullOrEmpty(cachedGroupName))
+                        if (!string.IsNullOrWhiteSpace(binaryBucketContent))
                         {
-                            // Found in persistent cache, this is definitely a group message
-                            sessionId = $"group-{e.IM.IMSessionID}";
-                            sessionName = cachedGroupName;
-                            chatType = "Group";
-                            targetId = e.IM.IMSessionID.ToString();
-                            
-                            // Add to in-memory cache for faster future lookups
-                            var cachedGroups = await _groupService.GetCachedGroupsAsync(Guid.Parse(_accountId));
-                            if (cachedGroups.TryGetValue(e.IM.IMSessionID, out var cachedGroup))
+                            // Treat as group message if we have a group name in binary bucket
+                            // This is how Radegast determines group messages from unknown groups
+                            if (e.IM.BinaryBucket.Length >= 2 && binaryBucketContent.Length > 2)
                             {
-                                _groups.TryAdd(e.IM.IMSessionID, cachedGroup);
-                            }
-                            
-                            // Try to join the group chat if we're not already in it
-                            RequestJoinGroupChatIfNeeded(e.IM.IMSessionID);
-                            
-                            _logger.LogInformation("Using cached group name {GroupName} for group {GroupId} (loaded from persistent cache)", 
-                                cachedGroupName, e.IM.IMSessionID);
-                        }
-                        else
-                        {
-                            // Extract group name from binary bucket (this is the standard approach in Radegast)
-                            var binaryBucketContent = System.Text.Encoding.UTF8.GetString(e.IM.BinaryBucket).Trim('\0');
-                            
-                            if (!string.IsNullOrWhiteSpace(binaryBucketContent))
-                            {
-                                // Treat as group message if we have a group name in binary bucket
-                                // This is how Radegast determines group messages from unknown groups
-                                if (e.IM.BinaryBucket.Length >= 2 && binaryBucketContent.Length > 2)
-                                {
-                                    // This looks like a conference (ad-hoc friends chat)
-                                    sessionId = $"conference-{e.IM.IMSessionID}";
-                                    sessionName = binaryBucketContent;
-                                    chatType = "Conference";
-                                    targetId = e.IM.IMSessionID.ToString();
-                                    
-                                    _logger.LogInformation("Received conference message for session {SessionName} ({SessionId})", 
-                                        binaryBucketContent, e.IM.IMSessionID);
-                                }
-                                else
-                                {
-                                    // Single character or short binary bucket suggests group message from unknown group
-                                    // Request current groups to update our group list
-                                    _client.Groups.RequestCurrentGroups();
-                                    
-                                    // Try to join the group chat session
-                                    TryJoinUnknownGroupChat(e.IM.IMSessionID);
-                                    
-                                    sessionId = $"group-{e.IM.IMSessionID}";
-                                    sessionName = $"Group Chat ({e.IM.IMSessionID.ToString().Substring(0, 8)})";
-                                    chatType = "Group";
-                                    targetId = e.IM.IMSessionID.ToString();
-                                    
-                                    _logger.LogInformation("Received group message from unknown group ({GroupId}), requested group list update", 
-                                        e.IM.IMSessionID);
-                                }
+                                // This looks like a conference (ad-hoc friends chat)
+                                sessionId = $"conference-{e.IM.IMSessionID}";
+                                sessionName = binaryBucketContent;
+                                chatType = "Conference";
+                                targetId = e.IM.IMSessionID.ToString();
+                                
+                                _logger.LogInformation("Received conference message for session {SessionName} ({SessionId})", 
+                                    binaryBucketContent, e.IM.IMSessionID);
                             }
                             else
                             {
-                                // Default to group if we can't determine type
-                                // Most SessionSend messages are group messages in SL
+                                // Single character or short binary bucket suggests group message from unknown group
+                                // Request current groups to update our group list
                                 _client.Groups.RequestCurrentGroups();
                                 
                                 // Try to join the group chat session
@@ -1593,19 +1573,65 @@ namespace RadegastWeb.Core
                                 chatType = "Group";
                                 targetId = e.IM.IMSessionID.ToString();
                                 
-                                _logger.LogInformation("Received SessionSend message from unknown session ({SessionId}), treating as group message", 
+                                _logger.LogInformation("Received group message from unknown group ({GroupId}), requested group list update", 
                                     e.IM.IMSessionID);
                             }
+                        }
+                        else
+                        {
+                            // Default to group if we can't determine type
+                            // Most SessionSend messages are group messages in SL
+                            _client.Groups.RequestCurrentGroups();
+                            
+                            // Try to join the group chat session
+                            TryJoinUnknownGroupChat(e.IM.IMSessionID);
+                            
+                            sessionId = $"group-{e.IM.IMSessionID}";
+                            sessionName = $"Group Chat ({e.IM.IMSessionID.ToString().Substring(0, 8)})";
+                            chatType = "Group";
+                            targetId = e.IM.IMSessionID.ToString();
+                            
+                            _logger.LogInformation("Received SessionSend message from unknown session ({SessionId}), treating as group message", 
+                                e.IM.IMSessionID);
                         }
                     }
                     break;
 
                 case InstantMessageDialog.MessageFromAgent:
-                    // Individual IM
-                    sessionId = $"im-{e.IM.FromAgentID}";
-                    sessionName = senderDisplayName;
-                    chatType = "IM";
-                    targetId = e.IM.FromAgentID.ToString();
+                    // Could be either individual IM or group message
+                    // Check if this message is actually from a group by checking IMSessionID against our cached groups
+                    var groupNameFromAgent = await _groupService.GetGroupNameAsync(Guid.Parse(_accountId), 
+                        e.IM.IMSessionID.ToString(), string.Empty);
+                    
+                    if (!string.IsNullOrEmpty(groupNameFromAgent))
+                    {
+                        // This is actually a group message, not an IM
+                        sessionId = $"group-{e.IM.IMSessionID}";
+                        sessionName = groupNameFromAgent;
+                        chatType = "Group";
+                        targetId = e.IM.IMSessionID.ToString();
+                        
+                        // Add to in-memory cache for faster future lookups
+                        var cachedGroups = await _groupService.GetCachedGroupsAsync(Guid.Parse(_accountId));
+                        if (cachedGroups.TryGetValue(e.IM.IMSessionID, out var cachedGroup))
+                        {
+                            _groups.TryAdd(e.IM.IMSessionID, cachedGroup);
+                        }
+                        
+                        // Try to join the group chat if we're not already in it
+                        RequestJoinGroupChatIfNeeded(e.IM.IMSessionID);
+                        
+                        _logger.LogInformation("Reclassified MessageFromAgent as group message for group {GroupName} ({GroupId})", 
+                            groupNameFromAgent, e.IM.IMSessionID);
+                    }
+                    else
+                    {
+                        // Individual IM
+                        sessionId = $"im-{e.IM.FromAgentID}";
+                        sessionName = senderDisplayName;
+                        chatType = "IM";
+                        targetId = e.IM.FromAgentID.ToString();
+                    }
                     break;
 
                 default:
