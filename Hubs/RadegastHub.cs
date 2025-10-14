@@ -343,6 +343,22 @@ namespace RadegastWeb.Hubs
             }
         }
 
+        public async Task GetUnreadNoticesCount(string accountId)
+        {
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    var count = await _accountService.GetUnreadNoticesCountAsync(accountGuid);
+                    await Clients.Caller.UnreadNoticesCountLoaded(accountId, count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting unread notices count via SignalR");
+            }
+        }
+
         public async Task GetRegionStats(string accountId)
         {
             try
@@ -635,6 +651,7 @@ namespace RadegastWeb.Hubs
         Task RecentSessionsLoaded(string accountId, List<ChatSessionDto> sessions);
         Task NoticeReceived(NoticeReceivedEventDto noticeEvent);
         Task RecentNoticesLoaded(string accountId, List<NoticeDto> notices);
+        Task UnreadNoticesCountLoaded(string accountId, int count);
         Task ChatHistoryCleared(string accountId, string sessionId);
         
         // Sit/Stand methods

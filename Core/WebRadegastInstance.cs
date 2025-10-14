@@ -1567,7 +1567,56 @@ namespace RadegastWeb.Core
             if (e.IM.Dialog == InstantMessageDialog.GroupNotice ||
                 e.IM.Dialog == InstantMessageDialog.GroupNoticeRequested)
             {
-                await _noticeService.ProcessIncomingNoticeAsync(Guid.Parse(_accountId), e.IM);
+                var processedNotice = await _noticeService.ProcessIncomingNoticeAsync(Guid.Parse(_accountId), e.IM);
+                
+                // Auto-acknowledge notices that require acknowledgment to Second Life
+                if (processedNotice != null && processedNotice.RequiresAcknowledgment)
+                {
+                    try
+                    {
+                        // Send acknowledgment back to Second Life
+                        // Based on Radegast implementation, we need to send an IM response
+                        var hasAttachment = processedNotice.HasAttachment;
+                        var dialog = InstantMessageDialog.MessageFromAgent; // Default dialog
+                        
+                        // Prepare the binary bucket for attachment acceptance (if needed)
+                        byte[] binaryBucket = new byte[0];
+                        if (hasAttachment && !string.IsNullOrEmpty(processedNotice.AttachmentType))
+                        {
+                            // Try to find appropriate inventory folder for the attachment type
+                            if (Enum.TryParse<AssetType>(processedNotice.AttachmentType, out var assetType))
+                            {
+                                var destinationFolderID = _client.Inventory.FindFolderForType(assetType);
+                                binaryBucket = destinationFolderID.GetBytes();
+                                dialog = InstantMessageDialog.GroupNoticeInventoryAccepted;
+                            }
+                        }
+                        
+                        // Send the acknowledgment IM to Second Life
+                        _client.Self.InstantMessage(
+                            _client.Self.Name,
+                            e.IM.FromAgentID,
+                            string.Empty,
+                            e.IM.IMSessionID,
+                            dialog,
+                            InstantMessageOnline.Offline,
+                            _client.Self.SimPosition,
+                            _client.Network.CurrentSim?.RegionID ?? UUID.Zero,
+                            binaryBucket
+                        );
+                        
+                        _logger.LogInformation("Auto-acknowledged group notice ({Dialog}) from {FromAgent} for account {AccountId}, hasAttachment: {HasAttachment}", 
+                            e.IM.Dialog, e.IM.FromAgentName, _accountId, hasAttachment);
+                            
+                        // Mark as acknowledged in our database
+                        await _noticeService.AcknowledgeNoticeAsync(Guid.Parse(_accountId), processedNotice.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error auto-acknowledging group notice for account {AccountId}", _accountId);
+                    }
+                }
+                
                 return; // Don't process as regular IM
             }
 

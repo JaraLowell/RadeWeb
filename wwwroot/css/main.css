@@ -352,6 +352,47 @@ a {
     color: #b3d9ff;
 }
 
+/* Notices Tab Styling */
+#noticesMessages .notice {
+    border-left: 4px solid #ffc107;
+}
+
+#noticesMessages .notice.Group {
+    border-left-color: #0d6efd;
+}
+
+#noticesMessages .notice.Region {
+    border-left-color: #6f42c1;
+}
+
+#noticesMessages .notice.System {
+    border-left-color: #dc3545;
+}
+
+.notice-title {
+    color: #92ccff;
+    font-size: 1.1em;
+}
+
+.notice-from {
+    font-size: 0.9em;
+    color: #92ccff;
+}
+
+.notice-message {
+    margin-top: 0.5rem;
+    line-height: 1.4;
+}
+
+.notice-attachment {
+    border-left: 3px solid #28a745;
+    background-color: #465c79 !important;
+}
+
+.notice-attachment .btn {
+    margin-top: 0.25rem;
+}
+
 /* Chat Tabs Styling */
 .nav-tabs {
     background-color: #f8f9fa;
@@ -566,7 +607,7 @@ a {
 
 .account-details {
     font-size: 0.8rem;
-    color: #6c757d;
+    color: var(--text-color);
 }
 
 .account-actions {

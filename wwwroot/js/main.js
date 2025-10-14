@@ -13,6 +13,8 @@ class RadegastWebClient {
         this.avatarRefreshInterval = null;
         this.closedGroupSessions = new Set(); // Track closed group sessions during this account session
         this.groups = []; // Store groups for the current account
+        this.notices = []; // Store notices for the current account
+        this.unreadNoticesCount = 0; // Track unread notices count
         
         this.initializeSignalR();
         this.bindEvents();
@@ -120,6 +122,13 @@ class RadegastWebClient {
                 this.loadRecentNotices(accountId, notices);
             });
 
+            this.connection.on("UnreadNoticesCountLoaded", (accountId, count) => {
+                if (accountId === this.currentAccountId) {
+                    this.unreadNoticesCount = count;
+                    this.updateTabCounts();
+                }
+            });
+
             // Sit/Stand event handlers
             this.connection.on("SitStandSuccess", (message) => {
                 this.showAlert(message, "success");
@@ -189,14 +198,26 @@ class RadegastWebClient {
         // Set local chat as default active tab
         this.setActiveTab('local-chat');
         
-        // Setup tab click handlers for existing tabs
-        const localChatTab = document.getElementById('local-chat-tab');
-        if (localChatTab) {
-            localChatTab.addEventListener('click', (e) => {
-                e.preventDefault();
-                this.setActiveTab('local-chat');
-            });
-        }
+        // Setup tab click handlers for existing tabs with a small delay to ensure DOM is ready
+        setTimeout(() => {
+            const localChatTab = document.getElementById('local-chat-tab');
+            if (localChatTab) {
+                localChatTab.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.setActiveTab('local-chat');
+                });
+            }
+            
+            // Setup notices tab click handler
+            const noticesTab = document.getElementById('notices-tab');
+            if (noticesTab) {
+                noticesTab.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.setActiveTab('notices');
+                    this.markAllNoticesAsRead();
+                });
+            }
+        }, 100);
     }
 
     setActiveTab(tabId) {
@@ -217,15 +238,21 @@ class RadegastWebClient {
                 tabLink.classList.add('active');
             }
             
-            // Load chat history for this session if it's not local chat
-            if (tabId !== 'local-chat' && this.currentAccountId && this.connection) {
+            // Load chat history for this session if it's not local chat or notices
+            if (tabId !== 'local-chat' && tabId !== 'notices' && this.currentAccountId && this.connection) {
                 const sessionId = tabId.startsWith('chat-') ? tabId.replace('chat-', '') : tabId;
                 this.connection.invoke("GetChatHistory", this.currentAccountId, sessionId, 50, 0)
                     .catch(err => console.error("Failed to load chat history:", err));
             }
             
+            // Load notices if notices tab is selected
+            if (tabId === 'notices' && this.currentAccountId && this.connection) {
+                this.connection.invoke("GetRecentNotices", this.currentAccountId, 50)
+                    .catch(err => console.error("Failed to load notices:", err));
+            }
+            
             // Clear unread count for this session
-            if (tabId !== 'local-chat') {
+            if (tabId !== 'local-chat' && tabId !== 'notices') {
                 const sessionId = tabId.replace('chat-', '');
                 if (this.chatSessions[sessionId]) {
                     this.chatSessions[sessionId].unreadCount = 0;
@@ -247,6 +274,17 @@ class RadegastWebClient {
             }
             this.currentChatSession = 'local';
         }
+        
+        // Special handling for notices
+        if (tabId === 'notices') {
+            const noticesTab = document.getElementById('notices-tab');
+            if (noticesTab) {
+                noticesTab.classList.add('active');
+            }
+            this.currentChatSession = 'notices';
+        }
+        
+        console.log(`Active tab set to: ${tabId}, currentChatSession: ${this.currentChatSession}`);
     }
 
     scrollChatToBottom(tabId, smooth = false) {
@@ -254,6 +292,8 @@ class RadegastWebClient {
         
         if (tabId === 'local-chat') {
             messagesContainer = document.getElementById('localChatMessages');
+        } else if (tabId === 'notices') {
+            messagesContainer = document.getElementById('noticesMessages');
         } else if (tabId.startsWith('chat-')) {
             const sessionId = tabId.replace('chat-', '');
             messagesContainer = document.getElementById(`messages-${sessionId}`);
@@ -1068,6 +1108,16 @@ class RadegastWebClient {
         // Clear closed group sessions tracking
         this.closedGroupSessions.clear();
         
+        // Clear notices
+        this.notices = [];
+        this.unreadNoticesCount = 0;
+        
+        // Clear notices content
+        const noticesContainer = document.getElementById('noticesMessages');
+        if (noticesContainer) {
+            noticesContainer.innerHTML = '';
+        }
+        
         // Remove all IM tabs from the dropdown
         const imDropdown = document.getElementById('imTabsList');
         if (imDropdown) {
@@ -1080,7 +1130,7 @@ class RadegastWebClient {
             groupDropdown.innerHTML = '';
         }
         
-        // Remove all chat content panes except local chat
+        // Remove all chat content panes except local chat and notices
         const contentContainer = document.querySelector('.tab-content');
         if (contentContainer) {
             const chatPanes = contentContainer.querySelectorAll('.tab-pane[id^="chat-"]');
@@ -1092,7 +1142,26 @@ class RadegastWebClient {
         // Reset tab counts
         this.updateTabCounts();
         
-        console.log('Cleared all chat tabs and sessions');
+        // Ensure all tabs except local chat are deactivated
+        document.querySelectorAll('.nav-link').forEach(tab => {
+            tab.classList.remove('active');
+        });
+        
+        // Ensure all tab panes are deactivated
+        document.querySelectorAll('.tab-pane').forEach(pane => {
+            pane.classList.remove('active', 'show');
+        });
+        
+        // Explicitly activate local chat
+        const localChatTab = document.getElementById('local-chat-tab');
+        const localChatPane = document.getElementById('local-chat');
+        
+        if (localChatTab && localChatPane) {
+            localChatTab.classList.add('active');
+            localChatPane.classList.add('active', 'show');
+        }
+        
+        console.log('Cleared all chat tabs and sessions, set local chat as default');
     }
 
     async selectAccount(accountId) {
@@ -1167,8 +1236,9 @@ class RadegastWebClient {
             container.innerHTML = '';
         });
 
-        // Reset to local chat tab
-        this.setActiveTab('local-chat');
+        // Reset to local chat tab - clearAllChatTabs already sets this as default
+        this.currentChatSession = 'local';
+        console.log('Account switched - local chat set as default');
 
         // Manage SignalR account groups
         if (this.connection) {
@@ -1187,6 +1257,8 @@ class RadegastWebClient {
                 await this.connection.invoke("GetRecentSessions", accountId);
                 // Load local chat history
                 await this.connection.invoke("GetChatHistory", accountId, "local-chat", 50, 0);
+                // Load recent notices for this account
+                await this.loadAccountNotices(accountId);
                 // Refresh nearby avatars for the new account (only if connected)
                 if (account.isConnected) {
                     this.refreshNearbyAvatars();
@@ -1559,6 +1631,12 @@ class RadegastWebClient {
     displayChatMessage(chatMessage) {
         if (chatMessage.accountId !== this.currentAccountId) return;
 
+        // Filter out notices - they should only appear in the notices tab
+        if (chatMessage.chatType && chatMessage.chatType.toLowerCase() === 'notice') {
+            console.log("Filtering out notice from regular chat display:", chatMessage);
+            return;
+        }
+
         let messagesContainer;
         
         // Determine which tab this message belongs to
@@ -1662,6 +1740,7 @@ class RadegastWebClient {
         
         const imCountBadge = document.getElementById('total-im-count');
         const groupCountBadge = document.getElementById('total-group-count');
+        const noticesCountBadge = document.getElementById('total-notices-count');
         
         if (imCountBadge) {
             imCountBadge.textContent = totalIMCount;
@@ -1669,6 +1748,10 @@ class RadegastWebClient {
         
         if (groupCountBadge) {
             groupCountBadge.textContent = totalGroupCount;
+        }
+        
+        if (noticesCountBadge) {
+            noticesCountBadge.textContent = this.unreadNoticesCount;
         }
     }
 
@@ -1956,6 +2039,16 @@ class RadegastWebClient {
         // The backend already formats it and sends it as a chat message
         console.log("Notice received:", noticeEvent);
         
+        // Add notice to our notices array and increase unread count
+        this.notices.unshift(noticeEvent.notice);
+        if (!noticeEvent.notice.isRead) {
+            this.unreadNoticesCount++;
+            this.updateTabCounts();
+        }
+        
+        // Display notice in the notices tab
+        this.displayNoticeInTab(noticeEvent.notice);
+        
         // For now, notices are handled by the regular chat display since
         // the backend formats them and sends them as ChatMessageDto with chatType "Notice"
         // We could add additional UI elements here if needed (like notification popups)
@@ -2035,26 +2128,37 @@ class RadegastWebClient {
     }
 
     async loadRecentNotices(accountId, notices) {
-        // This could be used to populate a notices panel or history
+        // Only load notices for the current account
+        if (accountId !== this.currentAccountId) return;
+        
         console.log("Recent notices loaded:", notices);
-        // For now, we'll just log them, but this could be used to show
-        // a notices history panel in the UI
+        
+        // Update our notices array and calculate unread count
+        this.notices = notices || [];
+        this.unreadNoticesCount = this.notices.filter(n => !n.isRead).length;
+        
+        // Display all notices in the notices tab
+        this.displayNoticesInTab();
+        
+        // Update the tab count
+        this.updateTabCounts();
         
         // Display unread notices as notifications
         const unreadNotices = notices.filter(n => !n.isRead);
         unreadNotices.forEach(notice => {
             // Filter out non-notice messages that might have been incorrectly classified
-            if (!notice.type || !['Group', 'Region'].includes(notice.type)) {
+            // Notice.Type is an enum: 0=Group, 1=Region, 2=System
+            if (notice.type === undefined || ![0, 1, 2].includes(notice.type)) {
                 console.log("Skipping non-notice message in recent notices:", notice);
                 return;
             }
             
-            const sessionId = notice.type === 'Group' && notice.groupId ? 
+            const sessionId = notice.type === 0 && notice.groupId ? 
                 `group-${notice.groupId}` : 'local-chat';
             const timestamp = new Date(notice.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
             const displayMessage = `[${timestamp}] ${notice.fromName} ${notice.title}\n${notice.message}`;
             
-            // Use the same handling as live notices
+            // Use the same handling as live notices for chat display
             this.handleNoticeReceived({
                 notice: notice,
                 sessionId: sessionId,
@@ -2450,6 +2554,130 @@ class RadegastWebClient {
         
         // Stop avatar refresh
         this.stopAvatarRefresh();
+    }
+
+    // Display a notice in the notices tab
+    displayNoticeInTab(notice) {
+        const noticesContainer = document.getElementById('noticesMessages');
+        if (!noticesContainer) return;
+
+        const noticeDiv = document.createElement('div');
+        noticeDiv.className = `chat-message notice mb-3 p-3 border rounded`;
+        // Notice.Type enum: 0=Group, 1=Region, 2=System
+        noticeDiv.style.backgroundColor = notice.type === 0 ? '#213c50' : '#563838';
+        
+        const timestamp = new Date(notice.timestamp).toLocaleTimeString();
+        const typeNames = { 0: 'Group', 1: 'Region', 2: 'System' };
+        const typeName = typeNames[notice.type] || 'Unknown';
+        
+        noticeDiv.innerHTML = `
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div>
+                    <strong class="notice-title">${this.escapeHtml(notice.title)}</strong>
+                    <small class="text-muted ms-2">${timestamp}</small>
+                </div>
+                <span class="badge ${notice.type === 0 ? 'bg-primary' : 'bg-secondary'}">${typeName}</span>
+            </div>
+            <div class="notice-from mb-2">
+                <strong>From:</strong> ${this.escapeHtml(notice.fromName)}
+                ${notice.groupName ? `<br><strong>Group:</strong> ${this.escapeHtml(notice.groupName)}` : ''}
+            </div>
+            <div class="notice-message">${this.escapeHtml(notice.message)}</div>
+            ${notice.hasAttachment ? `
+                <div class="notice-attachment mt-2 p-2 bg-light rounded">
+                    <i class="fas fa-paperclip me-1"></i>
+                    <strong>Attachment:</strong> ${this.escapeHtml(notice.attachmentName || 'Unknown Item')}
+                    <br><small class="text-muted">Type: ${this.escapeHtml(notice.attachmentType || 'Unknown')}</small>
+                    ${notice.requiresAcknowledgment && !notice.isAcknowledged ? `
+                        <br><button class="btn btn-sm btn-primary mt-1" onclick="radegastClient.acknowledgeNotice('${notice.id}')">
+                            Accept Attachment
+                        </button>
+                    ` : ''}
+                </div>
+            ` : ''}
+        `;
+        
+        noticesContainer.appendChild(noticeDiv);
+        this.scrollChatToBottom('notices');
+    }
+
+    // Display all notices in the notices tab
+    displayNoticesInTab() {
+        const noticesContainer = document.getElementById('noticesMessages');
+        if (!noticesContainer) return;
+
+        noticesContainer.innerHTML = '';
+        
+        // Sort notices by timestamp, newest first
+        const sortedNotices = [...this.notices].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        
+        sortedNotices.forEach(notice => {
+            this.displayNoticeInTab(notice);
+        });
+    }
+
+    // Mark all notices as read when the notices tab is activated
+    async markAllNoticesAsRead() {
+        if (!this.currentAccountId || this.unreadNoticesCount === 0) return;
+
+        try {
+            // Mark all unread notices as read in memory
+            this.notices.forEach(notice => {
+                if (!notice.isRead) {
+                    notice.isRead = true;
+                }
+            });
+            
+            this.unreadNoticesCount = 0;
+            this.updateTabCounts();
+
+            // Refresh the display to show read status
+            this.displayNoticesInTab();
+
+            // Get updated count from backend
+            if (this.connection) {
+                await this.connection.invoke("GetUnreadNoticesCount", this.currentAccountId);
+            }
+            
+            console.log("Marked all notices as read");
+        } catch (error) {
+            console.error("Error marking notices as read:", error);
+        }
+    }
+
+    // Acknowledge a notice (for notices with attachments)
+    async acknowledgeNotice(noticeId) {
+        if (!this.currentAccountId) return;
+
+        try {
+            if (this.connection) {
+                await this.connection.invoke("AcknowledgeNotice", this.currentAccountId, noticeId);
+                
+                // Update the notice in our local array
+                const notice = this.notices.find(n => n.id === noticeId);
+                if (notice) {
+                    notice.isAcknowledged = true;
+                    this.displayNoticesInTab(); // Refresh the display
+                }
+                
+                this.showAlert("Notice acknowledged", "success");
+            }
+        } catch (error) {
+            console.error("Error acknowledging notice:", error);
+            this.showAlert("Error acknowledging notice", "danger");
+        }
+    }
+
+    // Load recent notices for an account when it connects
+    async loadAccountNotices(accountId) {
+        try {
+            if (this.connection) {
+                await this.connection.invoke("GetRecentNotices", accountId, 50);
+                await this.connection.invoke("GetUnreadNoticesCount", accountId);
+            }
+        } catch (err) {
+            console.error("Error loading account notices:", err);
+        }
     }
 }
 

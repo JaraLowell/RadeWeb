@@ -29,6 +29,7 @@ namespace RadegastWeb.Services
         Task<IEnumerable<DisplayName>> GetCachedDisplayNamesAsync(Guid accountId);
         Task AcknowledgeNoticeAsync(Guid accountId, string noticeId);
         Task<IEnumerable<NoticeDto>> GetRecentNoticesAsync(Guid accountId, int count = 20);
+        Task<int> GetUnreadNoticesCountAsync(Guid accountId);
         Task<RegionStatsDto?> GetRegionStatsAsync(Guid accountId);
         Task ResetAllAccountsToOfflineAsync();
     }
@@ -717,6 +718,22 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error getting recent notices for account {AccountId}", accountId);
                 return Enumerable.Empty<NoticeDto>();
+            }
+        }
+
+        public async Task<int> GetUnreadNoticesCountAsync(Guid accountId)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var noticeService = scope.ServiceProvider.GetRequiredService<INoticeService>();
+                var unreadNotices = await noticeService.GetUnreadNoticesAsync(accountId);
+                return unreadNotices.Count();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting unread notices count for account {AccountId}", accountId);
+                return 0;
             }
         }
 

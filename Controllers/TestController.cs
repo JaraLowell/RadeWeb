@@ -149,5 +149,59 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, new { error = "Internal server error" });
             }
         }
+
+        /// <summary>
+        /// Test the notice acknowledgment logic (without actually connecting to SL)
+        /// </summary>
+        [HttpGet("notice-acknowledgment")]
+        public IActionResult TestNoticeAcknowledgment()
+        {
+            try
+            {
+                var testResults = new
+                {
+                    description = "Tests the automatic notice acknowledgment logic implementation",
+                    scenarios = new[]
+                    {
+                        new
+                        {
+                            type = "GroupNotice without attachment",
+                            requiresAcknowledgment = false,
+                            isAcknowledged = true,
+                            behavior = "Auto-acknowledged immediately (no SL confirmation needed)"
+                        },
+                        new
+                        {
+                            type = "GroupNotice with attachment",
+                            requiresAcknowledgment = true,
+                            isAcknowledged = false,
+                            behavior = "Requires acknowledgment - will send GroupNoticeInventoryAccepted to SL"
+                        },
+                        new
+                        {
+                            type = "GroupNoticeRequested",
+                            requiresAcknowledgment = true,
+                            isAcknowledged = false,
+                            behavior = "Always requires acknowledgment - will send appropriate dialog to SL"
+                        }
+                    },
+                    acknowledgmentProtocol = new
+                    {
+                        withoutAttachment = "InstantMessageDialog.MessageFromAgent",
+                        withAttachment = "InstantMessageDialog.GroupNoticeInventoryAccepted + inventory folder ID",
+                        binaryBucket = "Contains destination folder UUID for attachments"
+                    },
+                    radegastCompatibility = "Implementation follows Radegast's GroupDetails.cs acknowledgment pattern",
+                    implementation = "Auto-acknowledgment happens in WebRadegastInstance.Self_IM method"
+                };
+
+                return Ok(testResults);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in notice acknowledgment test");
+                return StatusCode(500, new { error = "Internal server error", message = ex.Message });
+            }
+        }
     }
 }

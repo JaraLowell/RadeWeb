@@ -13,6 +13,7 @@ namespace RadegastWeb.Services
         Task<IEnumerable<NoticeDto>> GetRecentNoticesAsync(Guid accountId, int count = 20);
         Task<IEnumerable<NoticeDto>> GetUnreadNoticesAsync(Guid accountId);
         Task MarkNoticeAsReadAsync(Guid accountId, string noticeId);
+        Task SendNoticeAcknowledgmentToSecondLifeAsync(Guid accountId, InstantMessage originalMessage, bool hasAttachment);
         void CleanupAccount(Guid accountId);
         event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
     }
@@ -21,13 +22,15 @@ namespace RadegastWeb.Services
     {
         private readonly ILogger<NoticeService> _logger;
         private readonly IDbContextFactory<RadegastDbContext> _dbContextFactory;
+        private readonly IGroupService _groupService;
 
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
 
-        public NoticeService(ILogger<NoticeService> logger, IDbContextFactory<RadegastDbContext> dbContextFactory)
+        public NoticeService(ILogger<NoticeService> logger, IDbContextFactory<RadegastDbContext> dbContextFactory, IGroupService groupService)
         {
             _logger = logger;
             _dbContextFactory = dbContextFactory;
+            _groupService = groupService;
         }
 
         public async Task<NoticeDto?> ProcessIncomingNoticeAsync(Guid accountId, InstantMessage im)
@@ -150,7 +153,7 @@ namespace RadegastWeb.Services
             return false;
         }
 
-        private Task<NoticeDto?> ProcessGroupNoticeAsync(Guid accountId, InstantMessage im)
+        private async Task<NoticeDto?> ProcessGroupNoticeAsync(Guid accountId, InstantMessage im)
         {
             try
             {
@@ -180,6 +183,9 @@ namespace RadegastWeb.Services
                     }
                 }
 
+                // Get group name from group cache
+                var groupName = await _groupService.GetGroupNameAsync(accountId, groupId.ToString(), "Unknown Group");
+
                 var notice = new NoticeDto
                 {
                     Id = Guid.NewGuid().ToString(),
@@ -188,26 +194,27 @@ namespace RadegastWeb.Services
                     FromName = im.FromAgentName,
                     FromId = im.FromAgentID.ToString(),
                     GroupId = groupId.ToString(),
+                    GroupName = groupName,
                     Timestamp = DateTime.UtcNow,
                     Type = NoticeType.Group,
                     HasAttachment = hasAttachment,
                     AttachmentName = attachmentName,
                     AttachmentType = attachmentType,
                     AccountId = accountId,
-                    RequiresAcknowledgment = false, // Group notices don't typically require acknowledgment
-                    IsAcknowledged = true
+                    RequiresAcknowledgment = hasAttachment, // Group notices with attachments require acknowledgment
+                    IsAcknowledged = !hasAttachment // Auto-acknowledge notices without attachments
                 };
 
-                return Task.FromResult<NoticeDto?>(notice);
+                return notice;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing group notice");
-                return Task.FromResult<NoticeDto?>(null);
+                return null;
             }
         }
 
-        private Task<NoticeDto?> ProcessGroupNoticeRequestedAsync(Guid accountId, InstantMessage im)
+        private async Task<NoticeDto?> ProcessGroupNoticeRequestedAsync(Guid accountId, InstantMessage im)
         {
             try
             {
@@ -236,6 +243,9 @@ namespace RadegastWeb.Services
                     }
                 }
 
+                // Get group name from group cache
+                var groupName = await _groupService.GetGroupNameAsync(accountId, groupId.ToString(), "Unknown Group");
+
                 var notice = new NoticeDto
                 {
                     Id = im.IMSessionID.ToString(), // Use session ID for acknowledgment
@@ -244,22 +254,23 @@ namespace RadegastWeb.Services
                     FromName = im.FromAgentName,
                     FromId = im.FromAgentID.ToString(),
                     GroupId = groupId.ToString(),
+                    GroupName = groupName,
                     Timestamp = DateTime.UtcNow,
                     Type = NoticeType.Group,
                     HasAttachment = hasAttachment,
                     AttachmentName = attachmentName,
                     AttachmentType = attachmentType,
                     AccountId = accountId,
-                    RequiresAcknowledgment = hasAttachment, // Only acknowledge if there's an attachment to accept
+                    RequiresAcknowledgment = true, // Always require acknowledgment for GroupNoticeRequested
                     IsAcknowledged = false
                 };
 
-                return Task.FromResult<NoticeDto?>(notice);
+                return notice;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing group notice requested");
-                return Task.FromResult<NoticeDto?>(null);
+                return null;
             }
         }
 
@@ -351,7 +362,13 @@ namespace RadegastWeb.Services
                     .Take(count)
                     .ToListAsync();
 
-                return notices.Select(ConvertToDto);
+                var dtos = new List<NoticeDto>();
+                foreach (var notice in notices)
+                {
+                    dtos.Add(await ConvertToDtoAsync(notice));
+                }
+
+                return dtos;
             }
             catch (Exception ex)
             {
@@ -370,7 +387,13 @@ namespace RadegastWeb.Services
                     .OrderByDescending(n => n.Timestamp)
                     .ToListAsync();
 
-                return notices.Select(ConvertToDto);
+                var dtos = new List<NoticeDto>();
+                foreach (var notice in notices)
+                {
+                    dtos.Add(await ConvertToDtoAsync(notice));
+                }
+
+                return dtos;
             }
             catch (Exception ex)
             {
@@ -436,6 +459,37 @@ namespace RadegastWeb.Services
             }
         }
 
+        private async Task<NoticeDto> ConvertToDtoAsync(Notice notice)
+        {
+            var dto = new NoticeDto
+            {
+                Id = notice.Id.ToString(),
+                AccountId = notice.AccountId,
+                Title = notice.Title,
+                Message = notice.Message,
+                FromName = notice.FromName,
+                FromId = notice.FromId,
+                GroupId = notice.GroupId,
+                GroupName = notice.GroupName,
+                Timestamp = notice.Timestamp,
+                Type = Enum.Parse<NoticeType>(notice.Type),
+                HasAttachment = notice.HasAttachment,
+                AttachmentName = notice.AttachmentName,
+                AttachmentType = notice.AttachmentType,
+                RequiresAcknowledgment = notice.RequiresAcknowledgment,
+                IsAcknowledged = notice.IsAcknowledged,
+                IsRead = notice.IsRead
+            };
+
+            // If GroupName is missing but GroupId is present, try to get it from group cache
+            if (string.IsNullOrEmpty(dto.GroupName) && !string.IsNullOrEmpty(dto.GroupId))
+            {
+                dto.GroupName = await _groupService.GetGroupNameAsync(notice.AccountId, dto.GroupId, "Unknown Group");
+            }
+
+            return dto;
+        }
+
         private NoticeDto ConvertToDto(Notice notice)
         {
             return new NoticeDto
@@ -462,7 +516,8 @@ namespace RadegastWeb.Services
         private string FormatGroupNoticeForChat(NoticeDto notice)
         {
             var timestamp = notice.Timestamp.ToString("HH:mm");
-            var formattedMessage = $"[{timestamp}] {notice.FromName} {notice.Title}";
+            var groupPrefix = !string.IsNullOrEmpty(notice.GroupName) ? $"[{notice.GroupName}] " : "";
+            var formattedMessage = $"[{timestamp}] {groupPrefix}{notice.FromName} {notice.Title}";
             
             if (!string.IsNullOrEmpty(notice.Message))
             {
@@ -488,6 +543,30 @@ namespace RadegastWeb.Services
             // Database notices persist even after cleanup, which is what we want
             // This method is kept for interface compatibility
             _logger.LogInformation("Notice cleanup requested for account {AccountId} - notices persisted in database", accountId);
+        }
+
+        public async Task SendNoticeAcknowledgmentToSecondLifeAsync(Guid accountId, InstantMessage originalMessage, bool hasAttachment)
+        {
+            try
+            {
+                // This method is called by WebRadegastInstance to send the actual acknowledgment to Second Life
+                // The WebRadegastInstance has access to the GridClient to send the IM response
+                _logger.LogInformation("Notice acknowledgment requested for account {AccountId}, message from {FromAgent}, hasAttachment: {HasAttachment}", 
+                    accountId, originalMessage.FromAgentName, hasAttachment);
+                
+                // The actual IM sending is handled by WebRadegastInstance since it has the GridClient
+                // This method is here for interface completeness and logging
+                
+                // Mark as acknowledged in database if we have the notice ID
+                if (originalMessage.IMSessionID != UUID.Zero)
+                {
+                    await AcknowledgeNoticeAsync(accountId, originalMessage.IMSessionID.ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing notice acknowledgment for account {AccountId}", accountId);
+            }
         }
     }
 }
