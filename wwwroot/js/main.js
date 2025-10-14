@@ -1808,12 +1808,22 @@ class RadegastWebClient {
 
         const alertDiv = document.createElement('div');
         alertDiv.className = `alert alert-${type} alert-dismissible fade show temp-alert`;
+        alertDiv.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 9999;
+            min-width: 300px;
+            max-width: 500px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        `;
         alertDiv.innerHTML = `
             ${message}
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         `;
 
-        document.body.insertBefore(alertDiv, document.body.firstChild);
+        document.body.appendChild(alertDiv);
 
         // Auto-remove after 5 seconds
         setTimeout(() => {

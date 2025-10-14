@@ -691,7 +691,7 @@ namespace RadegastWeb.Core
                 Id = avatar.ID.ToString(),
                 Name = legacyName,
                 DisplayName = displayName,
-                Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
+                Distance = Calculate3DDistance(_client.Self.SimPosition, avatar.Position),
                 Status = "Online", // TODO: Get actual status if available
                 AccountId = Guid.Parse(_accountId)
             };
@@ -741,7 +741,7 @@ namespace RadegastWeb.Core
                 Id = avatar.ID.ToString(),
                 Name = avatarName,
                 DisplayName = displayName,
-                Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
+                Distance = Calculate3DDistance(_client.Self.SimPosition, avatar.Position),
                 Status = "Online", // TODO: Get actual status if available
                 AccountId = Guid.Parse(_accountId)
             };
@@ -775,7 +775,7 @@ namespace RadegastWeb.Core
                 Id = coarseAvatar.ID.ToString(),
                 Name = legacyName,
                 DisplayName = displayName,
-                Distance = CalculateHorizontalDistance(_client.Self.SimPosition, coarseAvatar.Position),
+                Distance = Calculate3DDistance(_client.Self.SimPosition, coarseAvatar.Position),
                 Status = "Online", // Coarse location avatars are assumed online
                 AccountId = Guid.Parse(_accountId)
             };
@@ -821,7 +821,7 @@ namespace RadegastWeb.Core
                 Id = coarseAvatar.ID.ToString(),
                 Name = avatarName,
                 DisplayName = displayName,
-                Distance = CalculateHorizontalDistance(_client.Self.SimPosition, coarseAvatar.Position),
+                Distance = Calculate3DDistance(_client.Self.SimPosition, coarseAvatar.Position),
                 Status = "Online", // Coarse location avatars are assumed online
                 AccountId = Guid.Parse(_accountId)
             };
@@ -1216,7 +1216,7 @@ namespace RadegastWeb.Core
                 Id = e.Avatar.ID.ToString(),
                 Name = avatarName,
                 DisplayName = displayName,
-                Distance = CalculateHorizontalDistance(_client.Self.SimPosition, e.Avatar.Position),
+                Distance = Calculate3DDistance(_client.Self.SimPosition, e.Avatar.Position),
                 Status = "Online",
                 AccountId = Guid.Parse(_accountId)
             };
@@ -1402,8 +1402,8 @@ namespace RadegastWeb.Core
                     var distance = Vector3d.Distance(ToVector3D(e.Simulator.Handle, pos), agentPosition);
                     
                     // Apply maximum distance filter (362m = corner to corner of sim)
-                    if (distance > MAX_DISTANCE)
-                        continue;
+                    // if (distance > MAX_DISTANCE)
+                    //    continue;
 
                     // Update or create coarse location avatar
                     var avatarName = detailedAvatar?.Name ?? "Unknown User";
@@ -2043,7 +2043,7 @@ namespace RadegastWeb.Core
                         Id = e.AvatarId,
                         Name = e.DisplayName.LegacyFullName,
                         DisplayName = e.DisplayName.DisplayNameValue,
-                        Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
+                        Distance = Calculate3DDistance(_client.Self.SimPosition, avatar.Position),
                         Status = "Online",
                         AccountId = Guid.Parse(_accountId)
                     };
@@ -2086,7 +2086,7 @@ namespace RadegastWeb.Core
                         Id = e.AvatarId,
                         Name = e.DisplayName.LegacyFullName,
                         DisplayName = e.DisplayName.DisplayNameValue,
-                        Distance = CalculateHorizontalDistance(_client.Self.SimPosition, avatar.Position),
+                        Distance = Calculate3DDistance(_client.Self.SimPosition, avatar.Position),
                         Status = "Online",
                         AccountId = Guid.Parse(_accountId)
                     };
@@ -2453,6 +2453,20 @@ namespace RadegastWeb.Core
         #endregion
 
         #region Distance Calculation
+
+        /// <summary>
+        /// Calculate 3D distance between two positions (including Z-axis/altitude)
+        /// </summary>
+        /// <param name="pos1">First position</param>
+        /// <param name="pos2">Second position</param>
+        /// <returns>3D distance in meters</returns>
+        private static float Calculate3DDistance(Vector3 pos1, Vector3 pos2)
+        {
+            var deltaX = pos2.X - pos1.X;
+            var deltaY = pos2.Y - pos1.Y;
+            var deltaZ = pos2.Z - pos1.Z;
+            return (float)Math.Sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ);
+        }
 
         /// <summary>
         /// Calculate horizontal distance between two positions, ignoring height difference.

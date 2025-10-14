@@ -270,22 +270,12 @@ namespace RadegastWeb.Services
                         NameDisplayMode.Smart, 
                         message.SenderName);
                     
-                    var legacyName = await _displayNameService.GetLegacyNameAsync(
-                        message.AccountId, 
-                        message.SenderId, 
-                        message.SenderName);
-                    
-                    // If display name is different from legacy name, use format "DisplayName (legacy.name)"
-                    // If same or no display name, use just "Legacy Name"
-                    if (!string.IsNullOrEmpty(displayName) && 
-                        !string.Equals(displayName, legacyName, StringComparison.OrdinalIgnoreCase) &&
-                        !string.IsNullOrEmpty(legacyName))
+                    // The GetDisplayNameAsync with NameDisplayMode.Smart already returns properly formatted names
+                    // in the format "DisplayName (username)" or just "LegacyName" if it's a default display name
+                    // No need to format it again - this was causing duplicate legacy names in chat logs
+                    if (!string.IsNullOrEmpty(displayName))
                     {
-                        senderName = $"{displayName} ({legacyName.Replace(' ', '.')})";
-                    }
-                    else if (!string.IsNullOrEmpty(legacyName))
-                    {
-                        senderName = legacyName;
+                        senderName = displayName;
                     }
                     else
                     {
