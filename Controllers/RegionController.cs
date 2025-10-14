@@ -9,11 +9,13 @@ namespace RadegastWeb.Controllers
     public class RegionController : ControllerBase
     {
         private readonly IAccountService _accountService;
+        private readonly IRegionMapCacheService _regionMapCacheService;
         private readonly ILogger<RegionController> _logger;
 
-        public RegionController(IAccountService accountService, ILogger<RegionController> logger)
+        public RegionController(IAccountService accountService, IRegionMapCacheService regionMapCacheService, ILogger<RegionController> logger)
         {
             _accountService = accountService;
+            _regionMapCacheService = regionMapCacheService;
             _logger = logger;
         }
 
@@ -92,7 +94,7 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
-        /// Download the region map image for an account using Linden Lab's public Map API
+        /// Download the region map image for an account using Linden Lab's public Map API with in-memory caching
         /// </summary>
         /// <param name="accountId">The account ID</param>
         /// <returns>The region map image as JPEG</returns>
@@ -119,35 +121,23 @@ namespace RadegastWeb.Controllers
                 var regionX = (ulong)(currentSim.Handle >> 32) / 256;
                 var regionY = (ulong)(currentSim.Handle & 0xFFFFFFFF) / 256;
 
-                // Use Linden Lab's public Map API to get the region image
-                // Format: http://map.secondlife.com/map-{z}-{x}-{y}-objects.jpg
-                // z=1 means most zoomed in (one region per tile)
-                var mapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
-                
-                _logger.LogInformation("Fetching region map from URL: {MapUrl} for region {RegionName} at ({RegionX}, {RegionY})", 
-                    mapUrl, currentSim.Name, regionX, regionY);
+                _logger.LogDebug("Getting region map for {RegionName} at ({RegionX}, {RegionY})", 
+                    currentSim.Name, regionX, regionY);
 
-                // Download the image from Linden Lab's servers
-                using var httpClient = new HttpClient();
-                httpClient.Timeout = TimeSpan.FromSeconds(30);
-                
-                var response = await httpClient.GetAsync(mapUrl);
-                
-                if (!response.IsSuccessStatusCode)
-                {
-                    _logger.LogWarning("Failed to fetch region map from {MapUrl}. Status: {StatusCode}", 
-                        mapUrl, response.StatusCode);
-                    return NotFound(new { error = "Region map image not available" });
-                }
-
-                var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                // Try to get the map from cache first
+                var imageBytes = await _regionMapCacheService.GetRegionMapAsync(regionX, regionY);
                 
                 if (imageBytes == null || imageBytes.Length == 0)
                 {
-                    return NotFound(new { error = "Failed to download region map image" });
+                    _logger.LogWarning("Failed to get region map for ({RegionX}, {RegionY})", regionX, regionY);
+                    return NotFound(new { error = "Region map image not available" });
                 }
 
-                // Return the image as JPEG
+                _logger.LogDebug("Serving region map for {RegionName} at ({RegionX}, {RegionY}), size: {SizeKB}KB", 
+                    currentSim.Name, regionX, regionY, imageBytes.Length / 1024);
+
+                // Return the image as JPEG with caching headers
+                Response.Headers["Cache-Control"] = "public, max-age=3600"; // 1 hour browser cache
                 return File(imageBytes, "image/jpeg", $"{currentSim.Name}_map.jpg");
             }
             catch (Exception ex)
@@ -188,6 +178,9 @@ namespace RadegastWeb.Controllers
                 // Generate the public map URL using Linden Lab's Map API
                 var publicMapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
 
+                // Check if the map is cached
+                var isCached = _regionMapCacheService.IsRegionMapCached(regionX, regionY);
+
                 var result = new
                 {
                     regionName = currentSim.Name,
@@ -201,7 +194,9 @@ namespace RadegastWeb.Controllers
                         y = client.Self.SimPosition.Y,
                         z = client.Self.SimPosition.Z
                     },
-                    hasMapImage = true // Always true with public API
+                    hasMapImage = true, // Always true with public API
+                    isCached = isCached,
+                    cacheSize = _regionMapCacheService.GetCacheSize()
                 };
 
                 return Ok(result);
@@ -209,6 +204,61 @@ namespace RadegastWeb.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting region map info for account {AccountId}", accountId);
+                return StatusCode(500, new { error = "Internal server error" });
+            }
+        }
+
+        /// <summary>
+        /// Get region map cache statistics
+        /// </summary>
+        /// <returns>Cache statistics</returns>
+        [HttpGet("cache/stats")]
+        public ActionResult<object> GetCacheStats()
+        {
+            try
+            {
+                var result = new
+                {
+                    cachedRegionCount = _regionMapCacheService.GetCacheSize(),
+                    timestamp = DateTime.UtcNow
+                };
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting cache stats");
+                return StatusCode(500, new { error = "Internal server error" });
+            }
+        }
+
+        /// <summary>
+        /// Clear expired maps from cache
+        /// </summary>
+        /// <returns>Success result</returns>
+        [HttpPost("cache/cleanup")]
+        public ActionResult<object> CleanupCache()
+        {
+            try
+            {
+                var sizeBefore = _regionMapCacheService.GetCacheSize();
+                _regionMapCacheService.ClearExpiredMaps();
+                var sizeAfter = _regionMapCacheService.GetCacheSize();
+
+                var result = new
+                {
+                    message = "Cache cleanup completed",
+                    sizeBefore = sizeBefore,
+                    sizeAfter = sizeAfter,
+                    clearedCount = sizeBefore - sizeAfter,
+                    timestamp = DateTime.UtcNow
+                };
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleaning up cache");
                 return StatusCode(500, new { error = "Internal server error" });
             }
         }

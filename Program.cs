@@ -100,6 +100,7 @@ builder.Services.AddSingleton<ISlUrlParser, SlUrlParser>();
 builder.Services.AddSingleton<IGroupService, GroupService>();
 builder.Services.AddSingleton<IStatsService, StatsService>();
 builder.Services.AddSingleton<IChatLogService, ChatLogService>();
+builder.Services.AddSingleton<IRegionMapCacheService, RegionMapCacheService>();
 builder.Services.AddScoped<IChatHistoryService, ChatHistoryService>();
 builder.Services.AddHostedService<RadegastBackgroundService>();
 builder.Services.AddHostedService<PeriodicDisplayNameService>();
