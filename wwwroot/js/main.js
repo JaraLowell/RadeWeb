@@ -20,6 +20,7 @@ class RadegastWebClient {
         this.initializeDarkMode();
         this.initializeGroupsToggleState();
         this.initializeRadarToggleState();
+        this.initializeUIState();
         
         // Load accounts after initialization and set up periodic refresh
         this.loadAccounts().catch(error => {
@@ -936,12 +937,13 @@ class RadegastWebClient {
                     }
                 }
                 
-                // Auto-select the first connected account if none is currently selected
-                if (!this.currentAccountId && this.accounts.length > 0) {
-                    const connectedAccount = this.accounts.find(a => a.isConnected);
-                    if (connectedAccount) {
-                        await this.selectAccount(connectedAccount.accountId);
-                    }
+                // Don't auto-select accounts - let user choose
+                // Keep welcome message visible until user explicitly selects an account
+                if (!this.currentAccountId) {
+                    // Ensure welcome message is shown when no account is selected
+                    document.getElementById('welcomeMessage').classList.remove('d-none');
+                    document.getElementById('chatInterface').classList.add('d-none');
+                    document.getElementById('peoplePanel').classList.add('d-none');
                 }
             } else {
                 console.error("Failed to load accounts, status:", response.status);
@@ -2296,6 +2298,15 @@ class RadegastWebClient {
             radarStats.style.display = 'none';
             toggleIcon.className = 'fas fa-chart-bar';
         }
+    }
+
+    initializeUIState() {
+        // Ensure welcome message is shown and chat interface is hidden by default
+        // This prevents the chat interface from showing before a user selects an account
+        document.getElementById('welcomeMessage').classList.remove('d-none');
+        document.getElementById('chatInterface').classList.add('d-none');
+        document.getElementById('peoplePanel').classList.add('d-none');
+        console.log('UI state initialized - showing welcome message');
     }
 
     // Manual presence control methods

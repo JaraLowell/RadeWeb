@@ -53,10 +53,10 @@ namespace RadegastWeb.Services
                         try
                         {
                             var legacyName = await _displayNameService.GetLegacyNameAsync(
-                                message.AccountId, 
-                                message.SenderId, 
+                                message.AccountId,
+                                message.SenderId,
                                 message.SenderName);
-                            
+
                             if (!string.IsNullOrEmpty(legacyName))
                             {
                                 sessionNameForFile = legacyName;
@@ -82,7 +82,14 @@ namespace RadegastWeb.Services
                 
                 // Get the appropriate log file path based on chat type
                 var logFilePath = await GetChatLogPathAsync(message.AccountId, message.ChatType, sessionNameForFile);
-                
+
+                // Maybe for Corrade integration in future
+                // to do: "command=tell&group="+ GROUPUUID +"&password=" + PASSWORD + "&entity=group&message=" + TEXT
+                // if text starts with "command=tell&group=" send message to group if password matches
+                // need check if we have access to send msg > to that group from this service
+                // Password we need get from file appsettings.json
+                // entity can be local (chat), group, avatar (im)
+
                 // Format the chat message
                 var formattedMessage = await FormatChatMessageAsync(message);
                 
