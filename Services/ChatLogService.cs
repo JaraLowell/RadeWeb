@@ -141,11 +141,11 @@ namespace RadegastWeb.Services
                     if (!string.IsNullOrEmpty(sessionName))
                     {
                         var sanitizedName = SanitizeFileName(sessionName);
-                        fileName = $"{sanitizedName}_(group).txt";
+                        fileName = $"{sanitizedName} (group).txt";
                     }
                     else
                     {
-                        fileName = "unknown_group_(group).txt";
+                        fileName = "unknown_group (group).txt";
                     }
                     break;
                     
