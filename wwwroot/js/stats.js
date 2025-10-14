@@ -132,14 +132,14 @@ class StatsManager {
                 datasets: [{
                     label: 'Unique Visitors',
                     data: visitorsData,
-                    borderColor: 'rgb(0, 123, 255)',
+                    borderColor: 'rgb(74, 115, 169)',
                     backgroundColor: 'rgba(0, 123, 255, 0.1)',
                     tension: 0.4,
                     fill: true
                 }, {
                     label: 'Total Visits',
                     data: visitsData,
-                    borderColor: 'rgb(40, 167, 69)',
+                    borderColor: 'rgb(30, 126, 52)',
                     backgroundColor: 'rgba(40, 167, 69, 0.1)',
                     tension: 0.4,
                     fill: false
@@ -199,7 +199,7 @@ class StatsManager {
         }
 
         const colors = [
-            '#007bff', '#28a745', '#ffc107', '#dc3545', '#17a2b8',
+            '#4a73a9', '#1E7E34', '#ffc107', '#dc3545', '#17a2b8',
             '#6f42c1', '#e83e8c', '#fd7e14', '#20c997', '#6c757d'
         ];
 
@@ -253,16 +253,10 @@ class StatsManager {
             .slice(0, 20);
 
         tbody.innerHTML = recentVisitors.map(visitor => {
-            // Use the best available name, preferring display name over legacy name
-            let displayName = 'Unknown';
-            if (visitor.displayName && visitor.displayName !== 'Loading...' && visitor.displayName !== '???') {
-                displayName = visitor.displayName;
-            } else if (visitor.avatarName && visitor.avatarName !== 'Unknown User' && visitor.avatarName !== 'Loading...') {
-                displayName = visitor.avatarName;
-            } else if (visitor.avatarId) {
-                // Show a truncated avatar ID as last resort instead of just "Unknown"
-                displayName = `Avatar ${visitor.avatarId.substring(0, 8)}...`;
-            }
+            // Use the best available name from our enhanced cache data
+            // Priority: displayName > avatarName > fallback to truncated avatar ID
+            let displayName = this.getBestAvailableName(visitor);
+            
             const firstSeen = this.formatDateTime(visitor.firstSeen);
             const lastSeen = this.formatDateTime(visitor.lastSeen);
             
@@ -283,6 +277,50 @@ class StatsManager {
                 </tr>
             `;
         }).join('');
+    }
+
+    /**
+     * Gets the best available name for a visitor, prioritizing good names over placeholders
+     */
+    getBestAvailableName(visitor) {
+        // Check for valid display name first
+        if (this.isValidName(visitor.displayName)) {
+            return visitor.displayName;
+        }
+        
+        // Check for valid avatar/legacy name
+        if (this.isValidName(visitor.avatarName)) {
+            return visitor.avatarName;
+        }
+        
+        // Fallback to truncated avatar ID if we have it
+        if (visitor.avatarId) {
+            return `Avatar ${visitor.avatarId.substring(0, 8)}...`;
+        }
+        
+        // Last resort
+        return 'Unknown User';
+    }
+
+    /**
+     * Checks if a name is valid (not null, empty, or a placeholder)
+     */
+    isValidName(name) {
+        if (!name || typeof name !== 'string' || name.trim() === '') {
+            return false;
+        }
+        
+        const lowerName = name.toLowerCase().trim();
+        const invalidNames = [
+            'loading...',
+            'unknown user', 
+            'unknown',
+            '???',
+            'loading',
+            ''
+        ];
+        
+        return !invalidNames.includes(lowerName) && !lowerName.startsWith('loading');
     }
 
     updateRegionStats(regionStats) {

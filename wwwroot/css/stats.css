@@ -1,4 +1,8 @@
 /* Stats Page Styles */
+.bg-dark {
+    --bs-bg-opacity: 1;
+    background-color: rgb(74 115 169) !important;
+}
 
 .stats-card {
     transition: transform 0.2s;
@@ -147,8 +151,9 @@ canvas {
 }
 
 .visitor-display-name {
-    color: #007bff;
+    color: #2b4f76;
     text-decoration: none;
+    font-weight: 600;
 }
 
 .visitor-display-name:hover {
@@ -206,12 +211,19 @@ canvas {
     --chart-warning: #ffc107;
     --chart-danger: #dc3545;
     --chart-secondary: #6c757d;
-    --bs-body-bg: #1a1a1a;
+    --bs-body-bg: #a4b5cd;
+    --bs-primary-rgb: 74, 115, 169;
+    --bs-primary: #4a73a9;
+    --chart-primary: #4a73a9;
+}
+
+.card {
+    background-color: #eceae5;
 }
 
 /* Gradient backgrounds for cards */
 .stats-card.bg-primary {
-    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%) !important;
+    background: linear-gradient(135deg, #4a73a9 0%, #1b3b5e 100%) !important;
 }
 
 .stats-card.bg-success {

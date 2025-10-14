@@ -65,6 +65,7 @@ namespace RadegastWeb.Services
     {
         private readonly IDbContextFactory<RadegastDbContext> _dbContextFactory;
         private readonly ILogger<StatsService> _logger;
+        private readonly IGlobalDisplayNameCache _globalDisplayNameCache;
         
         // Thread-safe dictionary to track which accounts are monitoring which regions
         // This prevents duplicate recording when multiple accounts are in the same region
@@ -74,10 +75,11 @@ namespace RadegastWeb.Services
         private readonly ConcurrentDictionary<string, DateTime> _recentRecordings = new();
         private readonly TimeSpan _recordingCooldown = TimeSpan.FromMinutes(5); // Don't record same avatar twice within 5 minutes
         
-        public StatsService(IDbContextFactory<RadegastDbContext> dbContextFactory, ILogger<StatsService> logger)
+        public StatsService(IDbContextFactory<RadegastDbContext> dbContextFactory, ILogger<StatsService> logger, IGlobalDisplayNameCache globalDisplayNameCache)
         {
             _dbContextFactory = dbContextFactory;
             _logger = logger;
+            _globalDisplayNameCache = globalDisplayNameCache;
         }
         
         public void SetAccountRegion(Guid accountId, string regionName, ulong simHandle)
@@ -319,10 +321,12 @@ namespace RadegastWeb.Services
                             RegionsVisited = g.Select(vs => vs.RegionName).Distinct().ToList()
                         };
                     })
-                    .OrderByDescending(v => v.LastSeen)
                     .ToList();
+
+                // Enhance names using the global display name cache
+                await EnhanceVisitorNamesAsync(visitors);
                 
-                return visitors;
+                return visitors.OrderByDescending(v => v.LastSeen).ToList();
             }
             catch (Exception ex)
             {
@@ -373,6 +377,125 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error cleaning up old visitor records");
             }
+        }
+        
+        /// <summary>
+        /// Enhances visitor names using the global display name cache
+        /// This replaces poor quality names (null, "Loading...", "Unknown User") with better cached names
+        /// </summary>
+        private async Task EnhanceVisitorNamesAsync(List<UniqueVisitorDto> visitors)
+        {
+            // First, try to preload any missing display names
+            var avatarIds = visitors.Select(v => v.AvatarId).ToList();
+            await _globalDisplayNameCache.PreloadDisplayNamesAsync(avatarIds);
+            
+            foreach (var visitor in visitors)
+            {
+                try
+                {
+                    // Check if we have cached names that are better than what's stored
+                    var cachedDisplayName = await _globalDisplayNameCache.GetCachedDisplayNameAsync(visitor.AvatarId);
+                    
+                    if (cachedDisplayName != null)
+                    {
+                        // Use cached display name if it's better than what we have
+                        if (IsNameBetter(cachedDisplayName.DisplayNameValue, visitor.DisplayName))
+                        {
+                            visitor.DisplayName = cachedDisplayName.DisplayNameValue;
+                            _logger.LogDebug("Enhanced display name for {AvatarId}: '{NewName}'", visitor.AvatarId, visitor.DisplayName);
+                        }
+                        
+                        // Use cached legacy name if it's better than what we have
+                        if (IsNameBetter(cachedDisplayName.LegacyFullName, visitor.AvatarName))
+                        {
+                            visitor.AvatarName = cachedDisplayName.LegacyFullName;
+                            _logger.LogDebug("Enhanced avatar name for {AvatarId}: '{NewName}'", visitor.AvatarId, visitor.AvatarName);
+                        }
+                    }
+                    else
+                    {
+                        // Try to get a smart display name (fallback to legacy if needed)
+                        var smartDisplayName = await _globalDisplayNameCache.GetDisplayNameAsync(visitor.AvatarId, Models.NameDisplayMode.Smart);
+                        if (IsNameBetter(smartDisplayName, visitor.DisplayName) && smartDisplayName != "Loading...")
+                        {
+                            // Split smart display name if it contains both display and legacy name
+                            if (smartDisplayName.Contains('(') && smartDisplayName.Contains(')'))
+                            {
+                                // Format: "DisplayName (username)" - extract display name
+                                var displayPart = smartDisplayName.Substring(0, smartDisplayName.IndexOf('(')).Trim();
+                                if (IsNameBetter(displayPart, visitor.DisplayName))
+                                {
+                                    visitor.DisplayName = displayPart;
+                                    _logger.LogDebug("Enhanced display name from smart mode for {AvatarId}: '{NewName}'", visitor.AvatarId, visitor.DisplayName);
+                                }
+                            }
+                            else if (IsNameBetter(smartDisplayName, visitor.DisplayName))
+                            {
+                                visitor.DisplayName = smartDisplayName;
+                                _logger.LogDebug("Enhanced display name from smart mode for {AvatarId}: '{NewName}'", visitor.AvatarId, visitor.DisplayName);
+                            }
+                        }
+                        
+                        // Try to get legacy name if we still don't have a good avatar name
+                        if (IsPlaceholderName(visitor.AvatarName))
+                        {
+                            var legacyName = await _globalDisplayNameCache.GetLegacyNameAsync(visitor.AvatarId);
+                            if (IsNameBetter(legacyName, visitor.AvatarName) && legacyName != "Loading...")
+                            {
+                                visitor.AvatarName = legacyName;
+                                _logger.LogDebug("Enhanced avatar name from legacy for {AvatarId}: '{NewName}'", visitor.AvatarId, visitor.AvatarName);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Could not enhance name for visitor {AvatarId}", visitor.AvatarId);
+                    // Continue with existing names if enhancement fails
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Determines if a new name is better than an existing name
+        /// Better means: not null/empty, not a placeholder like "Loading..." or "Unknown User"
+        /// </summary>
+        private static bool IsNameBetter(string? newName, string? existingName)
+        {
+            // If new name is invalid, it's not better
+            if (IsInvalidName(newName))
+                return false;
+                
+            // If existing name is invalid, new name is better
+            if (IsInvalidName(existingName))
+                return true;
+                
+            // Both are valid, prefer the new one only if existing is also a placeholder
+            return IsPlaceholderName(existingName);
+        }
+        
+        /// <summary>
+        /// Checks if a name is invalid (null, empty, or whitespace)
+        /// </summary>
+        private static bool IsInvalidName(string? name)
+        {
+            return string.IsNullOrWhiteSpace(name);
+        }
+        
+        /// <summary>
+        /// Checks if a name is a placeholder that should be replaced
+        /// </summary>
+        private static bool IsPlaceholderName(string? name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return true;
+                
+            var lowerName = name.ToLowerInvariant();
+            return lowerName == "loading..." || 
+                   lowerName == "unknown user" || 
+                   lowerName == "???" ||
+                   lowerName.StartsWith("loading") ||
+                   lowerName.StartsWith("unknown");
         }
     }
 }
