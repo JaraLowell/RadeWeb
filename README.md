@@ -18,6 +18,8 @@ RadegastWeb is a modern, web-based Second Life client inspired by the original R
 - **Dark Mode**: Toggle between light and dark themes
 - **Chat History**: Persistent chat logging with database storage
 - **Swagger API Documentation**: Complete API documentation and testing interface
+- **AI Chat Bot Plugin**: Intelligent chat responses with configurable AI providers (OpenAI, Anthropic, local models)
+- **Corrade Plugin**: Remote control via whisper commands for message relaying and bot functionality
 
 ## 🏗️ Architecture
 
@@ -63,6 +65,9 @@ RadegastWeb is a modern, web-based Second Life client inspired by the original R
 
 5. **Open in Browser**
    - Main application: `http://localhost:5269`
+   - Login page: `http://localhost:5269/login.html`
+   - Statistics dashboard: `http://localhost:5269/stats.html`
+   - Corrade plugin management: `http://localhost:5269/corrade.html`
    - API documentation: `http://localhost:5269/swagger`
    - HTTPS version: `https://localhost:7077`
 
@@ -82,8 +87,14 @@ The application uses SQLite database stored in `./data/radegast.db`. The databas
 RadegastWeb/
 ├── Controllers/          # API Controllers
 │   ├── AccountsController.cs     # Account management API
+│   ├── AuthController.cs         # Authentication API
+│   ├── ChatLogsController.cs     # Chat logging API
+│   ├── CorradeController.cs      # Corrade plugin API
+│   ├── GroupsController.cs       # Group management API
 │   ├── PresenceController.cs     # Presence/status management
-│   └── RegionController.cs       # Region information API
+│   ├── RegionController.cs       # Region information API
+│   ├── StatsController.cs        # Statistics API
+│   └── TestController.cs         # Testing and debug API
 ├── Core/                # Core Second Life logic
 │   └── WebRadegastInstance.cs    # Main SL client wrapper
 ├── Data/                # Database context and migrations
@@ -102,12 +113,23 @@ RadegastWeb/
 │   └── RegionStatsDto.cs        # Region statistics DTOs
 ├── Services/            # Business logic services
 │   ├── AccountService.cs        # Account management
+│   ├── AiChatService.cs         # AI Chat Bot service
+│   ├── AuthenticationService.cs # User authentication
 │   ├── ChatHistoryService.cs    # Chat logging and history
+│   ├── ChatLogService.cs        # Chat log management
+│   ├── CorradeService.cs        # Corrade plugin service
 │   ├── DisplayNameService.cs    # Display name resolution
+│   ├── GlobalDisplayNameCache.cs # Global display name caching
+│   ├── GroupService.cs          # Group management
+│   ├── NameResolutionService.cs # Name resolution utilities
 │   ├── NoticeService.cs         # Group notice handling
+│   ├── PeriodicDisplayNameService.cs # Periodic name updates
 │   ├── PresenceService.cs       # Presence management
 │   ├── RadegastBackgroundService.cs # Background SL processing
-│   └── RegionInfoService.cs     # Region information
+│   ├── RegionInfoService.cs     # Region information
+│   ├── RegionMapCacheService.cs # Region map caching
+│   ├── SlUrlParser.cs           # SL URL parsing
+│   └── StatsService.cs          # Statistics collection
 ├── wwwroot/             # Static web files
 │   ├── css/
 │   │   ├── main.css             # Main stylesheet
@@ -116,9 +138,16 @@ RadegastWeb/
 │   │   ├── main.js              # Main application logic
 │   │   ├── presence-client.js   # Presence management client
 │   │   └── region-info.js       # Region info client
-│   └── index.html               # Main web interface
+│   ├── index.html               # Main web interface
+│   ├── login.html               # Authentication page
+│   ├── corrade.html             # Corrade plugin management interface
+│   └── stats.html               # Statistics dashboard
 ├── data/                # Runtime data
 │   ├── radegast.db              # SQLite database
+│   ├── aibot.json               # AI Chat Bot configuration
+│   ├── AIBot_README.md          # AI Bot setup documentation
+│   ├── corrade.json             # Corrade plugin configuration
+│   ├── Corrade_README.md        # Corrade plugin documentation
 │   └── accounts/                # Per-account data
 │       └── {accountId}/
 │           ├── cache/           # Asset cache
@@ -217,7 +246,59 @@ Application uses Serilog with:
 - Browser close detection sets accounts to "Away"
 - Manual presence control
 
+## 🔌 Plugin System
+
+RadegastWeb includes two powerful plugin systems that extend functionality:
+
+### AI Chat Bot Plugin
+
+The AI Chat Bot plugin adds intelligent chat responses to your Second Life avatar. Features include:
+
+- **Multiple AI Providers**: Support for OpenAI, Anthropic Claude, OpenRouter, and local Ollama models
+- **Configurable Personality**: Customize system prompts and behavior
+- **Smart Triggering**: Respond to name mentions, questions, or specific keywords
+- **Chat Context**: Include recent chat history for contextual responses
+- **Security Features**: UUID-based ignore lists and permission controls
+- **Natural Delays**: Randomized response delays for realistic behavior
+- **Resource Management**: Message size limits and history controls
+
+**Configuration**: Edit `data/aibot.json` or see `data/AIBot_README.md` for detailed setup instructions.
+
+**Quick Setup**:
+1. Set your avatar name in the configuration
+2. Add your AI provider API key
+3. Configure response triggers and personality
+4. Set `enabled: true` and restart RadegastWeb
+
+### Corrade Plugin
+
+The Corrade plugin enables remote control of your avatar through whisper commands, inspired by the Corrade bot system:
+
+📝 This plugin is still under construction and more functions might be added.
+
+- **Whisper Command Processing**: Execute commands via whispered messages
+- **Multi-Entity Support**: Send messages to local chat, groups, or individual avatars
+- **Group-Based Security**: Commands must be authorized by configured groups
+- **Password Protection**: Each group requires a password for command execution
+- **Permission System**: Fine-grained control over allowed message types
+- **Web Management**: Full configuration through web interface at `/corrade.html`
+- **Automatic Activation**: Plugin enables when groups are configured
+
+**Configuration**: Use the web interface at `/corrade.html` or edit `data/corrade.json` directly. See `data/Corrade_README.md` for complete documentation.
+
+**Command Examples**:
+- Local chat: `command=tell&group=GROUP_UUID&password=PASS&entity=local&message=Hello!`
+- Group message: `command=tell&group=GROUP_UUID&password=PASS&entity=group&message=Group hello!`
+- Private message: `command=tell&group=GROUP_UUID&password=PASS&entity=avatar&target=AVATAR_UUID&message=Hi there!`
+
+Both plugins are designed with security in mind and include comprehensive logging and error handling.
+
 ## 🔌 API Endpoints
+
+### Authentication
+- `POST /api/auth/login` - User login
+- `POST /api/auth/logout` - User logout
+- `GET /api/auth/status` - Check authentication status
 
 ### Accounts Management
 - `GET /api/accounts` - List all accounts with status
@@ -230,6 +311,18 @@ Application uses Serilog with:
 - `GET /api/accounts/{id}/chat` - Get chat history
 - `PUT /api/accounts/{id}/appearance` - Update avatar appearance
 
+### Chat Logs Management
+- `GET /api/chatlogs/{accountId}` - Get chat logs for account
+- `GET /api/chatlogs/{accountId}/history` - Get chat history with pagination
+- `DELETE /api/chatlogs/{accountId}` - Clear chat logs for account
+
+### Groups Management
+- `GET /api/groups/{accountId}` - Get groups for account
+- `POST /api/groups/{accountId}/join` - Join a group
+- `POST /api/groups/{accountId}/leave` - Leave a group
+- `POST /api/groups/{accountId}/chat` - Send group message
+- `GET /api/groups/{accountId}/{groupId}/notices` - Get group notices
+
 ### Presence Management
 - `POST /api/presence/browser-close` - Handle browser close (set all to away)
 - `POST /api/presence/{accountId}/status` - Update presence status
@@ -240,6 +333,19 @@ Application uses Serilog with:
 - `GET /api/region/{accountId}/info` - Get region information
 - `POST /api/region/{accountId}/teleport` - Teleport to location
 
+### Statistics
+- `GET /api/stats/visitors` - Get visitor statistics
+- `GET /api/stats/accounts` - Get account statistics
+- `GET /api/stats/system` - Get system performance statistics
+
+### Corrade Plugin (Authentication Required)
+- `GET /api/corrade/status` - Get plugin status and configuration
+- `GET /api/corrade/config` - Get current configuration (passwords hidden)
+- `POST /api/corrade/config` - Update entire configuration
+- `POST /api/corrade/config/groups` - Add new group configuration
+- `DELETE /api/corrade/config/groups/{groupUuid}` - Remove group configuration
+- `POST /api/corrade/test-command` - Test command syntax without execution
+
 ### Display Names
 - `GET /api/displaynames/{accountId}` - Get cached display names
 - `POST /api/displaynames/{accountId}/resolve` - Resolve specific display name
@@ -247,6 +353,11 @@ Application uses Serilog with:
 ### Group Notices
 - `GET /api/notices/{accountId}` - Get group notices
 - `GET /api/notices/{accountId}/{noticeId}` - Get specific notice details
+
+### Testing & Debug
+- `GET /api/test/ping` - Health check endpoint
+- `GET /api/test/auth` - Test authentication
+- `POST /api/test/simulate` - Simulate various test scenarios
 
 ### Real-time Hub
 - `/radegasthub` - SignalR hub for real-time events:
@@ -366,6 +477,13 @@ dotnet run
 - **Teleportation**: Region and landmark teleporting
 - **Inventory Management**: Basic inventory operations
 
+### Plugin Architecture
+- **AI Chat Bot**: Configurable AI-powered chat responses with multiple provider support
+- **Corrade System**: Remote command execution via whisper commands
+- **Modular Design**: Plugins can be enabled/disabled independently
+- **Configuration Management**: Web-based configuration interfaces
+- **Security Framework**: Group-based permissions and authentication
+
 ## 🌐 Browser Support
 
 - Chrome 90+
@@ -471,6 +589,13 @@ When contributing:
 - **Multiple Accounts**: Each account uses additional resources
 - **Chat History**: Large chat history may slow interface
 - **Region Load**: High-traffic regions may cause delays
+- **AI Bot Usage**: AI responses consume API credits and may have rate limits
+
+#### Plugin Issues
+- **AI Bot Not Responding**: Check configuration file, API keys, and account login status
+- **Corrade Commands Failing**: Verify group membership, passwords, and permissions
+- **Plugin Configuration**: Use web interfaces for easier configuration management
+- **API Rate Limits**: Monitor AI provider usage and adjust response frequencies
 
 ### Getting Help
 
@@ -494,10 +619,11 @@ For issues related to:
 
 ---
 
-*RadegastWeb v1.1ß - Bringing Second Life to the modern web* 🌐✨
+*RadegastWeb v1.2ß - Bringing Second Life to the modern web with AI and automation* 🌐✨🤖
 
 ### Version History
-- **v1.1ß**: Current version with full database integration, display names, notices, and region information
+- **v1.2ß**: Current version with AI Chat Bot plugin, Corrade plugin, enhanced authentication, and web management interfaces
+- **v1.1ß**: Database integration, display names, notices, and region information
 - **v1.0**: Initial release with basic multi-account support and web interface
 
 ### License
