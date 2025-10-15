@@ -57,7 +57,25 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
-    options.SwaggerDoc("v1", new() { Title = "RadegastWeb API", Version = "v1" });
+    options.SwaggerDoc("v1", new() 
+    { 
+        Title = "Radegast Web API", 
+        Version = "v1",
+        Description = "Multi-Account Second Life Web Client API",
+        Contact = new() 
+        {
+            Name = "JaraLowell",
+            Url = new Uri("https://github.com/JaraLowell/RadeWeb")
+        }
+    });
+    
+    // Include XML comments if available
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+    {
+        options.IncludeXmlComments(xmlPath);
+    }
 });
 
 // Configure authentication
@@ -106,7 +124,7 @@ builder.Services.AddSingleton<IChatLogService, ChatLogService>();
 builder.Services.AddSingleton<IRegionMapCacheService, RegionMapCacheService>();
 builder.Services.AddSingleton<ICorradeService, CorradeService>();
 builder.Services.AddSingleton<IAiChatService, AiChatService>();
-builder.Services.AddScoped<IChatHistoryService, ChatHistoryService>();
+builder.Services.AddSingleton<IChatHistoryService, ChatHistoryService>();
 builder.Services.AddHostedService<RadegastBackgroundService>();
 builder.Services.AddHostedService<PeriodicDisplayNameService>();
 
@@ -148,10 +166,15 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Configure the HTTP request pipeline.
+app.UseSwagger();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Radegast Web API v1");
+    c.RoutePrefix = "swagger"; // Set swagger UI at /swagger
+});
+
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
     app.UseDeveloperExceptionPage();
 }
 

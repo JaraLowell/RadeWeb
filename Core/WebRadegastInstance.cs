@@ -2401,6 +2401,7 @@ namespace RadegastWeb.Core
         /// <summary>
         /// Attempts to sit on the specified object or ground
         /// </summary>
+        /// <param name="sit">True to sit down, false to stand up</param>
         /// <param name="target">UUID of object to sit on, or UUID.Zero to sit on ground</param>
         /// <returns>True if sit request was sent successfully</returns>
         public bool SetSitting(bool sit, UUID target = default)

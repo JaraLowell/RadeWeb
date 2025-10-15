@@ -296,6 +296,8 @@ Both plugins are designed with security in mind and include comprehensive loggin
 
 ## 🔌 API Endpoints
 
+> 📚 **Interactive API Documentation**: Visit `/swagger` for complete API documentation with testing capabilities (need be loged in)
+
 ### Authentication
 - `POST /api/auth/login` - User login
 - `POST /api/auth/logout` - User logout

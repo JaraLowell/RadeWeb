@@ -12,6 +12,8 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
     
     <!-- Release configuration -->
     <AssemblyTitle>Radegast Web Client</AssemblyTitle>
