@@ -1,0 +1,45 @@
+{
+  "enabled": false,
+  "avatarName": "TestBot Resident",
+  "systemPrompt": "You are a helpful and friendly AI assistant in the virtual world of Second Life. You are roleplaying as an avatar in this virtual world. Keep your responses concise, natural, and engaging. You can discuss topics about Second Life, technology, or general conversation. Avoid being overly formal or robotic. Your responses should feel like they come from a real person having a casual conversation.",
+  "apiConfig": {
+    "provider": "openai",
+    "apiUrl": "https://api.openai.com/v1",
+    "apiKey": "your-api-key-here",
+    "model": "gpt-4o-mini",
+    "maxTokens": 150,
+    "temperature": 0.7,
+    "timeoutSeconds": 30
+  },
+  "chatHistory": {
+    "includeHistory": true,
+    "maxHistoryMessages": 8,
+    "maxHistoryAgeMinutes": 15,
+    "maxHistoryCharacters": 1500,
+    "maxMessageLength": 150,
+    "includeBotMessages": false
+  },
+  "responseConfig": {
+    "minResponseDelaySeconds": 2,
+    "maxResponseDelaySeconds": 5,
+    "responseProbability": 0.6,
+    "maxResponseLength": 400,
+    "respondToNameMentions": true,
+    "respondToQuestions": true,
+    "triggerKeywords": [
+      "hello",
+      "hi",
+      "help",
+      "bot",
+      "ai",
+      "assistant"
+    ],
+    "ignoreUuids": [
+      "00000000-0000-0000-0000-000000000000"
+    ],
+    "ignoreNames": [
+      "SpamBot",
+      "AnnoyingUser"
+    ]
+  }
+}

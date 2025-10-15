@@ -87,6 +87,9 @@ builder.Services.AddCors(options =>
 // Add memory cache for name resolution service
 builder.Services.AddMemoryCache();
 
+// Add HttpClient for AI chat service
+builder.Services.AddHttpClient();
+
 // Register custom services - Use singleton for account management
 builder.Services.AddSingleton<IGlobalDisplayNameCache, GlobalDisplayNameCache>();
 builder.Services.AddSingleton<IPeriodicDisplayNameService, PeriodicDisplayNameService>();
@@ -102,6 +105,7 @@ builder.Services.AddSingleton<IStatsService, StatsService>();
 builder.Services.AddSingleton<IChatLogService, ChatLogService>();
 builder.Services.AddSingleton<IRegionMapCacheService, RegionMapCacheService>();
 builder.Services.AddSingleton<ICorradeService, CorradeService>();
+builder.Services.AddSingleton<IAiChatService, AiChatService>();
 builder.Services.AddScoped<IChatHistoryService, ChatHistoryService>();
 builder.Services.AddHostedService<RadegastBackgroundService>();
 builder.Services.AddHostedService<PeriodicDisplayNameService>();

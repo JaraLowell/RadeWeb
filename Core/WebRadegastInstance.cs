@@ -17,6 +17,8 @@ namespace RadegastWeb.Core
         private readonly IGlobalDisplayNameCache _globalDisplayNameCache;
         private readonly IStatsService _statsService;
         private readonly ICorradeService _corradeService;
+        private readonly IAiChatService _aiChatService;
+        private readonly IChatHistoryService _chatHistoryService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -55,7 +57,7 @@ namespace RadegastWeb.Core
         public event EventHandler<ChatSessionDto>? ChatSessionUpdated;
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -66,6 +68,8 @@ namespace RadegastWeb.Core
             _globalDisplayNameCache = globalDisplayNameCache;
             _statsService = statsService;
             _corradeService = corradeService;
+            _aiChatService = aiChatService;
+            _chatHistoryService = chatHistoryService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -1587,6 +1591,35 @@ namespace RadegastWeb.Core
             };
 
             ChatReceived?.Invoke(this, chatMessage);
+
+            // Process AI chat response for local chat only
+            if (e.Type == ChatType.Normal && e.SourceType == ChatSourceType.Agent && _aiChatService.IsEnabled)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        // Get recent chat history for AI context
+                        var recentHistory = await _chatHistoryService.GetChatHistoryAsync(Guid.Parse(_accountId), "local-chat", 10);
+                        
+                        // Check if AI should respond and generate response
+                        var aiResponse = await _aiChatService.ProcessChatMessageAsync(chatMessage, recentHistory);
+                        
+                        if (!string.IsNullOrEmpty(aiResponse))
+                        {
+                            // Send the AI response to local chat
+                            SendChat(aiResponse, ChatType.Normal, 0);
+                            
+                            _logger.LogDebug("AI bot responded to {SenderName} in local chat: {Response}", 
+                                senderDisplayName, aiResponse);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing AI chat response for message from {SenderName}", senderDisplayName);
+                    }
+                });
+            }
         }
 
         private async void Self_IM(object? sender, InstantMessageEventArgs e)
