@@ -62,7 +62,7 @@
 }
 
 .region-section {
-    margin-bottom: 25px;
+    margin-bottom: 12px;
 }
 
 .region-section:last-child {
@@ -81,14 +81,14 @@
 .region-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px 20px;
+    gap: 2px 20px;
 }
 
 .info-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 8px 0;
+    padding: 2px 0;
 }
 
 .info-item label {
@@ -220,7 +220,7 @@
     }
     
     .region-section h4 {
-        color: #adb5bd;
+        color: #a7d3fe;
         border-bottom-color: #495057;
     }
     
