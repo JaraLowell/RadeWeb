@@ -327,6 +327,26 @@ namespace RadegastWeb.Hubs
             }
         }
 
+        public async Task DismissNotice(string accountId, string noticeId)
+        {
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    await _accountService.DismissNoticeAsync(accountGuid, noticeId);
+                }
+                else
+                {
+                    await Clients.Caller.ChatError("Invalid account ID");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error dismissing notice via SignalR");
+                await Clients.Caller.ChatError("Error dismissing notice");
+            }
+        }
+
         public async Task GetRecentNotices(string accountId, int count = 20)
         {
             try

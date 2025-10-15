@@ -28,6 +28,7 @@ namespace RadegastWeb.Services
         Task<string> GetDisplayNameAsync(Guid accountId, string avatarId, NameDisplayMode mode = NameDisplayMode.Smart, string? fallbackName = null);
         Task<IEnumerable<DisplayName>> GetCachedDisplayNamesAsync(Guid accountId);
         Task AcknowledgeNoticeAsync(Guid accountId, string noticeId);
+        Task DismissNoticeAsync(Guid accountId, string noticeId);
         Task<IEnumerable<NoticeDto>> GetRecentNoticesAsync(Guid accountId, int count = 20);
         Task<int> GetUnreadNoticesCountAsync(Guid accountId);
         Task<RegionStatsDto?> GetRegionStatsAsync(Guid accountId);
@@ -706,6 +707,20 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error acknowledging notice {NoticeId} for account {AccountId}", noticeId, accountId);
+            }
+        }
+
+        public async Task DismissNoticeAsync(Guid accountId, string noticeId)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var noticeService = scope.ServiceProvider.GetRequiredService<INoticeService>();
+                await noticeService.DismissNoticeAsync(accountId, noticeId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error dismissing notice {NoticeId} for account {AccountId}", noticeId, accountId);
             }
         }
 

@@ -13,6 +13,7 @@ namespace RadegastWeb.Services
         Task<IEnumerable<NoticeDto>> GetRecentNoticesAsync(Guid accountId, int count = 20);
         Task<IEnumerable<NoticeDto>> GetUnreadNoticesAsync(Guid accountId);
         Task MarkNoticeAsReadAsync(Guid accountId, string noticeId);
+        Task DismissNoticeAsync(Guid accountId, string noticeId);
         Task SendNoticeAcknowledgmentToSecondLifeAsync(Guid accountId, InstantMessage originalMessage, bool hasAttachment);
         void CleanupAccount(Guid accountId);
         event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
@@ -420,6 +421,27 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error marking notice {NoticeId} as read for account {AccountId}", noticeId, accountId);
+            }
+        }
+
+        public async Task DismissNoticeAsync(Guid accountId, string noticeId)
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                var notice = await context.Notices
+                    .FirstOrDefaultAsync(n => n.Id == Guid.Parse(noticeId) && n.AccountId == accountId);
+
+                if (notice != null)
+                {
+                    context.Notices.Remove(notice);
+                    await context.SaveChangesAsync();
+                    _logger.LogInformation("Dismissed notice {NoticeId} for account {AccountId}", noticeId, accountId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error dismissing notice {NoticeId} for account {AccountId}", noticeId, accountId);
             }
         }
 

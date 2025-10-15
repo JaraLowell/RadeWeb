@@ -2563,6 +2563,7 @@ class RadegastWebClient {
 
         const noticeDiv = document.createElement('div');
         noticeDiv.className = `chat-message notice mb-3 p-3 border rounded`;
+        noticeDiv.id = `notice-${notice.id}`;
         // Notice.Type enum: 0=Group, 1=Region, 2=System
         noticeDiv.style.backgroundColor = notice.type === 0 ? '#213c50' : '#563838';
         
@@ -2595,6 +2596,11 @@ class RadegastWebClient {
                     ` : ''}
                 </div>
             ` : ''}
+            <div class="d-flex justify-content-end mt-2">
+                <button class="btn btn-sm btn-outline-secondary" onclick="radegastClient.dismissNotice('${notice.id}')" title="Dismiss this notice">
+                    OK
+                </button>
+            </div>
         `;
         
         noticesContainer.appendChild(noticeDiv);
@@ -2665,6 +2671,41 @@ class RadegastWebClient {
         } catch (error) {
             console.error("Error acknowledging notice:", error);
             this.showAlert("Error acknowledging notice", "danger");
+        }
+    }
+
+    // Dismiss a notice (removes it completely)
+    async dismissNotice(noticeId) {
+        if (!this.currentAccountId) return;
+
+        try {
+            if (this.connection) {
+                await this.connection.invoke("DismissNotice", this.currentAccountId, noticeId);
+                
+                // Remove the notice from our local array
+                const noticeIndex = this.notices.findIndex(n => n.id === noticeId);
+                if (noticeIndex !== -1) {
+                    const notice = this.notices[noticeIndex];
+                    this.notices.splice(noticeIndex, 1);
+                    
+                    // Update unread count if the notice was unread
+                    if (!notice.isRead) {
+                        this.unreadNoticesCount = Math.max(0, this.unreadNoticesCount - 1);
+                        this.updateTabCounts();
+                    }
+                }
+                
+                // Remove the notice element from the DOM
+                const noticeElement = document.getElementById(`notice-${noticeId}`);
+                if (noticeElement) {
+                    noticeElement.remove();
+                }
+                
+                this.showAlert("Notice dismissed", "success");
+            }
+        } catch (error) {
+            console.error("Error dismissing notice:", error);
+            this.showAlert("Error dismissing notice", "danger");
         }
     }
 
