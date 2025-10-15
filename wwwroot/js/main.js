@@ -907,6 +907,22 @@ class RadegastWebClient {
                 this.forceRefreshAccountStatus();
                 this.showAlert("Refreshing account status...", "info");
             }
+            
+            // Escape key to clean up modal backdrops as a user-accessible fix
+            if (e.key === 'Escape') {
+                // Small delay to allow normal modal close behavior first
+                setTimeout(() => {
+                    this.cleanupModalBackdrops();
+                }, 100);
+            }
+            
+            // Ctrl+Shift+C to manually clean up modal backdrops (debug shortcut)
+            if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+                e.preventDefault();
+                console.log("Manual modal backdrop cleanup triggered");
+                this.cleanupModalBackdrops();
+                this.showAlert("Modal backdrops cleaned up", "info");
+            }
         });
 
         // Login/Logout buttons
@@ -1917,7 +1933,7 @@ class RadegastWebClient {
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            z-index: 9999;
+            z-index: 10000;
             min-width: 300px;
             max-width: 500px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
@@ -2563,6 +2579,9 @@ class RadegastWebClient {
     }
 
     async cleanup() {
+        // Clean up any stray modal backdrops
+        this.cleanupModalBackdrops();
+        
         // Leave current account group on page unload
         if (this.connection && this.currentAccountId) {
             try {
@@ -2739,6 +2758,9 @@ class RadegastWebClient {
             return;
         }
         
+        // Clean up any stray modal backdrops before showing new dialog
+        this.cleanupModalBackdrops();
+        
         this.showScriptDialog(dialog);
     }
 
@@ -2753,6 +2775,9 @@ class RadegastWebClient {
                 modal.hide();
             }
         }
+        
+        // Clean up any stray modal backdrops
+        this.cleanupModalBackdrops();
     }
 
     handleScriptPermissionReceived(permission) {
@@ -2762,6 +2787,9 @@ class RadegastWebClient {
         if (permission.accountId !== this.currentAccountId) {
             return;
         }
+        
+        // Clean up any stray modal backdrops before showing new permission dialog
+        this.cleanupModalBackdrops();
         
         this.showScriptPermission(permission);
     }
@@ -2776,6 +2804,27 @@ class RadegastWebClient {
             if (modal) {
                 modal.hide();
             }
+        }
+        
+        // Clean up any stray modal backdrops
+        this.cleanupModalBackdrops();
+    }
+
+    // Utility method to clean up any stray modal backdrops
+    cleanupModalBackdrops() {
+        // Remove any orphaned modal backdrops that might be left behind
+        const backdrops = document.querySelectorAll('.modal-backdrop');
+        backdrops.forEach(backdrop => {
+            console.log("Removing stray modal backdrop");
+            backdrop.remove();
+        });
+        
+        // Also remove the modal-open class from body if no modals are actually open
+        const openModals = document.querySelectorAll('.modal.show');
+        if (openModals.length === 0) {
+            document.body.classList.remove('modal-open');
+            document.body.style.overflow = '';
+            document.body.style.paddingRight = '';
         }
     }
 
@@ -2794,6 +2843,32 @@ class RadegastWebClient {
             console.error("Script dialog modal elements not found");
             return;
         }
+
+        // IMPORTANT: Hide any existing modal instances to prevent backdrop stacking
+        const existingModalInstance = bootstrap.Modal.getInstance(modal);
+        if (existingModalInstance) {
+            console.log("Closing existing script dialog modal to prevent stacking");
+            existingModalInstance.hide();
+            // Wait for the modal to fully hide before continuing
+            modal.addEventListener('hidden.bs.modal', () => {
+                this.showScriptDialogInternal(dialog);
+            }, { once: true });
+            return;
+        }
+
+        this.showScriptDialogInternal(dialog);
+    }
+
+    showScriptDialogInternal(dialog) {
+        const modal = document.getElementById('scriptDialogModal');
+        const objectNameEl = document.getElementById('scriptDialogObjectName');
+        const ownerNameEl = document.getElementById('scriptDialogOwnerName');
+        const messageEl = document.getElementById('scriptDialogMessage');
+        const textInputDiv = document.getElementById('scriptTextInputDiv');
+        const textInput = document.getElementById('scriptTextInput');
+        const buttonsDiv = document.getElementById('scriptDialogButtons');
+        const sendBtn = document.getElementById('scriptDialogSend');
+        const ignoreBtn = document.getElementById('scriptDialogIgnore');
 
         // Set dialog content
         objectNameEl.textContent = dialog.objectName || 'Unknown Object';
@@ -2879,6 +2954,30 @@ class RadegastWebClient {
             console.error("Script permission modal elements not found");
             return;
         }
+
+        // IMPORTANT: Hide any existing modal instances to prevent backdrop stacking
+        const existingModalInstance = bootstrap.Modal.getInstance(modal);
+        if (existingModalInstance) {
+            console.log("Closing existing script permission modal to prevent stacking");
+            existingModalInstance.hide();
+            // Wait for the modal to fully hide before continuing
+            modal.addEventListener('hidden.bs.modal', () => {
+                this.showScriptPermissionInternal(permission);
+            }, { once: true });
+            return;
+        }
+
+        this.showScriptPermissionInternal(permission);
+    }
+
+    showScriptPermissionInternal(permission) {
+        const modal = document.getElementById('scriptPermissionModal');
+        const objectNameEl = document.getElementById('permissionObjectName');
+        const objectOwnerEl = document.getElementById('permissionObjectOwner');
+        const descriptionEl = document.getElementById('permissionDescription');
+        const muteBtn = document.getElementById('scriptPermissionMute');
+        const denyBtn = document.getElementById('scriptPermissionDeny');
+        const grantBtn = document.getElementById('scriptPermissionGrant');
 
         // Set permission content
         objectNameEl.textContent = permission.objectName || 'Unknown Object';
@@ -3005,6 +3104,11 @@ class RadegastWebClient {
                         modal.hide();
                     }
                 }
+                
+                // Clean up any modal backdrops after a short delay
+                setTimeout(() => {
+                    this.cleanupModalBackdrops();
+                }, 300);
             }
         } catch (error) {
             console.error("Error responding to script dialog:", error);
@@ -3032,6 +3136,11 @@ class RadegastWebClient {
                         modal.hide();
                     }
                 }
+                
+                // Clean up any modal backdrops after a short delay
+                setTimeout(() => {
+                    this.cleanupModalBackdrops();
+                }, 300);
             }
         } catch (error) {
             console.error("Error dismissing script dialog:", error);
@@ -3061,6 +3170,11 @@ class RadegastWebClient {
                         modal.hide();
                     }
                 }
+                
+                // Clean up any modal backdrops after a short delay
+                setTimeout(() => {
+                    this.cleanupModalBackdrops();
+                }, 300);
             }
         } catch (error) {
             console.error("Error responding to script permission:", error);
