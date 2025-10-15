@@ -15,6 +15,10 @@ class RadegastWebClient {
         this.groups = []; // Store groups for the current account
         this.notices = []; // Store notices for the current account
         this.unreadNoticesCount = 0; // Track unread notices count
+        this.scriptDialogQueue = []; // Queue for script dialogs
+        this.scriptPermissionQueue = []; // Queue for script permissions
+        this.isShowingScriptDialog = false; // Track if a script dialog is currently being shown
+        this.isShowingScriptPermission = false; // Track if a script permission is currently being shown
         
         this.initializeSignalR();
         this.bindEvents();
@@ -1148,6 +1152,32 @@ class RadegastWebClient {
         // Clear notices
         this.notices = [];
         this.unreadNoticesCount = 0;
+        
+        // Clear script dialog and permission queues
+        this.scriptDialogQueue = [];
+        this.scriptPermissionQueue = [];
+        this.isShowingScriptDialog = false;
+        this.isShowingScriptPermission = false;
+        
+        // Hide any open modals
+        const scriptDialogModal = document.getElementById('scriptDialogModal');
+        if (scriptDialogModal) {
+            const modalInstance = bootstrap.Modal.getInstance(scriptDialogModal);
+            if (modalInstance) {
+                modalInstance.hide();
+            }
+        }
+        
+        const scriptPermissionModal = document.getElementById('scriptPermissionModal');
+        if (scriptPermissionModal) {
+            const modalInstance = bootstrap.Modal.getInstance(scriptPermissionModal);
+            if (modalInstance) {
+                modalInstance.hide();
+            }
+        }
+        
+        // Clean up any modal backdrops
+        this.cleanupModalBackdrops();
         
         // Clear notices content
         const noticesContainer = document.getElementById('noticesMessages');
@@ -2758,14 +2788,19 @@ class RadegastWebClient {
             return;
         }
         
-        // Clean up any stray modal backdrops before showing new dialog
-        this.cleanupModalBackdrops();
+        // Add dialog to queue
+        this.scriptDialogQueue.push(dialog);
+        console.log("Script dialog added to queue. Queue length:", this.scriptDialogQueue.length);
         
-        this.showScriptDialog(dialog);
+        // Process queue if not already showing a dialog
+        this.processScriptDialogQueue();
     }
 
     handleScriptDialogClosed(accountId, dialogId) {
         console.log("Script dialog closed:", dialogId);
+        
+        // Mark that we're no longer showing a script dialog
+        this.isShowingScriptDialog = false;
         
         // Hide any open dialog modals
         const dialogModal = document.getElementById('scriptDialogModal');
@@ -2778,6 +2813,30 @@ class RadegastWebClient {
         
         // Clean up any stray modal backdrops
         this.cleanupModalBackdrops();
+        
+        // Process next dialog in queue after a short delay
+        setTimeout(() => {
+            this.processScriptDialogQueue();
+        }, 100);
+    }
+
+    processScriptDialogQueue() {
+        // Don't show new dialog if one is already being shown or queue is empty
+        if (this.isShowingScriptDialog || this.scriptDialogQueue.length === 0) {
+            return;
+        }
+        
+        // Get the next dialog from the queue
+        const dialog = this.scriptDialogQueue.shift();
+        console.log("Processing script dialog from queue. Remaining in queue:", this.scriptDialogQueue.length);
+        
+        // Mark that we're showing a dialog
+        this.isShowingScriptDialog = true;
+        
+        // Clean up any stray modal backdrops before showing new dialog
+        this.cleanupModalBackdrops();
+        
+        this.showScriptDialog(dialog);
     }
 
     handleScriptPermissionReceived(permission) {
@@ -2788,14 +2847,19 @@ class RadegastWebClient {
             return;
         }
         
-        // Clean up any stray modal backdrops before showing new permission dialog
-        this.cleanupModalBackdrops();
+        // Add permission to queue
+        this.scriptPermissionQueue.push(permission);
+        console.log("Script permission added to queue. Queue length:", this.scriptPermissionQueue.length);
         
-        this.showScriptPermission(permission);
+        // Process queue if not already showing a permission dialog
+        this.processScriptPermissionQueue();
     }
 
     handleScriptPermissionClosed(accountId, requestId) {
         console.log("Script permission closed:", requestId);
+        
+        // Mark that we're no longer showing a script permission
+        this.isShowingScriptPermission = false;
         
         // Hide any open permission modals
         const permissionModal = document.getElementById('scriptPermissionModal');
@@ -2808,6 +2872,30 @@ class RadegastWebClient {
         
         // Clean up any stray modal backdrops
         this.cleanupModalBackdrops();
+        
+        // Process next permission in queue after a short delay
+        setTimeout(() => {
+            this.processScriptPermissionQueue();
+        }, 100);
+    }
+
+    processScriptPermissionQueue() {
+        // Don't show new permission if one is already being shown or queue is empty
+        if (this.isShowingScriptPermission || this.scriptPermissionQueue.length === 0) {
+            return;
+        }
+        
+        // Get the next permission from the queue
+        const permission = this.scriptPermissionQueue.shift();
+        console.log("Processing script permission from queue. Remaining in queue:", this.scriptPermissionQueue.length);
+        
+        // Mark that we're showing a permission
+        this.isShowingScriptPermission = true;
+        
+        // Clean up any stray modal backdrops before showing new permission dialog
+        this.cleanupModalBackdrops();
+        
+        this.showScriptPermission(permission);
     }
 
     // Utility method to clean up any stray modal backdrops
@@ -2841,34 +2929,10 @@ class RadegastWebClient {
 
         if (!modal || !objectNameEl || !ownerNameEl || !messageEl || !textInputDiv || !textInput || !buttonsDiv || !sendBtn || !ignoreBtn) {
             console.error("Script dialog modal elements not found");
+            // Mark as not showing so queue can continue
+            this.isShowingScriptDialog = false;
             return;
         }
-
-        // IMPORTANT: Hide any existing modal instances to prevent backdrop stacking
-        const existingModalInstance = bootstrap.Modal.getInstance(modal);
-        if (existingModalInstance) {
-            console.log("Closing existing script dialog modal to prevent stacking");
-            existingModalInstance.hide();
-            // Wait for the modal to fully hide before continuing
-            modal.addEventListener('hidden.bs.modal', () => {
-                this.showScriptDialogInternal(dialog);
-            }, { once: true });
-            return;
-        }
-
-        this.showScriptDialogInternal(dialog);
-    }
-
-    showScriptDialogInternal(dialog) {
-        const modal = document.getElementById('scriptDialogModal');
-        const objectNameEl = document.getElementById('scriptDialogObjectName');
-        const ownerNameEl = document.getElementById('scriptDialogOwnerName');
-        const messageEl = document.getElementById('scriptDialogMessage');
-        const textInputDiv = document.getElementById('scriptTextInputDiv');
-        const textInput = document.getElementById('scriptTextInput');
-        const buttonsDiv = document.getElementById('scriptDialogButtons');
-        const sendBtn = document.getElementById('scriptDialogSend');
-        const ignoreBtn = document.getElementById('scriptDialogIgnore');
 
         // Set dialog content
         objectNameEl.textContent = dialog.objectName || 'Unknown Object';
@@ -2952,32 +3016,10 @@ class RadegastWebClient {
 
         if (!modal || !objectNameEl || !objectOwnerEl || !descriptionEl || !muteBtn || !denyBtn || !grantBtn) {
             console.error("Script permission modal elements not found");
+            // Mark as not showing so queue can continue
+            this.isShowingScriptPermission = false;
             return;
         }
-
-        // IMPORTANT: Hide any existing modal instances to prevent backdrop stacking
-        const existingModalInstance = bootstrap.Modal.getInstance(modal);
-        if (existingModalInstance) {
-            console.log("Closing existing script permission modal to prevent stacking");
-            existingModalInstance.hide();
-            // Wait for the modal to fully hide before continuing
-            modal.addEventListener('hidden.bs.modal', () => {
-                this.showScriptPermissionInternal(permission);
-            }, { once: true });
-            return;
-        }
-
-        this.showScriptPermissionInternal(permission);
-    }
-
-    showScriptPermissionInternal(permission) {
-        const modal = document.getElementById('scriptPermissionModal');
-        const objectNameEl = document.getElementById('permissionObjectName');
-        const objectOwnerEl = document.getElementById('permissionObjectOwner');
-        const descriptionEl = document.getElementById('permissionDescription');
-        const muteBtn = document.getElementById('scriptPermissionMute');
-        const denyBtn = document.getElementById('scriptPermissionDeny');
-        const grantBtn = document.getElementById('scriptPermissionGrant');
 
         // Set permission content
         objectNameEl.textContent = permission.objectName || 'Unknown Object';

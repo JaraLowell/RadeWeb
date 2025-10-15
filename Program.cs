@@ -109,7 +109,6 @@ builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
 
 // Register custom services - Use singleton for account management
-builder.Services.AddSingleton<IUnifiedDisplayNameService, UnifiedDisplayNameService>();
 builder.Services.AddSingleton<IAccountService, AccountService>();
 builder.Services.AddSingleton<INoticeService, NoticeService>();
 builder.Services.AddSingleton<IPresenceService, PresenceService>();
@@ -127,17 +126,13 @@ builder.Services.AddSingleton<IScriptDialogService, ScriptDialogService>();
 builder.Services.AddSingleton<IConnectionTrackingService, ConnectionTrackingService>();
 builder.Services.AddSingleton<IChatProcessingService, ChatProcessingService>();
 
-// Add legacy interface aliases for backward compatibility during transition
-builder.Services.AddSingleton<IGlobalDisplayNameCache>(provider => provider.GetRequiredService<IUnifiedDisplayNameService>() as IGlobalDisplayNameCache ?? throw new InvalidOperationException("UnifiedDisplayNameService must implement IGlobalDisplayNameCache"));
-builder.Services.AddSingleton<IDisplayNameService>(provider => 
-{
-    var unified = provider.GetRequiredService<IUnifiedDisplayNameService>();
-    return new DisplayNameServiceAdapter(unified);
-});
-builder.Services.AddSingleton<IPeriodicDisplayNameService>(provider => provider.GetRequiredService<IUnifiedDisplayNameService>() as IPeriodicDisplayNameService ?? throw new InvalidOperationException("UnifiedDisplayNameService must implement IPeriodicDisplayNameService"));
+// Display name services - Use the simpler, working approach
+builder.Services.AddSingleton<IGlobalDisplayNameCache, GlobalDisplayNameCache>();
+builder.Services.AddSingleton<IDisplayNameService, DisplayNameService>();
+builder.Services.AddSingleton<IPeriodicDisplayNameService, PeriodicDisplayNameService>();
 
 builder.Services.AddHostedService<RadegastBackgroundService>();
-builder.Services.AddHostedService<UnifiedDisplayNameService>();
+builder.Services.AddHostedService<PeriodicDisplayNameService>();
 
 // Add logging configuration with additional filters
 builder.Services.AddLogging(logging =>

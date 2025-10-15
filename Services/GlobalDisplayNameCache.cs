@@ -864,7 +864,8 @@ namespace RadegastWeb.Services
         {
             return string.IsNullOrWhiteSpace(nameValue) || 
                    nameValue.Equals("Loading...", StringComparison.OrdinalIgnoreCase) ||
-                   nameValue.Equals("???", StringComparison.OrdinalIgnoreCase);
+                   nameValue.Equals("???", StringComparison.OrdinalIgnoreCase) ||
+                   nameValue.Equals("Unknown User", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string FormatDisplayName(DisplayName displayName, NameDisplayMode mode)

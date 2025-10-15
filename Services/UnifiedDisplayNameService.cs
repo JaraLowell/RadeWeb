@@ -212,24 +212,55 @@ namespace RadegastWeb.Services
             if (!string.IsNullOrEmpty(cached) && cached != FallbackDisplayName)
                 return Task.FromResult(cached);
 
-            // Request if not cached or expired
+            // Request if not cached or expired, but don't wait for it
             if (!_globalNameCache.TryGetValue(avatarId, out var displayName) || 
                 DateTime.UtcNow - displayName.LastUpdated > _refreshInterval)
             {
-                _ = Task.Run(() => PreloadDisplayNamesAsync(new[] { avatarId }));
+                // Try to preload in background, but don't let failures affect the result
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await PreloadDisplayNamesAsync(new[] { avatarId });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Failed to preload display name for {AvatarId} - using fallback", avatarId);
+                    }
+                });
             }
 
-            return Task.FromResult(fallbackName ?? cached ?? FallbackDisplayName);
+            // If we have cached data but it's old, return it anyway rather than "Loading..."
+            if (displayName != null && !string.IsNullOrEmpty(displayName.DisplayNameValue) && displayName.DisplayNameValue != FallbackDisplayName)
+            {
+                return Task.FromResult(GetFormattedDisplayName(displayName, mode));
+            }
+
+            // Return fallback name immediately instead of "Loading..."
+            return Task.FromResult(fallbackName ?? FallbackDisplayName);
+        }
+
+        private string GetFormattedDisplayName(DisplayName displayName, NameDisplayMode mode)
+        {
+            return mode switch
+            {
+                NameDisplayMode.DisplayNameAndUserName => GetDisplayNameAndUserName(displayName),
+                NameDisplayMode.Smart => GetSmartDisplayName(displayName),
+                NameDisplayMode.OnlyDisplayName => displayName.DisplayNameValue ?? displayName.LegacyFullName ?? FallbackDisplayName,
+                NameDisplayMode.Standard => displayName.LegacyFullName ?? FallbackDisplayName,
+                _ => GetSmartDisplayName(displayName)
+            };
         }
 
         public Task<string> GetLegacyNameAsync(string avatarId, string? fallbackName = null)
         {
             if (_globalNameCache.TryGetValue(avatarId, out var displayName))
             {
-                if (!string.IsNullOrEmpty(displayName.LegacyFullName))
+                if (!string.IsNullOrEmpty(displayName.LegacyFullName) && displayName.LegacyFullName != FallbackDisplayName)
                     return Task.FromResult(displayName.LegacyFullName);
             }
 
+            // Return fallback immediately instead of trying to load if cache miss
             return Task.FromResult(fallbackName ?? FallbackDisplayName);
         }
 
@@ -237,10 +268,11 @@ namespace RadegastWeb.Services
         {
             if (_globalNameCache.TryGetValue(avatarId, out var displayName))
             {
-                if (!string.IsNullOrEmpty(displayName.UserName))
+                if (!string.IsNullOrEmpty(displayName.UserName) && displayName.UserName != FallbackDisplayName)
                     return Task.FromResult(displayName.UserName);
             }
 
+            // Return fallback immediately instead of trying to load if cache miss
             return Task.FromResult(fallbackName ?? FallbackDisplayName);
         }
 
@@ -404,14 +436,38 @@ namespace RadegastWeb.Services
             if (!validIds.Any())
                 return;
 
-            foreach (var batch in validIds.Chunk(MaxRequestsPerBatch))
+            if (_isDisposing)
             {
-                await _requestWriter.WriteAsync(new DisplayNameRequest
+                _logger.LogDebug("Cannot preload display names - service is disposing");
+                return;
+            }
+
+            try
+            {
+                foreach (var batch in validIds.Chunk(MaxRequestsPerBatch))
                 {
-                    AvatarIds = batch.ToList(),
-                    RequestingAccountId = Guid.Empty,
-                    Priority = RequestPriority.Normal
-                });
+                    // Check if we can write to the channel
+                    if (!await _requestWriter.WaitToWriteAsync())
+                    {
+                        _logger.LogWarning("Request channel closed while attempting to preload display names");
+                        break;
+                    }
+
+                    await _requestWriter.WriteAsync(new DisplayNameRequest
+                    {
+                        AvatarIds = batch.ToList(),
+                        RequestingAccountId = Guid.Empty,
+                        Priority = RequestPriority.Normal
+                    });
+                }
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("completed"))
+            {
+                _logger.LogWarning("Cannot preload display names - request channel has been completed. Service may be shutting down.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error preloading display names for {Count} avatar IDs", validIds.Count);
             }
         }
 
