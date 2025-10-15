@@ -265,8 +265,9 @@ namespace RadegastWeb.Services
                 var aiChatService = scope.ServiceProvider.GetRequiredService<IAiChatService>();
                 var chatHistoryService = scope.ServiceProvider.GetRequiredService<IChatHistoryService>();
                 var scriptDialogService = scope.ServiceProvider.GetRequiredService<IScriptDialogService>();
+                var chatProcessingService = scope.ServiceProvider.GetRequiredService<IChatProcessingService>();
                 
-                var instance = new WebRadegastInstance(account, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService);
+                var instance = new WebRadegastInstance(account, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, chatProcessingService);
                 
                 var loginResult = await instance.LoginAsync();
                 

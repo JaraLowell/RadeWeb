@@ -105,23 +105,20 @@ namespace RadegastWeb.Services
             }
         }
 
-        private async void OnChatReceived(object? sender, ChatMessageDto chatMessage)
+        private void OnChatReceived(object? sender, ChatMessageDto chatMessage)
         {
             try
             {
-                // Save chat message to database using scoped service
-                using var scope = _serviceProvider.CreateScope();
-                var chatHistoryService = scope.ServiceProvider.GetRequiredService<IChatHistoryService>();
-                await chatHistoryService.SaveChatMessageAsync(chatMessage);
+                // The unified ChatProcessingService now handles database saving, broadcasting, AI, and Corrade processing
+                // This event handler is kept for any additional processing or backwards compatibility
+                // The actual processing is now done in WebRadegastInstance using ChatProcessingService
                 
-                // Broadcast to connected clients
-                await _hubContext.Clients
-                    .Group($"account_{chatMessage.AccountId}")
-                    .ReceiveChat(chatMessage);
+                _logger.LogDebug("Chat message received via event (processing handled by ChatProcessingService): {SenderName} in {ChatType}", 
+                    chatMessage.SenderName, chatMessage.ChatType);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error broadcasting chat message");
+                _logger.LogError(ex, "Error in chat received event handler");
             }
         }
 
