@@ -16,6 +16,7 @@ namespace RadegastWeb.Core
         private readonly IGroupService _groupService;
         private readonly IGlobalDisplayNameCache _globalDisplayNameCache;
         private readonly IStatsService _statsService;
+        private readonly ICorradeService _corradeService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -54,7 +55,7 @@ namespace RadegastWeb.Core
         public event EventHandler<ChatSessionDto>? ChatSessionUpdated;
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -64,6 +65,7 @@ namespace RadegastWeb.Core
             _groupService = groupService;
             _globalDisplayNameCache = globalDisplayNameCache;
             _statsService = statsService;
+            _corradeService = corradeService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -1540,6 +1542,32 @@ namespace RadegastWeb.Core
                         });
                     }
                 }
+            }
+            
+            // Check for Corrade whisper commands (only for avatar chat, not objects)
+            if (e.SourceType == ChatSourceType.Agent && 
+                e.Type == ChatType.Whisper && 
+                _corradeService.IsEnabled &&
+                _corradeService.IsWhisperCorradeCommand(e.Message))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var result = await _corradeService.ProcessWhisperCommandAsync(
+                            Guid.Parse(_accountId), 
+                            e.SourceID.ToString(), 
+                            senderDisplayName, 
+                            e.Message);
+                        
+                        _logger.LogInformation("Processed Corrade whisper command from {SenderName}: Success={Success}, Message={Message}", 
+                            senderDisplayName, result.Success, result.Message);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing Corrade whisper command from {SenderName}", senderDisplayName);
+                    }
+                });
             }
             
             // Process any SLURLs in the message
