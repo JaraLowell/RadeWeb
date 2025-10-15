@@ -20,7 +20,12 @@ namespace RadegastWeb.Services
         private AiBotConfig? _cachedConfig;
         private readonly object _configLock = new();
         private DateTime _configLastLoaded = DateTime.MinValue;
+        private DateTime _configLastFailedLoad = DateTime.MinValue;
+        private bool _configLoadFailed = false;
+        private bool _configFileNotFound = false;
         private static readonly TimeSpan ConfigCacheTimeout = TimeSpan.FromMinutes(5);
+        private static readonly TimeSpan ConfigRetryAfterFailure = TimeSpan.FromMinutes(15);
+        private static readonly TimeSpan ConfigRetryAfterFileNotFound = TimeSpan.FromHours(1);
         private readonly Random _random = new();
 
         public AiChatService(
@@ -182,6 +187,12 @@ namespace RadegastWeb.Services
 
         public async Task ReloadConfigurationAsync()
         {
+            lock (_configLock)
+            {
+                // Reset failure flags to force immediate reload
+                _configLoadFailed = false;
+                _configFileNotFound = false;
+            }
             await LoadConfigurationAsync();
         }
 
@@ -194,10 +205,31 @@ namespace RadegastWeb.Services
         {
             lock (_configLock)
             {
-                if (_cachedConfig == null || DateTime.UtcNow - _configLastLoaded > ConfigCacheTimeout)
+                var now = DateTime.UtcNow;
+                
+                // If we have a valid cached config and it's not expired, return it
+                if (_cachedConfig != null && !_configLoadFailed && 
+                    now - _configLastLoaded <= ConfigCacheTimeout)
                 {
-                    _ = Task.Run(LoadConfigurationAsync);
+                    return _cachedConfig;
                 }
+                
+                // If config loading previously failed, check if enough time has passed for a retry
+                if (_configLoadFailed)
+                {
+                    TimeSpan retryInterval = _configFileNotFound ? ConfigRetryAfterFileNotFound : ConfigRetryAfterFailure;
+                    if (now - _configLastFailedLoad < retryInterval)
+                    {
+                        // Not enough time has passed, return the cached config (which might be null)
+                        return _cachedConfig;
+                    }
+                    // Reset failure flags to allow retry
+                    _configLoadFailed = false;
+                    _configFileNotFound = false;
+                }
+                
+                // Time to reload configuration
+                _ = Task.Run(LoadConfigurationAsync);
                 return _cachedConfig;
             }
         }
@@ -208,11 +240,15 @@ namespace RadegastWeb.Services
             {
                 if (!File.Exists(_configPath))
                 {
-                    _logger.LogDebug("AI bot configuration file not found at {ConfigPath}", _configPath);
+                    _logger.LogDebug("AI bot configuration file not found at {ConfigPath}. Will retry in {RetryHours} hours.", 
+                        _configPath, ConfigRetryAfterFileNotFound.TotalHours);
                     lock (_configLock)
                     {
                         _cachedConfig = null;
                         _configLastLoaded = DateTime.UtcNow;
+                        _configLoadFailed = true;
+                        _configFileNotFound = true;
+                        _configLastFailedLoad = DateTime.UtcNow;
                     }
                     return;
                 }
@@ -228,18 +264,24 @@ namespace RadegastWeb.Services
                 {
                     _cachedConfig = config;
                     _configLastLoaded = DateTime.UtcNow;
+                    _configLoadFailed = false;
+                    _configFileNotFound = false;
                 }
 
-                _logger.LogInformation("AI bot configuration loaded. Enabled: {Enabled}, Avatar: {AvatarName}", 
+                _logger.LogInformation("AI bot configuration loaded successfully. Enabled: {Enabled}, Avatar: {AvatarName}", 
                     config?.Enabled, config?.AvatarName);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error loading AI bot configuration from {ConfigPath}", _configPath);
+                _logger.LogError(ex, "Error loading AI bot configuration from {ConfigPath}. Will retry in {RetryMinutes} minutes.", 
+                    _configPath, ConfigRetryAfterFailure.TotalMinutes);
                 lock (_configLock)
                 {
                     _cachedConfig = null;
                     _configLastLoaded = DateTime.UtcNow;
+                    _configLoadFailed = true;
+                    _configFileNotFound = false;
+                    _configLastFailedLoad = DateTime.UtcNow;
                 }
             }
         }
