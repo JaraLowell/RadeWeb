@@ -45,17 +45,21 @@ RadegastWeb is a modern, web-based Second Life client inspired by the original R
 
 1. **Clone and Navigate**
    ```powershell
-   cd RadegastWeb
+   git clone https://github.com/JaraLowell/RadeWeb.git
+   ```
+
+   ```powershell
+   cd RadeWeb
    ```
 
 2. **Restore Dependencies**
    ```powershell
-   dotnet restore
+   dotnet restore RadeWeb.sln
    ```
 
 3. **Build the Project**
    ```powershell
-   dotnet build
+   dotnet build RadeWeb.sln
    ```
 
 4. **Run the Application**
@@ -64,12 +68,9 @@ RadegastWeb is a modern, web-based Second Life client inspired by the original R
    ```
 
 5. **Open in Browser**
-   - Main application: `http://localhost:5269`
-   - Login page: `http://localhost:5269/login.html`
-   - Statistics dashboard: `http://localhost:5269/stats.html`
-   - Corrade plugin management: `http://localhost:5269/corrade.html`
-   - API documentation: `http://localhost:5269/swagger`
-   - HTTPS version: `https://localhost:7077`
+   - Main application: `http://localhost:15269`
+   - Login page: `http://localhost:15269/login.html`
+   - Statistics dashboard: `http://localhost:15269/stats.html`
 
 ### Using VS Code
 
@@ -381,7 +382,7 @@ Both plugins are designed with security in mind and include comprehensive loggin
 
 ### Building
 ```powershell
-dotnet build
+dotnet build RadeWeb.sln
 ```
 
 ### Running Tests
