@@ -45,6 +45,8 @@ namespace RadegastWeb.Controllers
                 // Remove passwords from response for security
                 var safeConfig = new CorradeConfig
                 {
+                    LinkedAccountId = config.LinkedAccountId,
+                    AllowObjectCommands = config.AllowObjectCommands,
                     Groups = config.Groups.Select(g => new CorradeGroup
                     {
                         GroupUuid = g.GroupUuid,
@@ -83,6 +85,15 @@ namespace RadegastWeb.Controllers
                 if (config.Groups == null)
                 {
                     return BadRequest("Groups configuration is required");
+                }
+
+                // Validate LinkedAccountId if provided
+                if (!string.IsNullOrWhiteSpace(config.LinkedAccountId))
+                {
+                    if (!System.Guid.TryParse(config.LinkedAccountId, out _))
+                    {
+                        return BadRequest("LinkedAccountId must be a valid GUID format");
+                    }
                 }
 
                 // Validate each group
@@ -286,6 +297,8 @@ namespace RadegastWeb.Controllers
                 var status = new
                 {
                     IsEnabled = _corradeService.IsEnabled,
+                    LinkedAccountId = config.LinkedAccountId,
+                    AllowObjectCommands = config.AllowObjectCommands,
                     GroupCount = config.Groups.Count,
                     Groups = config.Groups.Select(g => new
                     {

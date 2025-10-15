@@ -13,6 +13,19 @@ namespace RadegastWeb.Services
         bool IsEnabled { get; }
 
         /// <summary>
+        /// Check if this account should process Corrade whisper commands
+        /// </summary>
+        /// <param name="accountId">The account ID to check</param>
+        /// <returns>True if this account should process Corrade commands</returns>
+        Task<bool> ShouldProcessWhispersForAccountAsync(Guid accountId);
+
+        /// <summary>
+        /// Check if object commands are allowed based on configuration
+        /// </summary>
+        /// <returns>True if object commands are allowed</returns>
+        Task<bool> AreObjectCommandsAllowedAsync();
+
+        /// <summary>
         /// Processes an incoming whisper message to check if it's a Corrade command
         /// </summary>
         /// <param name="accountId">The account ID that received the whisper</param>

@@ -8,6 +8,8 @@ The Corrade plugin enables RadegastWeb to respond to whisper commands in Second 
 
 ## Features
 
+- **Account-Specific Processing**: Link Corrade to a specific account to avoid processing whispers on all logged-in accounts
+- **Object Command Support**: Optionally allow objects (not just avatars) to send Corrade commands
 - **Automatic Activation**: Plugin only runs when groups are configured
 - **Whisper Command Processing**: Automatically detects and processes Corrade commands sent via whisper
 - **Multi-Entity Support**: Send messages to local chat, groups, or individual avatars
@@ -58,9 +60,19 @@ The plugin ships with an empty configuration file (`data/corrade.json`):
 
 ```json
 {
+  "linkedAccountId": null,
+  "allowObjectCommands": false,
   "groups": []
 }
 ```
+
+### Configuration Options
+
+- **linkedAccountId**: (Optional) UUID of the specific account that should process Corrade whispers. If `null` or empty, all accounts will process whispers (legacy behavior). This is useful when you have multiple accounts logged in but only want one specific account to handle Corrade commands.
+
+- **allowObjectCommands**: (Boolean) Whether to allow objects (scripted objects, HUDs, etc.) to send Corrade commands via whispers. Default is `false` for security reasons. When enabled, both avatars and objects can send commands.
+
+- **groups**: Array of group configurations that can authorize Corrade commands.
 
 ### First Group Setup
 
@@ -80,6 +92,8 @@ Once configured, `data/corrade.json` will look like this:
 
 ```json
 {
+  "linkedAccountId": "12345678-abcd-1234-abcd-123456789012",
+  "allowObjectCommands": true,
   "groups": [
     {
       "groupUuid": "12345678-1234-1234-1234-123456789abc",
@@ -108,6 +122,49 @@ Each group configuration supports these permissions:
 Examples:
 - `command=tell&group=ABC123&password=pass&entity=group&message=Hello!` → Sends to group ABC123
 - `command=tell&group=ABC123&password=pass&entity=group&target=XYZ789&message=Hello!` → Sends to group XYZ789
+
+## Account-Specific Configuration
+
+### Linking Corrade to a Specific Account
+
+When you have multiple RadegastWeb accounts logged in simultaneously, you may want only one specific account to process Corrade whisper commands. This prevents command processing overhead on all accounts and provides clearer control.
+
+**To link Corrade to a specific account:**
+
+1. Navigate to the web interface at `/corrade.html`
+2. In the configuration section, set the "Linked Account ID" field to the UUID of the account that should handle Corrade commands
+3. Save the configuration
+
+**Examples:**
+- **Linked Account**: Only account `12345678-abcd-1234-abcd-123456789012` processes whispers
+- **No Linked Account** (null/empty): All logged-in accounts process whispers (legacy behavior)
+
+### Object Command Support
+
+By default, only avatars can send Corrade whisper commands. However, you can enable object support to allow scripted objects, HUDs, and other non-avatar sources to send commands.
+
+**Security Considerations for Object Commands:**
+- Objects can be created by any user in areas that allow building
+- Objects can send automated/scripted commands potentially at high frequency
+- Enable this feature only if you trust the environment and have appropriate group security
+
+**To enable object commands:**
+
+1. Set `allowObjectCommands` to `true` in the configuration
+2. Objects can now whisper Corrade commands using the same format as avatars
+3. All normal security checks (group membership, passwords, permissions) still apply
+
+## Command Sources
+
+With the new configuration options, Corrade commands can come from:
+
+1. **Avatars** (always supported): Regular users whispering commands
+2. **Objects** (when enabled): Scripted objects, HUDs, vehicles, etc.
+
+All command sources must still:
+- Send valid command syntax
+- Provide correct group UUID and password
+- Meet all security requirements (the receiving account must be in the authorizing group)
 
 ## Security Features
 
@@ -141,6 +198,8 @@ Get plugin status and group count.
 ```json
 {
   "isEnabled": true,
+  "linkedAccountId": "12345678-abcd-1234-abcd-123456789012",
+  "allowObjectCommands": true,
   "groupCount": 1,
   "groups": [...],
   "lastUpdated": "2025-10-15T10:30:00Z"

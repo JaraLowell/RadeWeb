@@ -1548,9 +1548,8 @@ namespace RadegastWeb.Core
                 }
             }
             
-            // Check for Corrade whisper commands (only for avatar chat, not objects)
-            if (e.SourceType == ChatSourceType.Agent && 
-                e.Type == ChatType.Whisper && 
+            // Check for Corrade whisper commands (avatars and optionally objects based on config)
+            if (e.Type == ChatType.Whisper && 
                 _corradeService.IsEnabled &&
                 _corradeService.IsWhisperCorradeCommand(e.Message))
             {
@@ -1558,18 +1557,47 @@ namespace RadegastWeb.Core
                 {
                     try
                     {
+                        // Check if this account should process Corrade whispers
+                        var shouldProcess = await _corradeService.ShouldProcessWhispersForAccountAsync(Guid.Parse(_accountId));
+                        if (!shouldProcess)
+                        {
+                            _logger.LogDebug("Corrade whisper ignored - account {AccountId} not configured for Corrade processing", _accountId);
+                            return;
+                        }
+
+                        // Check source type permissions
+                        if (e.SourceType == ChatSourceType.Object)
+                        {
+                            var allowObjects = await _corradeService.AreObjectCommandsAllowedAsync();
+                            if (!allowObjects)
+                            {
+                                _logger.LogDebug("Corrade whisper from object ignored - object commands not enabled in config");
+                                return;
+                            }
+                            _logger.LogInformation("Processing Corrade whisper command from object: {SenderName}", senderDisplayName);
+                        }
+                        else if (e.SourceType == ChatSourceType.Agent)
+                        {
+                            _logger.LogInformation("Processing Corrade whisper command from avatar: {SenderName}", senderDisplayName);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("Corrade whisper ignored - unsupported source type: {SourceType}", e.SourceType);
+                            return;
+                        }
+
                         var result = await _corradeService.ProcessWhisperCommandAsync(
                             Guid.Parse(_accountId), 
                             e.SourceID.ToString(), 
                             senderDisplayName, 
                             e.Message);
                         
-                        _logger.LogInformation("Processed Corrade whisper command from {SenderName}: Success={Success}, Message={Message}", 
-                            senderDisplayName, result.Success, result.Message);
+                        _logger.LogInformation("Processed Corrade whisper command from {SenderName} ({SourceType}): Success={Success}, Message={Message}", 
+                            senderDisplayName, e.SourceType, result.Success, result.Message);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error processing Corrade whisper command from {SenderName}", senderDisplayName);
+                        _logger.LogError(ex, "Error processing Corrade whisper command from {SenderName} ({SourceType})", senderDisplayName, e.SourceType);
                     }
                 });
             }

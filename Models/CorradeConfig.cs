@@ -7,6 +7,18 @@ namespace RadegastWeb.Models
     /// </summary>
     public class CorradeConfig
     {
+        /// <summary>
+        /// The account ID that this Corrade instance is linked to.
+        /// Only whispers received by this account will be processed for Corrade commands.
+        /// If null or empty, all accounts will process whispers (legacy behavior).
+        /// </summary>
+        public string? LinkedAccountId { get; set; }
+        
+        /// <summary>
+        /// Whether to allow objects (not just avatars) to send Corrade commands via whispers
+        /// </summary>
+        public bool AllowObjectCommands { get; set; } = false;
+        
         public List<CorradeGroup> Groups { get; set; } = new();
     }
 

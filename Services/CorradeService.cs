@@ -58,6 +58,54 @@ namespace RadegastWeb.Services
 
         public bool IsEnabled => _isEnabled;
 
+        /// <summary>
+        /// Check if this account should process Corrade whisper commands
+        /// </summary>
+        /// <param name="accountId">The account ID to check</param>
+        /// <returns>True if this account should process Corrade commands</returns>
+        public async Task<bool> ShouldProcessWhispersForAccountAsync(Guid accountId)
+        {
+            if (!_isEnabled)
+                return false;
+
+            try
+            {
+                var config = await LoadConfigurationAsync();
+                
+                // If no specific account is configured, allow all accounts (legacy behavior)
+                if (string.IsNullOrWhiteSpace(config.LinkedAccountId))
+                {
+                    return true;
+                }
+                
+                // Only process for the specifically linked account
+                return config.LinkedAccountId.Equals(accountId.ToString(), StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking if account {AccountId} should process Corrade whispers", accountId);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Check if object commands are allowed based on configuration
+        /// </summary>
+        /// <returns>True if object commands are allowed</returns>
+        public async Task<bool> AreObjectCommandsAllowedAsync()
+        {
+            try
+            {
+                var config = await LoadConfigurationAsync();
+                return config.AllowObjectCommands;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking if object commands are allowed");
+                return false;
+            }
+        }
+
         public bool IsWhisperCorradeCommand(string message)
         {
             if (string.IsNullOrWhiteSpace(message))
