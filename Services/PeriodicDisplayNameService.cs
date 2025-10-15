@@ -120,7 +120,7 @@ namespace RadegastWeb.Services
                 }
 
                 var duration = DateTime.UtcNow - startTime;
-                _logger.LogInformation(
+                _logger.LogDebug(
                     "Completed periodic display name processing cycle: {TotalProcessed} avatars processed, {TotalRequested} names requested in {Duration:F2}s",
                     totalProcessed, totalRequested, duration.TotalSeconds);
             }

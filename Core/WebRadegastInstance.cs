@@ -1715,8 +1715,7 @@ namespace RadegastWeb.Core
                         // Try to join the group chat if we're not already in it
                         RequestJoinGroupChatIfNeeded(e.IM.IMSessionID);
                         
-                        _logger.LogInformation("Using cached group name {GroupName} for group {GroupId} (loaded from persistent cache)", 
-                            cachedGroupName, e.IM.IMSessionID);
+                        _logger.LogDebug("Using cached group name {GroupName} for group {GroupId} (loaded from persistent cache)", cachedGroupName, e.IM.IMSessionID);
                     }
                     // Then check our in-memory groups cache for known groups
                     else if (_groups.ContainsKey(e.IM.IMSessionID))

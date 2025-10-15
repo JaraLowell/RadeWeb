@@ -191,7 +191,7 @@ namespace RadegastWeb.Services
 
         public Task HandleBrowserCloseAsync()
         {
-            _logger.LogInformation("Browser closed - automatic away status disabled, users can set status manually");
+            _logger.LogDebug("Browser closed - automatic away status disabled, users can set status manually");
 
             // Note: Removed automatic setting of accounts to away on browser close.
             // Users can manually set away/busy status as desired using the UI controls.
@@ -200,7 +200,7 @@ namespace RadegastWeb.Services
 
         public Task HandleBrowserReturnAsync()
         {
-            _logger.LogInformation("Browser returned - automatic status changes disabled, users can set status manually");
+            _logger.LogDebug("Browser returned - automatic status changes disabled, users can set status manually");
 
             // Note: Removed automatic clearing of away status and setting busy on browser return.
             // Users can manually manage their away/busy status as desired using the UI controls.
