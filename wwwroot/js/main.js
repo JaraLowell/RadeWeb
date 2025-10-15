@@ -19,6 +19,8 @@ class RadegastWebClient {
         this.scriptPermissionQueue = []; // Queue for script permissions
         this.isShowingScriptDialog = false; // Track if a script dialog is currently being shown
         this.isShowingScriptPermission = false; // Track if a script permission is currently being shown
+        this.currentDialogId = null; // Track the currently displayed dialog ID
+        this.currentPermissionId = null; // Track the currently displayed permission ID
         
         this.initializeSignalR();
         this.bindEvents();
@@ -1158,6 +1160,8 @@ class RadegastWebClient {
         this.scriptPermissionQueue = [];
         this.isShowingScriptDialog = false;
         this.isShowingScriptPermission = false;
+        this.currentDialogId = null;
+        this.currentPermissionId = null;
         
         // Hide any open modals
         const scriptDialogModal = document.getElementById('scriptDialogModal');
@@ -2788,6 +2792,13 @@ class RadegastWebClient {
             return;
         }
         
+        // Check if this dialog is already in the queue to prevent duplicates
+        const existingDialog = this.scriptDialogQueue.find(d => d.dialogId === dialog.dialogId);
+        if (existingDialog) {
+            console.log(`Dialog ${dialog.dialogId} already in queue, ignoring duplicate`);
+            return;
+        }
+        
         // Add dialog to queue
         this.scriptDialogQueue.push(dialog);
         console.log("Script dialog added to queue. Queue length:", this.scriptDialogQueue.length);
@@ -2797,41 +2808,58 @@ class RadegastWebClient {
     }
 
     handleScriptDialogClosed(accountId, dialogId) {
-        console.log("Script dialog closed:", dialogId);
+        console.log(`Script dialog closed: ${dialogId}, current displayed: ${this.currentDialogId}`);
         
-        // Mark that we're no longer showing a script dialog
-        this.isShowingScriptDialog = false;
+        // Remove any matching dialog from the queue to prevent it from showing again
+        const initialQueueLength = this.scriptDialogQueue.length;
+        this.scriptDialogQueue = this.scriptDialogQueue.filter(dialog => dialog.dialogId !== dialogId);
+        const removedCount = initialQueueLength - this.scriptDialogQueue.length;
         
-        // Hide any open dialog modals
-        const dialogModal = document.getElementById('scriptDialogModal');
-        if (dialogModal) {
-            const modal = bootstrap.Modal.getInstance(dialogModal);
-            if (modal) {
-                modal.hide();
-            }
+        if (removedCount > 0) {
+            console.log(`Removed ${removedCount} dialog(s) with ID ${dialogId} from queue. Queue length now: ${this.scriptDialogQueue.length}`);
         }
         
-        // Clean up any stray modal backdrops
-        this.cleanupModalBackdrops();
-        
-        // Process next dialog in queue after a short delay
-        setTimeout(() => {
-            this.processScriptDialogQueue();
-        }, 100);
+        // Only reset the state if this is the currently displayed dialog
+        if (this.currentDialogId === dialogId) {
+            // Mark that we're no longer showing a script dialog
+            this.isShowingScriptDialog = false;
+            this.currentDialogId = null;
+            
+            // Hide any open dialog modals
+            const dialogModal = document.getElementById('scriptDialogModal');
+            if (dialogModal) {
+                const modal = bootstrap.Modal.getInstance(dialogModal);
+                if (modal) {
+                    modal.hide();
+                }
+            }
+            
+            // Clean up any stray modal backdrops
+            this.cleanupModalBackdrops();
+            
+            // Process next dialog in queue after a short delay
+            setTimeout(() => {
+                this.processScriptDialogQueue();
+            }, 100);
+        } else {
+            console.log(`Dialog ${dialogId} was closed but it's not the current dialog (${this.currentDialogId}), not processing queue`);
+        }
     }
 
     processScriptDialogQueue() {
         // Don't show new dialog if one is already being shown or queue is empty
         if (this.isShowingScriptDialog || this.scriptDialogQueue.length === 0) {
+            console.log(`Cannot process dialog queue: isShowing=${this.isShowingScriptDialog}, queueLength=${this.scriptDialogQueue.length}, currentDialogId=${this.currentDialogId}`);
             return;
         }
         
         // Get the next dialog from the queue
         const dialog = this.scriptDialogQueue.shift();
-        console.log("Processing script dialog from queue. Remaining in queue:", this.scriptDialogQueue.length);
+        console.log(`Processing script dialog from queue: ${dialog.dialogId}. Remaining in queue: ${this.scriptDialogQueue.length}`);
         
         // Mark that we're showing a dialog
         this.isShowingScriptDialog = true;
+        this.currentDialogId = dialog.dialogId;
         
         // Clean up any stray modal backdrops before showing new dialog
         this.cleanupModalBackdrops();
@@ -2847,6 +2875,13 @@ class RadegastWebClient {
             return;
         }
         
+        // Check if this permission is already in the queue to prevent duplicates
+        const existingPermission = this.scriptPermissionQueue.find(p => p.requestId === permission.requestId);
+        if (existingPermission) {
+            console.log(`Permission ${permission.requestId} already in queue, ignoring duplicate`);
+            return;
+        }
+        
         // Add permission to queue
         this.scriptPermissionQueue.push(permission);
         console.log("Script permission added to queue. Queue length:", this.scriptPermissionQueue.length);
@@ -2856,41 +2891,58 @@ class RadegastWebClient {
     }
 
     handleScriptPermissionClosed(accountId, requestId) {
-        console.log("Script permission closed:", requestId);
+        console.log(`Script permission closed: ${requestId}, current displayed: ${this.currentPermissionId}`);
         
-        // Mark that we're no longer showing a script permission
-        this.isShowingScriptPermission = false;
+        // Remove any matching permission from the queue to prevent it from showing again
+        const initialQueueLength = this.scriptPermissionQueue.length;
+        this.scriptPermissionQueue = this.scriptPermissionQueue.filter(permission => permission.requestId !== requestId);
+        const removedCount = initialQueueLength - this.scriptPermissionQueue.length;
         
-        // Hide any open permission modals
-        const permissionModal = document.getElementById('scriptPermissionModal');
-        if (permissionModal) {
-            const modal = bootstrap.Modal.getInstance(permissionModal);
-            if (modal) {
-                modal.hide();
-            }
+        if (removedCount > 0) {
+            console.log(`Removed ${removedCount} permission(s) with ID ${requestId} from queue. Queue length now: ${this.scriptPermissionQueue.length}`);
         }
         
-        // Clean up any stray modal backdrops
-        this.cleanupModalBackdrops();
-        
-        // Process next permission in queue after a short delay
-        setTimeout(() => {
-            this.processScriptPermissionQueue();
-        }, 100);
+        // Only reset the state if this is the currently displayed permission
+        if (this.currentPermissionId === requestId) {
+            // Mark that we're no longer showing a script permission
+            this.isShowingScriptPermission = false;
+            this.currentPermissionId = null;
+            
+            // Hide any open permission modals
+            const permissionModal = document.getElementById('scriptPermissionModal');
+            if (permissionModal) {
+                const modal = bootstrap.Modal.getInstance(permissionModal);
+                if (modal) {
+                    modal.hide();
+                }
+            }
+            
+            // Clean up any stray modal backdrops
+            this.cleanupModalBackdrops();
+            
+            // Process next permission in queue after a short delay
+            setTimeout(() => {
+                this.processScriptPermissionQueue();
+            }, 100);
+        } else {
+            console.log(`Permission ${requestId} was closed but it's not the current permission (${this.currentPermissionId}), not processing queue`);
+        }
     }
 
     processScriptPermissionQueue() {
         // Don't show new permission if one is already being shown or queue is empty
         if (this.isShowingScriptPermission || this.scriptPermissionQueue.length === 0) {
+            console.log(`Cannot process permission queue: isShowing=${this.isShowingScriptPermission}, queueLength=${this.scriptPermissionQueue.length}, currentPermissionId=${this.currentPermissionId}`);
             return;
         }
         
         // Get the next permission from the queue
         const permission = this.scriptPermissionQueue.shift();
-        console.log("Processing script permission from queue. Remaining in queue:", this.scriptPermissionQueue.length);
+        console.log(`Processing script permission from queue: ${permission.requestId}. Remaining in queue: ${this.scriptPermissionQueue.length}`);
         
         // Mark that we're showing a permission
         this.isShowingScriptPermission = true;
+        this.currentPermissionId = permission.requestId;
         
         // Clean up any stray modal backdrops before showing new permission dialog
         this.cleanupModalBackdrops();
@@ -3126,6 +3178,8 @@ class RadegastWebClient {
     async respondToScriptDialog(dialogId, buttonIndex, buttonText, textInput = null) {
         if (!this.currentAccountId) return;
 
+        console.log(`Responding to script dialog: ${dialogId} with button ${buttonIndex} (${buttonText})`);
+
         try {
             const request = {
                 accountId: this.currentAccountId,
@@ -3137,6 +3191,10 @@ class RadegastWebClient {
 
             if (this.connection) {
                 await this.connection.invoke("RespondToScriptDialog", request);
+                
+                // Mark that we're no longer showing a script dialog
+                this.isShowingScriptDialog = false;
+                this.currentDialogId = null;
                 
                 // Immediately hide the modal after sending the response
                 const dialogModal = document.getElementById('scriptDialogModal');
@@ -3161,6 +3219,8 @@ class RadegastWebClient {
     async dismissScriptDialog(dialogId) {
         if (!this.currentAccountId) return;
 
+        console.log(`Dismissing script dialog: ${dialogId}`);
+
         try {
             const request = {
                 accountId: this.currentAccountId,
@@ -3169,6 +3229,10 @@ class RadegastWebClient {
 
             if (this.connection) {
                 await this.connection.invoke("DismissScriptDialog", request);
+                
+                // Mark that we're no longer showing a script dialog
+                this.isShowingScriptDialog = false;
+                this.currentDialogId = null;
                 
                 // Immediately hide the modal after sending the dismiss request
                 const dialogModal = document.getElementById('scriptDialogModal');
@@ -3193,6 +3257,8 @@ class RadegastWebClient {
     async respondToScriptPermission(requestId, action) {
         if (!this.currentAccountId) return;
 
+        console.log(`Responding to script permission: ${requestId} with action ${action}`);
+
         try {
             const request = {
                 accountId: this.currentAccountId,
@@ -3203,6 +3269,10 @@ class RadegastWebClient {
 
             if (this.connection) {
                 await this.connection.invoke("RespondToScriptPermission", request);
+                
+                // Mark that we're no longer showing a script permission
+                this.isShowingScriptPermission = false;
+                this.currentPermissionId = null;
                 
                 // Immediately hide the modal after sending the response
                 const permissionModal = document.getElementById('scriptPermissionModal');
