@@ -326,6 +326,77 @@
         </div>
     </div>
 
+    <!-- Script Dialog Modal -->
+    <div class="modal fade" id="scriptDialogModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-code me-2"></i>
+                        <span id="scriptDialogObjectName">Object</span>
+                    </h5>
+                    <small class="text-muted ms-2" id="scriptDialogOwnerName"></small>
+                </div>
+                <div class="modal-body">
+                    <div id="scriptDialogMessage" class="mb-3"></div>
+                    
+                    <!-- Text input for llTextBox dialogs -->
+                    <div id="scriptTextInputDiv" class="mb-3 d-none">
+                        <label for="scriptTextInput" class="form-label">Enter your response:</label>
+                        <input type="text" id="scriptTextInput" class="form-control" maxlength="1023" placeholder="Type your response here...">
+                        <div class="form-text">Maximum 1023 characters</div>
+                    </div>
+                    
+                    <!-- Buttons container for choice dialogs -->
+                    <div id="scriptDialogButtons" class="d-grid gap-2"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="scriptDialogIgnore">
+                        <i class="fas fa-times me-1"></i>Ignore
+                    </button>
+                    <button type="button" class="btn btn-primary d-none" id="scriptDialogSend">
+                        <i class="fas fa-paper-plane me-1"></i>Send
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script Permission Modal -->
+    <div class="modal fade" id="scriptPermissionModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title">
+                        <i class="fas fa-shield-alt me-2"></i>Script Permission Request
+                    </h5>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <strong id="permissionObjectName">Object</strong> owned by <strong id="permissionObjectOwner">Owner</strong> 
+                        is requesting permission to:
+                    </div>
+                    <div id="permissionDescription" class="mb-3"></div>
+                    <div class="text-muted small">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Only grant permissions to objects you trust. These permissions can affect your avatar and inventory.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-danger" id="scriptPermissionMute">
+                        <i class="fas fa-volume-mute me-1"></i>Mute Object
+                    </button>
+                    <button type="button" class="btn btn-danger" id="scriptPermissionDeny">
+                        <i class="fas fa-times me-1"></i>Deny
+                    </button>
+                    <button type="button" class="btn btn-success" id="scriptPermissionGrant">
+                        <i class="fas fa-check me-1"></i>Grant
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Loading Spinner -->
     <div id="loadingSpinner" class="d-none position-fixed top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center" style="background: rgba(0,0,0,0.5); z-index: 9999;">
         <div class="spinner-border text-light" role="status">

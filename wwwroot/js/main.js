@@ -151,6 +151,27 @@ class RadegastWebClient {
                 this.updatePresenceStatusDisplay(accountId, status, statusText);
             });
 
+            // Script dialog event handlers
+            this.connection.on("ScriptDialogReceived", (dialog) => {
+                this.handleScriptDialogReceived(dialog);
+            });
+
+            this.connection.on("ScriptDialogClosed", (accountId, dialogId) => {
+                this.handleScriptDialogClosed(accountId, dialogId);
+            });
+
+            this.connection.on("ScriptPermissionReceived", (permission) => {
+                this.handleScriptPermissionReceived(permission);
+            });
+
+            this.connection.on("ScriptPermissionClosed", (accountId, requestId) => {
+                this.handleScriptPermissionClosed(accountId, requestId);
+            });
+
+            this.connection.on("ScriptDialogError", (error) => {
+                this.showAlert("Script Dialog Error: " + error, "danger");
+            });
+
             await this.connection.start();
         } catch (err) {
             console.error("SignalR Connection Error:", err);
@@ -2707,6 +2728,350 @@ class RadegastWebClient {
             console.error("Error dismissing notice:", error);
             this.showAlert("Error dismissing notice", "danger");
         }
+    }
+
+    // Script Dialog Methods
+    handleScriptDialogReceived(dialog) {
+        console.log("Script dialog received:", dialog);
+        
+        // Only show dialogs for the current active account
+        if (dialog.accountId !== this.currentAccountId) {
+            return;
+        }
+        
+        this.showScriptDialog(dialog);
+    }
+
+    handleScriptDialogClosed(accountId, dialogId) {
+        console.log("Script dialog closed:", dialogId);
+        
+        // Hide any open dialog modals
+        const dialogModal = document.getElementById('scriptDialogModal');
+        if (dialogModal) {
+            const modal = bootstrap.Modal.getInstance(dialogModal);
+            if (modal) {
+                modal.hide();
+            }
+        }
+    }
+
+    handleScriptPermissionReceived(permission) {
+        console.log("Script permission received:", permission);
+        
+        // Only show permissions for the current active account
+        if (permission.accountId !== this.currentAccountId) {
+            return;
+        }
+        
+        this.showScriptPermission(permission);
+    }
+
+    handleScriptPermissionClosed(accountId, requestId) {
+        console.log("Script permission closed:", requestId);
+        
+        // Hide any open permission modals
+        const permissionModal = document.getElementById('scriptPermissionModal');
+        if (permissionModal) {
+            const modal = bootstrap.Modal.getInstance(permissionModal);
+            if (modal) {
+                modal.hide();
+            }
+        }
+    }
+
+    showScriptDialog(dialog) {
+        const modal = document.getElementById('scriptDialogModal');
+        const objectNameEl = document.getElementById('scriptDialogObjectName');
+        const ownerNameEl = document.getElementById('scriptDialogOwnerName');
+        const messageEl = document.getElementById('scriptDialogMessage');
+        const textInputDiv = document.getElementById('scriptTextInputDiv');
+        const textInput = document.getElementById('scriptTextInput');
+        const buttonsDiv = document.getElementById('scriptDialogButtons');
+        const sendBtn = document.getElementById('scriptDialogSend');
+        const ignoreBtn = document.getElementById('scriptDialogIgnore');
+
+        if (!modal || !objectNameEl || !ownerNameEl || !messageEl || !textInputDiv || !textInput || !buttonsDiv || !sendBtn || !ignoreBtn) {
+            console.error("Script dialog modal elements not found");
+            return;
+        }
+
+        // Set dialog content
+        objectNameEl.textContent = dialog.objectName || 'Unknown Object';
+        ownerNameEl.textContent = `owned by ${dialog.ownerName || 'Unknown'}`;
+        messageEl.innerHTML = this.escapeHtml(dialog.message || '').replace(/\n/g, '<br>');
+
+        // Clear previous content completely to prevent stacking
+        buttonsDiv.innerHTML = '';
+        textInput.value = '';
+        
+        // Remove any existing script dialog grids (extra safety)
+        const existingGrids = buttonsDiv.querySelectorAll('.script-dialog-grid');
+        existingGrids.forEach(grid => grid.remove());
+        
+        // Remove any existing buttons (extra safety)
+        const existingButtons = buttonsDiv.querySelectorAll('button');
+        existingButtons.forEach(btn => btn.remove());
+
+        if (dialog.isTextInput) {
+            // Show text input for llTextBox dialogs
+            textInputDiv.classList.remove('d-none');
+            buttonsDiv.classList.add('d-none');
+            sendBtn.classList.remove('d-none');
+            textInput.focus();
+
+            // Set up text input event handlers
+            const sendTextResponse = () => {
+                const responseText = textInput.value.trim();
+                this.respondToScriptDialog(dialog.dialogId, -1, '', responseText);
+            };
+
+            // Remove any existing event listeners
+            sendBtn.replaceWith(sendBtn.cloneNode(true));
+            const newSendBtn = document.getElementById('scriptDialogSend');
+            
+            newSendBtn.addEventListener('click', sendTextResponse);
+            textInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    sendTextResponse();
+                }
+            });
+        } else {
+            // Show buttons for choice dialogs
+            textInputDiv.classList.add('d-none');
+            buttonsDiv.classList.remove('d-none');
+            sendBtn.classList.add('d-none');
+
+            // Create buttons in Second Life grid layout
+            // SL Button Order:
+            // 9  10  11
+            // 6   7   8  
+            // 3   4   5
+            // 0   1   2
+            this.createDialogButtonGrid(buttonsDiv, dialog.buttons, dialog.dialogId);
+        }
+
+        // Set up ignore button
+        ignoreBtn.replaceWith(ignoreBtn.cloneNode(true));
+        const newIgnoreBtn = document.getElementById('scriptDialogIgnore');
+        newIgnoreBtn.addEventListener('click', () => {
+            this.dismissScriptDialog(dialog.dialogId);
+        });
+
+        // Show the modal
+        const modalInstance = new bootstrap.Modal(modal);
+        modalInstance.show();
+
+        // Store dialog data for later use
+        modal.dataset.dialogId = dialog.dialogId;
+        modal.dataset.accountId = dialog.accountId;
+    }
+
+    showScriptPermission(permission) {
+        const modal = document.getElementById('scriptPermissionModal');
+        const objectNameEl = document.getElementById('permissionObjectName');
+        const objectOwnerEl = document.getElementById('permissionObjectOwner');
+        const descriptionEl = document.getElementById('permissionDescription');
+        const muteBtn = document.getElementById('scriptPermissionMute');
+        const denyBtn = document.getElementById('scriptPermissionDeny');
+        const grantBtn = document.getElementById('scriptPermissionGrant');
+
+        if (!modal || !objectNameEl || !objectOwnerEl || !descriptionEl || !muteBtn || !denyBtn || !grantBtn) {
+            console.error("Script permission modal elements not found");
+            return;
+        }
+
+        // Set permission content
+        objectNameEl.textContent = permission.objectName || 'Unknown Object';
+        objectOwnerEl.textContent = permission.objectOwner || 'Unknown';
+        descriptionEl.innerHTML = `<strong>${this.escapeHtml(permission.permissionsDescription || 'unknown permissions')}</strong>`;
+
+        // Set up button event handlers
+        const setupButtonHandler = (button, action) => {
+            button.replaceWith(button.cloneNode(true));
+            const newButton = document.getElementById(button.id);
+            newButton.addEventListener('click', () => {
+                this.respondToScriptPermission(permission.requestId, action);
+            });
+        };
+
+        setupButtonHandler(muteBtn, 'mute');
+        setupButtonHandler(denyBtn, 'deny');
+        setupButtonHandler(grantBtn, 'grant');
+
+        // Show the modal
+        const modalInstance = new bootstrap.Modal(modal);
+        modalInstance.show();
+
+        // Store permission data for later use
+        modal.dataset.requestId = permission.requestId;
+        modal.dataset.accountId = permission.accountId;
+    }
+
+    createDialogButtonGrid(container, buttons, dialogId) {
+        // Clear the container completely to prevent stacking
+        container.innerHTML = '';
+        
+        // Remove any existing grid containers (extra safety)
+        const existingGrids = container.querySelectorAll('.script-dialog-grid');
+        existingGrids.forEach(grid => grid.remove());
+        
+        // Second Life button grid layout mapping
+        // Grid positions (row, col) to button indices:
+        const gridMap = [
+            [9, 10, 11],  // Top row
+            [6, 7, 8],    // Second row
+            [3, 4, 5],    // Third row
+            [0, 1, 2]     // Bottom row
+        ];
+        
+        // Create a 4x3 grid container
+        const gridContainer = document.createElement('div');
+        gridContainer.className = 'script-dialog-grid';
+        gridContainer.style.cssText = `
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(4, auto);
+            gap: 8px;
+            max-width: 300px;
+            margin: 0 auto;
+        `;
+        
+        // Create grid cells
+        for (let row = 0; row < 4; row++) {
+            let hasButtonsInRow = false;
+            
+            // Check if this row has any buttons
+            for (let col = 0; col < 3; col++) {
+                const buttonIndex = gridMap[row][col];
+                if (buttonIndex < buttons.length) {
+                    hasButtonsInRow = true;
+                    break;
+                }
+            }
+            
+            // Only create row if it has buttons
+            if (hasButtonsInRow) {
+                for (let col = 0; col < 3; col++) {
+                    const buttonIndex = gridMap[row][col];
+                    const gridCell = document.createElement('div');
+                    
+                    if (buttonIndex < buttons.length) {
+                        // Create button for this position
+                        const button = document.createElement('button');
+                        button.type = 'button';
+                        button.className = 'btn btn-outline-primary btn-sm';
+                        button.style.cssText = 'width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+                        button.textContent = buttons[buttonIndex];
+                        button.title = buttons[buttonIndex]; // Tooltip for long text
+                        
+                        button.addEventListener('click', () => {
+                            this.respondToScriptDialog(dialogId, buttonIndex, buttons[buttonIndex]);
+                        });
+                        
+                        gridCell.appendChild(button);
+                    } else {
+                        // Empty cell
+                        gridCell.style.visibility = 'hidden';
+                    }
+                    
+                    gridContainer.appendChild(gridCell);
+                }
+            }
+        }
+        
+        container.appendChild(gridContainer);
+    }
+
+    async respondToScriptDialog(dialogId, buttonIndex, buttonText, textInput = null) {
+        if (!this.currentAccountId) return;
+
+        try {
+            const request = {
+                accountId: this.currentAccountId,
+                dialogId: dialogId,
+                buttonIndex: buttonIndex,
+                buttonText: buttonText || '',
+                textInput: textInput
+            };
+
+            if (this.connection) {
+                await this.connection.invoke("RespondToScriptDialog", request);
+                
+                // Immediately hide the modal after sending the response
+                const dialogModal = document.getElementById('scriptDialogModal');
+                if (dialogModal) {
+                    const modal = bootstrap.Modal.getInstance(dialogModal);
+                    if (modal) {
+                        modal.hide();
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("Error responding to script dialog:", error);
+            this.showAlert("Error responding to script dialog", "danger");
+        }
+    }
+
+    async dismissScriptDialog(dialogId) {
+        if (!this.currentAccountId) return;
+
+        try {
+            const request = {
+                accountId: this.currentAccountId,
+                dialogId: dialogId
+            };
+
+            if (this.connection) {
+                await this.connection.invoke("DismissScriptDialog", request);
+                
+                // Immediately hide the modal after sending the dismiss request
+                const dialogModal = document.getElementById('scriptDialogModal');
+                if (dialogModal) {
+                    const modal = bootstrap.Modal.getInstance(dialogModal);
+                    if (modal) {
+                        modal.hide();
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("Error dismissing script dialog:", error);
+            this.showAlert("Error dismissing script dialog", "danger");
+        }
+    }
+
+    async respondToScriptPermission(requestId, action) {
+        if (!this.currentAccountId) return;
+
+        try {
+            const request = {
+                accountId: this.currentAccountId,
+                requestId: requestId,
+                grant: action === 'grant',
+                mute: action === 'mute'
+            };
+
+            if (this.connection) {
+                await this.connection.invoke("RespondToScriptPermission", request);
+                
+                // Immediately hide the modal after sending the response
+                const permissionModal = document.getElementById('scriptPermissionModal');
+                if (permissionModal) {
+                    const modal = bootstrap.Modal.getInstance(permissionModal);
+                    if (modal) {
+                        modal.hide();
+                    }
+                }
+            }
+        } catch (error) {
+            console.error("Error responding to script permission:", error);
+            this.showAlert("Error responding to script permission", "danger");
+        }
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     // Load recent notices for an account when it connects

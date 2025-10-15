@@ -11,15 +11,21 @@ namespace RadegastWeb.Hubs
         private readonly IChatHistoryService _chatHistoryService;
         private readonly IPresenceService _presenceService;
         private readonly IAuthenticationService _authService;
+        private readonly IScriptDialogService _scriptDialogService;
+        private readonly IConnectionTrackingService _connectionTrackingService;
         private readonly ILogger<RadegastHub> _logger;
+        private readonly IHubContext<RadegastHub, IRadegastHubClient> _hubContext;
 
-        public RadegastHub(IAccountService accountService, IChatHistoryService chatHistoryService, IPresenceService presenceService, IAuthenticationService authService, ILogger<RadegastHub> logger)
+        public RadegastHub(IAccountService accountService, IChatHistoryService chatHistoryService, IPresenceService presenceService, IAuthenticationService authService, IScriptDialogService scriptDialogService, IConnectionTrackingService connectionTrackingService, ILogger<RadegastHub> logger, IHubContext<RadegastHub, IRadegastHubClient> hubContext)
         {
             _accountService = accountService;
             _chatHistoryService = chatHistoryService;
             _presenceService = presenceService;
             _authService = authService;
+            _scriptDialogService = scriptDialogService;
+            _connectionTrackingService = connectionTrackingService;
             _logger = logger;
+            _hubContext = hubContext;
         }
 
         private bool IsAuthenticated()
@@ -35,9 +41,14 @@ namespace RadegastWeb.Hubs
                 return;
             }
 
-            await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
-            _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}", 
-                Context.ConnectionId, accountId);
+            if (Guid.TryParse(accountId, out var accountGuid))
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
+                _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
+                
+                _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}. Total connections: {Count}", 
+                    Context.ConnectionId, accountId, _connectionTrackingService.GetConnectionCount(accountGuid));
+            }
         }
 
         public async Task LeaveAccountGroup(string accountId)
@@ -48,9 +59,14 @@ namespace RadegastWeb.Hubs
                 return;
             }
 
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"account_{accountId}");
-            _logger.LogInformation("Client {ConnectionId} left account group {AccountId}", 
-                Context.ConnectionId, accountId);
+            if (Guid.TryParse(accountId, out var accountGuid))
+            {
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"account_{accountId}");
+                _connectionTrackingService.RemoveConnection(Context.ConnectionId, accountGuid);
+                
+                _logger.LogInformation("Client {ConnectionId} left account group {AccountId}. Remaining connections: {Count}", 
+                    Context.ConnectionId, accountId, _connectionTrackingService.GetConnectionCount(accountGuid));
+            }
         }
 
         public async Task SendChat(SendChatRequest request)
@@ -604,6 +620,130 @@ namespace RadegastWeb.Hubs
             await base.OnConnectedAsync();
         }
 
+        public async Task RespondToScriptDialog(ScriptDialogResponseRequest request)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                var success = await _scriptDialogService.RespondToDialogAsync(request);
+                if (!success)
+                {
+                    await Clients.Caller.ScriptDialogError("Failed to respond to script dialog");
+                }
+                else
+                {
+                    await Clients.Caller.ScriptDialogClosed(request.AccountId.ToString(), request.DialogId);
+                    _logger.LogInformation("Script dialog response sent for account {AccountId}, dialog {DialogId}", 
+                        request.AccountId, request.DialogId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error responding to script dialog via SignalR");
+                await Clients.Caller.ScriptDialogError("Error responding to script dialog");
+            }
+        }
+
+        public async Task DismissScriptDialog(ScriptDialogDismissRequest request)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                var success = await _scriptDialogService.DismissDialogAsync(request);
+                if (!success)
+                {
+                    await Clients.Caller.ScriptDialogError("Failed to dismiss script dialog");
+                }
+                else
+                {
+                    await Clients.Caller.ScriptDialogClosed(request.AccountId.ToString(), request.DialogId);
+                    _logger.LogInformation("Script dialog dismissed for account {AccountId}, dialog {DialogId}", 
+                        request.AccountId, request.DialogId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error dismissing script dialog via SignalR");
+                await Clients.Caller.ScriptDialogError("Error dismissing script dialog");
+            }
+        }
+
+        public async Task RespondToScriptPermission(ScriptPermissionResponseRequest request)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                var success = await _scriptDialogService.RespondToPermissionAsync(request);
+                if (!success)
+                {
+                    await Clients.Caller.ScriptDialogError("Failed to respond to script permission request");
+                }
+                else
+                {
+                    await Clients.Caller.ScriptPermissionClosed(request.AccountId.ToString(), request.RequestId);
+                    _logger.LogInformation("Script permission response sent for account {AccountId}, request {RequestId}: {Grant}", 
+                        request.AccountId, request.RequestId, request.Grant ? "Granted" : "Denied");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error responding to script permission via SignalR");
+                await Clients.Caller.ScriptDialogError("Error responding to script permission");
+            }
+        }
+
+        public async Task GetActiveScriptDialogs(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    var dialogs = await _scriptDialogService.GetActiveDialogsAsync(accountGuid);
+                    var permissions = await _scriptDialogService.GetActivePermissionsAsync(accountGuid);
+                    
+                    foreach (var dialog in dialogs)
+                    {
+                        await Clients.Caller.ScriptDialogReceived(dialog);
+                    }
+                    
+                    foreach (var permission in permissions)
+                    {
+                        await Clients.Caller.ScriptPermissionReceived(permission);
+                    }
+                }
+                else
+                {
+                    await Clients.Caller.ScriptDialogError("Invalid account ID");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting active script dialogs via SignalR");
+                await Clients.Caller.ScriptDialogError("Error retrieving script dialogs");
+            }
+        }
+
         public async Task GetCurrentPresenceStatus(string accountId)
         {
             try
@@ -637,6 +777,9 @@ namespace RadegastWeb.Hubs
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             _logger.LogInformation("Client disconnected: {ConnectionId}", Context.ConnectionId);
+            
+            // Clean up connection tracking
+            _connectionTrackingService.RemoveConnection(Context.ConnectionId);
             
             // Handle browser close event (automatic status changes disabled)
             try
@@ -679,5 +822,12 @@ namespace RadegastWeb.Hubs
         Task SitStandError(string error);
         Task ObjectInfoReceived(ObjectInfo objectInfo);
         Task SittingStatusUpdated(object status);
+        
+        // Script Dialog methods
+        Task ScriptDialogReceived(ScriptDialogDto dialog);
+        Task ScriptDialogClosed(string accountId, string dialogId);
+        Task ScriptPermissionReceived(ScriptPermissionDto permission);
+        Task ScriptPermissionClosed(string accountId, string requestId);
+        Task ScriptDialogError(string error);
     }
 }

@@ -11,17 +11,20 @@ namespace RadegastWeb.Services
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<RadegastBackgroundService> _logger;
         private readonly IHubContext<RadegastHub, IRadegastHubClient> _hubContext;
+        private readonly IConnectionTrackingService _connectionTrackingService;
         private IPresenceService? _presenceService;
         private IRegionInfoService? _regionInfoService;
 
         public RadegastBackgroundService(
             IServiceProvider serviceProvider,
             ILogger<RadegastBackgroundService> logger,
-            IHubContext<RadegastHub, IRadegastHubClient> hubContext)
+            IHubContext<RadegastHub, IRadegastHubClient> hubContext,
+            IConnectionTrackingService connectionTrackingService)
         {
             _serviceProvider = serviceProvider;
             _logger = logger;
             _hubContext = hubContext;
+            _connectionTrackingService = connectionTrackingService;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -84,6 +87,8 @@ namespace RadegastWeb.Services
                     instance.AvatarUpdated -= OnAvatarUpdated;
                     instance.RegionChanged -= OnRegionChanged;
                     instance.NoticeReceived -= OnNoticeReceived;
+                    instance.ScriptDialogReceived -= OnScriptDialogReceived;
+                    instance.ScriptPermissionReceived -= OnScriptPermissionReceived;
                     
                     instance.ChatReceived += OnChatReceived;
                     instance.StatusChanged += OnStatusChanged;
@@ -94,6 +99,8 @@ namespace RadegastWeb.Services
                     instance.AvatarUpdated += OnAvatarUpdated;
                     instance.RegionChanged += OnRegionChanged;
                     instance.NoticeReceived += OnNoticeReceived;
+                    instance.ScriptDialogReceived += OnScriptDialogReceived;
+                    instance.ScriptPermissionReceived += OnScriptPermissionReceived;
                 }
             }
         }
@@ -347,6 +354,103 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error broadcasting presence status change");
+            }
+        }
+
+        /// <summary>
+        /// Check if there are any active web connections for the specified account
+        /// </summary>
+        private Task<bool> HasActiveWebConnections(Guid accountId)
+        {
+            var hasConnections = _connectionTrackingService.HasActiveConnections(accountId);
+            return Task.FromResult(hasConnections);
+        }
+
+        private async void OnScriptDialogReceived(object? sender, Models.ScriptDialogEventArgs e)
+        {
+            try
+            {
+                var groupName = $"account_{e.Dialog.AccountId}";
+                
+                // Check if there are any active connections in the account group
+                var hasActiveConnections = await HasActiveWebConnections(e.Dialog.AccountId);
+                
+                if (!hasActiveConnections)
+                {
+                    // No web clients connected - auto-dismiss the dialog
+                    _logger.LogInformation("Auto-dismissing script dialog for account {AccountId} - no active web connections. Dialog from object {ObjectName} ({ObjectId})", 
+                        e.Dialog.AccountId, e.Dialog.ObjectName, e.Dialog.ObjectId);
+                    
+                    // Create a dismiss request and handle it
+                    using var scope = _serviceProvider.CreateScope();
+                    var scriptDialogService = scope.ServiceProvider.GetRequiredService<IScriptDialogService>();
+                    
+                    var dismissRequest = new ScriptDialogDismissRequest
+                    {
+                        AccountId = e.Dialog.AccountId,
+                        DialogId = e.Dialog.DialogId
+                    };
+                    
+                    await scriptDialogService.DismissDialogAsync(dismissRequest);
+                    return;
+                }
+
+                // Broadcast to connected web clients
+                await _hubContext.Clients
+                    .Group(groupName)
+                    .ScriptDialogReceived(e.Dialog);
+
+                _logger.LogInformation("Broadcasted script dialog for account {AccountId} from object {ObjectName} ({ObjectId})", 
+                    e.Dialog.AccountId, e.Dialog.ObjectName, e.Dialog.ObjectId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error broadcasting script dialog");
+            }
+        }
+
+        private async void OnScriptPermissionReceived(object? sender, Models.ScriptPermissionEventArgs e)
+        {
+            try
+            {
+                var groupName = $"account_{e.Permission.AccountId}";
+                
+                // Check if there are any active connections in the account group
+                var hasActiveConnections = await HasActiveWebConnections(e.Permission.AccountId);
+                
+                if (!hasActiveConnections)
+                {
+                    // No web clients connected - auto-deny the permission request
+                    _logger.LogInformation("Auto-denying script permission request for account {AccountId} - no active web connections. Request from object {ObjectName} ({ObjectId}): {Permissions}", 
+                        e.Permission.AccountId, e.Permission.ObjectName, e.Permission.ObjectId, e.Permission.PermissionsDescription);
+                    
+                    // Create a deny request and handle it
+                    using var scope = _serviceProvider.CreateScope();
+                    var scriptDialogService = scope.ServiceProvider.GetRequiredService<IScriptDialogService>();
+                    
+                    var denyRequest = new ScriptPermissionResponseRequest
+                    {
+                        AccountId = e.Permission.AccountId,
+                        RequestId = e.Permission.RequestId,
+                        Grant = false, // Deny the permission
+                        Mute = false
+                    };
+                    
+                    await scriptDialogService.RespondToPermissionAsync(denyRequest);
+                    return;
+                }
+
+                // Broadcast to connected web clients
+                await _hubContext.Clients
+                    .Group(groupName)
+                    .ScriptPermissionReceived(e.Permission);
+
+                _logger.LogInformation("Broadcasted script permission request for account {AccountId} from object {ObjectName} ({ObjectId}): {Permissions}", 
+                    e.Permission.AccountId, e.Permission.ObjectName, e.Permission.ObjectId, e.Permission.PermissionsDescription);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error broadcasting script permission request");
             }
         }
     }

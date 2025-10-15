@@ -19,6 +19,7 @@ namespace RadegastWeb.Core
         private readonly ICorradeService _corradeService;
         private readonly IAiChatService _aiChatService;
         private readonly IChatHistoryService _chatHistoryService;
+        private readonly IScriptDialogService _scriptDialogService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -56,8 +57,10 @@ namespace RadegastWeb.Core
         public event EventHandler<string>? OwnDisplayNameChanged; // New event for our own display name changes
         public event EventHandler<ChatSessionDto>? ChatSessionUpdated;
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
+        public event EventHandler<Models.ScriptDialogEventArgs>? ScriptDialogReceived;
+        public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -70,6 +73,7 @@ namespace RadegastWeb.Core
             _corradeService = corradeService;
             _aiChatService = aiChatService;
             _chatHistoryService = chatHistoryService;
+            _scriptDialogService = scriptDialogService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -179,6 +183,14 @@ namespace RadegastWeb.Core
             
             // Subscribe to notice events
             _noticeService.NoticeReceived += NoticeService_NoticeReceived;
+            
+            // Subscribe to script dialog service events
+            _scriptDialogService.DialogReceived += ScriptDialogService_DialogReceived;
+            _scriptDialogService.PermissionReceived += ScriptDialogService_PermissionReceived;
+            
+            // Register script dialog events
+            _client.Self.ScriptDialog += Self_ScriptDialog;
+            _client.Self.ScriptQuestion += Self_ScriptQuestion;
         }
 
         private void UnregisterClientEvents()
@@ -213,6 +225,14 @@ namespace RadegastWeb.Core
             
             // Unsubscribe from notice events
             _noticeService.NoticeReceived -= NoticeService_NoticeReceived;
+            
+            // Unsubscribe from script dialog service events
+            _scriptDialogService.DialogReceived -= ScriptDialogService_DialogReceived;
+            _scriptDialogService.PermissionReceived -= ScriptDialogService_PermissionReceived;
+            
+            // Unregister script dialog events
+            _client.Self.ScriptDialog -= Self_ScriptDialog;
+            _client.Self.ScriptQuestion -= Self_ScriptQuestion;
         }
 
         public async Task<bool> LoginAsync()
@@ -2618,6 +2638,107 @@ namespace RadegastWeb.Core
             var deltaX = pos2.X - pos1.X;
             var deltaY = pos2.Y - pos1.Y;
             return (float)Math.Sqrt(deltaX * deltaX + deltaY * deltaY);
+        }
+
+        #endregion
+
+        #region Script Dialog Service Event Handlers
+
+        private void ScriptDialogService_DialogReceived(object? sender, Models.ScriptDialogEventArgs e)
+        {
+            try
+            {
+                ScriptDialogReceived?.Invoke(this, e);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling script dialog received event for account {AccountId}", _accountId);
+            }
+        }
+
+        private void ScriptDialogService_PermissionReceived(object? sender, Models.ScriptPermissionEventArgs e)
+        {
+            try
+            {
+                ScriptPermissionReceived?.Invoke(this, e);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling script permission received event for account {AccountId}", _accountId);
+            }
+        }
+
+        #endregion
+
+        #region Script Dialog Event Handlers
+
+        private void Self_ScriptDialog(object? sender, OpenMetaverse.ScriptDialogEventArgs e)
+        {
+            try
+            {
+                _logger.LogInformation("Script dialog received from {ObjectName} ({ObjectId}) for account {AccountId}", 
+                    e.ObjectName, e.ObjectID, _accountId);
+
+                // Handle the script dialog through the service
+                _ = Task.Run(async () => 
+                {
+                    try
+                    {
+                        await _scriptDialogService.HandleScriptDialogAsync(
+                            Guid.Parse(_accountId),
+                            e.Message,
+                            e.ObjectName,
+                            e.ImageID,
+                            e.ObjectID,
+                            e.FirstName,
+                            e.LastName,
+                            e.Channel,
+                            e.ButtonLabels
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error handling script dialog for account {AccountId}", _accountId);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in Self_ScriptDialog event handler for account {AccountId}", _accountId);
+            }
+        }
+
+        private void Self_ScriptQuestion(object? sender, OpenMetaverse.ScriptQuestionEventArgs e)
+        {
+            try
+            {
+                _logger.LogInformation("Script permission request received from {ObjectName} ({TaskId}) for account {AccountId}: {Questions}", 
+                    e.ObjectName, e.TaskID, _accountId, e.Questions);
+
+                // Handle the script permission request through the service
+                _ = Task.Run(async () => 
+                {
+                    try
+                    {
+                        await _scriptDialogService.HandleScriptPermissionAsync(
+                            Guid.Parse(_accountId),
+                            e.TaskID,
+                            e.ItemID,
+                            e.ObjectName,
+                            e.ObjectOwnerName,
+                            e.Questions
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error handling script permission request for account {AccountId}", _accountId);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in Self_ScriptQuestion event handler for account {AccountId}", _accountId);
+            }
         }
 
         #endregion
