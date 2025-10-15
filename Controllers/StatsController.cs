@@ -145,19 +145,40 @@ namespace RadegastWeb.Controllers
         /// Get statistics summary for dashboard
         /// </summary>
         [HttpGet("dashboard")]
-        public async Task<ActionResult<object>> GetDashboardStats()
+        public async Task<ActionResult<object>> GetDashboardStats(
+            [FromQuery] int days = 30,
+            [FromQuery] string? region = null)
         {
             try
             {
                 var endDate = DateTime.UtcNow.Date;
-                var startDate30 = endDate.AddDays(-30);
+                var startDate30 = endDate.AddDays(-Math.Max(1, days));
                 var startDate7 = endDate.AddDays(-7);
                 var startDate1 = endDate.AddDays(-1);
 
                 // Get stats for different time periods
-                var stats30Days = await _statsService.GetAllRegionStatsAsync(startDate30, endDate);
-                var stats7Days = await _statsService.GetAllRegionStatsAsync(startDate7, endDate);
-                var statsToday = await _statsService.GetAllRegionStatsAsync(startDate1, endDate);
+                List<VisitorStatsSummaryDto> stats30Days;
+                List<VisitorStatsSummaryDto> stats7Days;
+                List<VisitorStatsSummaryDto> statsToday;
+
+                if (!string.IsNullOrEmpty(region))
+                {
+                    // Get stats for specific region
+                    var regionStats30 = await _statsService.GetRegionStatsAsync(region, startDate30, endDate);
+                    var regionStats7 = await _statsService.GetRegionStatsAsync(region, startDate7, endDate);
+                    var regionStatsToday = await _statsService.GetRegionStatsAsync(region, startDate1, endDate);
+                    
+                    stats30Days = new List<VisitorStatsSummaryDto> { regionStats30 };
+                    stats7Days = new List<VisitorStatsSummaryDto> { regionStats7 };
+                    statsToday = new List<VisitorStatsSummaryDto> { regionStatsToday };
+                }
+                else
+                {
+                    // Get stats for all regions
+                    stats30Days = await _statsService.GetAllRegionStatsAsync(startDate30, endDate);
+                    stats7Days = await _statsService.GetAllRegionStatsAsync(startDate7, endDate);
+                    statsToday = await _statsService.GetAllRegionStatsAsync(startDate1, endDate);
+                }
 
                 var totalVisitors30Days = stats30Days.Sum(s => s.TotalUniqueVisitors);
                 var totalVisitors7Days = stats7Days.Sum(s => s.TotalUniqueVisitors);

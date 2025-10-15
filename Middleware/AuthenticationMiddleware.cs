@@ -12,6 +12,7 @@ namespace RadegastWeb.Middleware
             "/login.html",
             "/css/",
             "/js/",
+            "/img/",
             "/favicon.ico"
         };
 

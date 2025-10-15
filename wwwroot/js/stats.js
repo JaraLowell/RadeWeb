@@ -36,18 +36,19 @@ class StatsManager {
         try {
             this.showLoading();
             
-            // Load dashboard summary
-            const dashboardData = await this.fetchAPI('/api/stats/dashboard');
-            this.updateDashboard(dashboardData);
-
-            // Load visitor statistics
+            // Prepare parameters for both dashboard and visitor stats
             const params = new URLSearchParams({
                 days: this.currentPeriod.toString()
             });
             if (this.currentRegion) {
                 params.append('region', this.currentRegion);
             }
+            
+            // Load dashboard summary with the same filters
+            const dashboardData = await this.fetchAPI(`/api/stats/dashboard?${params}`);
+            this.updateDashboard(dashboardData);
 
+            // Load visitor statistics
             const visitorStats = await this.fetchAPI(`/api/stats/visitors?${params}`);
             this.updateCharts(visitorStats);
 

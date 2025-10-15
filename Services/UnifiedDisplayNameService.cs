@@ -583,6 +583,13 @@ namespace RadegastWeb.Services
 
         public async Task SaveCacheAsync()
         {
+            // Skip saving if we're disposing or service provider is not available
+            if (_isDisposing)
+            {
+                _logger.LogDebug("Skipping cache save during disposal");
+                return;
+            }
+
             try
             {
                 using var scope = _serviceProvider.CreateScope();
@@ -608,6 +615,11 @@ namespace RadegastWeb.Services
                 
                 await context.SaveChangesAsync();
                 _logger.LogDebug("Saved {Count} display names to cache", namesToSave.Count);
+            }
+            catch (ObjectDisposedException)
+            {
+                // Service provider disposed during shutdown, this is expected
+                _logger.LogDebug("Cannot save cache during shutdown - service provider disposed");
             }
             catch (Exception ex)
             {
@@ -681,26 +693,44 @@ namespace RadegastWeb.Services
             return base.StartAsync(cancellationToken);
         }
 
-        public new Task StopAsync(CancellationToken cancellationToken)
+        public new async Task StopAsync(CancellationToken cancellationToken)
         {
-            return base.StopAsync(cancellationToken);
+            // Complete the channel to stop the processing loop
+            try
+            {
+                _requestWriter.Complete();
+            }
+            catch (InvalidOperationException)
+            {
+                // Channel is already completed, ignore
+            }
+            
+            await base.StopAsync(cancellationToken);
         }
 
         // Disposal
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
             _isDisposing = true;
             
             _processingTimer?.Dispose();
-            _requestWriter.Complete();
             
-            await SaveCacheAsync();
+            // Channel should already be completed in StopAsync, but ensure it's completed
+            if (!_requestWriter.TryComplete())
+            {
+                // Channel was already completed, which is expected
+            }
+            
+            // Don't try to save cache during disposal as service provider may be disposed
+            // Cache should be saved by the throttled save mechanism during normal operation
             
             _requestSemaphore.Dispose();
             _processingSemaphore.Dispose();
             _saveThrottle.Dispose();
             
             Dispose();
+            
+            return ValueTask.CompletedTask;
         }
 
         public override void Dispose()
