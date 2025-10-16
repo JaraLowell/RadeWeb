@@ -719,7 +719,7 @@ namespace RadegastWeb.Core
                 Id = avatar.ID.ToString(),
                 Name = legacyName,
                 DisplayName = displayName,
-                Distance = Calculate3DDistance(_client.Self.SimPosition, avatar.Position),
+                Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
                 Status = "Online", // TODO: Get actual status if available
                 AccountId = Guid.Parse(_accountId)
             };
@@ -769,7 +769,7 @@ namespace RadegastWeb.Core
                 Id = avatar.ID.ToString(),
                 Name = avatarName,
                 DisplayName = displayName,
-                Distance = Calculate3DDistance(_client.Self.SimPosition, avatar.Position),
+                Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
                 Status = "Online", // TODO: Get actual status if available
                 AccountId = Guid.Parse(_accountId)
             };
@@ -803,7 +803,7 @@ namespace RadegastWeb.Core
                 Id = coarseAvatar.ID.ToString(),
                 Name = legacyName,
                 DisplayName = displayName,
-                Distance = Calculate3DDistance(_client.Self.SimPosition, coarseAvatar.Position),
+                Distance = Calculate3DDistance(GetOurActualPosition(), coarseAvatar.Position),
                 Status = "Online", // Coarse location avatars are assumed online
                 AccountId = Guid.Parse(_accountId)
             };
@@ -849,7 +849,7 @@ namespace RadegastWeb.Core
                 Id = coarseAvatar.ID.ToString(),
                 Name = avatarName,
                 DisplayName = displayName,
-                Distance = Calculate3DDistance(_client.Self.SimPosition, coarseAvatar.Position),
+                Distance = Calculate3DDistance(GetOurActualPosition(), coarseAvatar.Position),
                 Status = "Online", // Coarse location avatars are assumed online
                 AccountId = Guid.Parse(_accountId)
             };
@@ -1244,7 +1244,7 @@ namespace RadegastWeb.Core
                 Id = e.Avatar.ID.ToString(),
                 Name = avatarName,
                 DisplayName = displayName,
-                Distance = Calculate3DDistance(_client.Self.SimPosition, e.Avatar.Position),
+                Distance = Calculate3DDistance(GetOurActualPosition(), e.Avatar.Position),
                 Status = "Online",
                 AccountId = Guid.Parse(_accountId)
             };
@@ -1381,9 +1381,10 @@ namespace RadegastWeb.Core
 
             try
             {
-                // Get our current position for distance calculations
+                // Get our current position for distance calculations (accounting for sitting)
+                var ourPosition = GetOurActualPosition();
                 var agentPosition = e.Simulator.AvatarPositions.TryGetValue(_client.Self.AgentID, out var ourPos)
-                    ? ToVector3D(e.Simulator.Handle, ourPos)
+                    ? ToVector3D(e.Simulator.Handle, ourPosition) // Use our corrected position
                     : _client.Self.GlobalPosition;
 
                 // Handle removed avatars
@@ -1624,14 +1625,11 @@ namespace RadegastWeb.Core
                 });
             }
             
-            // Process any SLURLs in the message
-            var processedMessage = await _urlParser.ProcessChatMessageAsync(e.Message, Guid.Parse(_accountId));
-            
             var chatMessage = new ChatMessageDto
             {
                 AccountId = Guid.Parse(_accountId),
                 SenderName = senderDisplayName,
-                Message = processedMessage, // Use the processed message with URL replacements
+                Message = e.Message, // Use the raw message - URL processing will be handled by the pipeline
                 ChatType = e.Type.ToString(),
                 Channel = "0", // Default channel for local chat
                 Timestamp = DateTime.UtcNow,
@@ -1947,9 +1945,6 @@ namespace RadegastWeb.Core
 
             ChatSessionUpdated?.Invoke(this, session);
 
-            // Process any SLURLs in the IM message
-            var processedMessage = await _urlParser.ProcessChatMessageAsync(e.IM.Message, Guid.Parse(_accountId));
-
             // Ensure we don't show "Loading..." as sender name in the UI
             var finalSenderName = senderDisplayName;
             if (finalSenderName == "Loading..." || string.IsNullOrEmpty(finalSenderName))
@@ -1961,7 +1956,7 @@ namespace RadegastWeb.Core
             {
                 AccountId = Guid.Parse(_accountId),
                 SenderName = finalSenderName,
-                Message = processedMessage, // Use the processed message with URL replacements
+                Message = e.IM.Message, // Use the raw message - URL processing will be handled by the pipeline
                 ChatType = chatType,
                 Channel = chatType,
                 Timestamp = DateTime.UtcNow,
@@ -1971,6 +1966,19 @@ namespace RadegastWeb.Core
                 SessionName = sessionName,
                 TargetId = targetId
             };
+
+            // Process IM through unified chat processing service as well
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _chatProcessingService.ProcessChatMessageAsync(chatMessage, Guid.Parse(_accountId));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in unified chat processing for IM from {SenderName}", finalSenderName);
+                }
+            });
 
             ChatReceived?.Invoke(this, chatMessage);
         }
@@ -2187,7 +2195,7 @@ namespace RadegastWeb.Core
                         Id = e.AvatarId,
                         Name = e.DisplayName.LegacyFullName,
                         DisplayName = e.DisplayName.DisplayNameValue,
-                        Distance = Calculate3DDistance(_client.Self.SimPosition, avatar.Position),
+                        Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
                         Status = "Online",
                         AccountId = Guid.Parse(_accountId)
                     };
@@ -2230,7 +2238,7 @@ namespace RadegastWeb.Core
                         Id = e.AvatarId,
                         Name = e.DisplayName.LegacyFullName,
                         DisplayName = e.DisplayName.DisplayNameValue,
-                        Distance = Calculate3DDistance(_client.Self.SimPosition, avatar.Position),
+                        Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
                         Status = "Online",
                         AccountId = Guid.Parse(_accountId)
                     };
@@ -2611,6 +2619,28 @@ namespace RadegastWeb.Core
             var deltaY = pos2.Y - pos1.Y;
             var deltaZ = pos2.Z - pos1.Z;
             return (float)Math.Sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ);
+        }
+
+        /// <summary>
+        /// Gets the actual position of our avatar, accounting for sitting on objects
+        /// </summary>
+        /// <returns>The corrected position of our avatar</returns>
+        private Vector3 GetOurActualPosition()
+        {
+            var basePosition = _client.Self.SimPosition;
+            
+            // If we're sitting on an object, we need to account for the object's position
+            if (_client.Self.SittingOn != 0)
+            {
+                // Try to find the object we're sitting on
+                if (_client.Network.CurrentSim?.ObjectsPrimitives.TryGetValue(_client.Self.SittingOn, out var seatObject) == true)
+                {
+                    // Use the seat object's position as our position
+                    return seatObject.Position;
+                }
+            }
+            
+            return basePosition;
         }
 
         /// <summary>
