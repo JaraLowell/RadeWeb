@@ -54,7 +54,7 @@ namespace RadegastWeb.Services
             {
                 var config = GetCachedConfiguration();
                 return config?.Enabled == true && 
-                       !string.IsNullOrEmpty(config.AvatarName) && 
+                       !string.IsNullOrEmpty(config.LinkedAccountId) &&
                        !string.IsNullOrEmpty(config.ApiConfig.ApiKey) &&
                        !string.IsNullOrEmpty(config.SystemPrompt);
             }
@@ -66,16 +66,26 @@ namespace RadegastWeb.Services
                 return false;
 
             var config = GetCachedConfiguration();
-            if (config == null || string.IsNullOrEmpty(config.AvatarName))
+            if (config == null)
                 return false;
 
-            // Find the account that matches the configured avatar name
-            var accounts = await _accountService.GetAccountsAsync();
-            var targetAccount = accounts.FirstOrDefault(a => 
-                $"{a.FirstName} {a.LastName}".Equals(config.AvatarName, StringComparison.OrdinalIgnoreCase));
-
-            if (targetAccount == null || targetAccount.Id != message.AccountId)
+            // Check linkedAccountId - only process chat from the specified account
+            if (!string.IsNullOrEmpty(config.LinkedAccountId))
+            {
+                if (!Guid.TryParse(config.LinkedAccountId, out var linkedAccountGuid) ||
+                    linkedAccountGuid != message.AccountId)
+                {
+                    _logger.LogDebug("Ignoring message - linkedAccountId {LinkedAccountId} doesn't match message AccountId {AccountId}",
+                        config.LinkedAccountId, message.AccountId);
+                    return false;
+                }
+            }
+            else
+            {
+                // If no linkedAccountId is specified, don't process any chat (bot is effectively disabled)
+                _logger.LogDebug("No linkedAccountId specified - AI bot will not process any chat");
                 return false;
+            }
 
             // Only respond to local chat (not IMs, groups, or whispers)
             if (message.ChatType.ToLower() != "normal")
@@ -290,11 +300,18 @@ namespace RadegastWeb.Services
         {
             var messages = new List<AiChatMessage>();
 
+            // Build system prompt with avatar name if available
+            var systemPrompt = config.SystemPrompt;
+            if (!string.IsNullOrEmpty(config.AvatarName))
+            {
+                systemPrompt = $"You are {config.AvatarName}. {config.SystemPrompt}";
+            }
+
             // Add system prompt
             messages.Add(new AiChatMessage
             {
                 Role = "system",
-                Content = config.SystemPrompt
+                Content = systemPrompt
             });
 
             // Add chat history if enabled

@@ -13,6 +13,13 @@ namespace RadegastWeb.Models
         public bool Enabled { get; set; } = false;
 
         /// <summary>
+        /// The account ID that this AI bot is linked to.
+        /// Only local chat received by this account will be processed for AI responses.
+        /// If null or empty, all accounts will process chat (legacy behavior).
+        /// </summary>
+        public string? LinkedAccountId { get; set; }
+
+        /// <summary>
         /// Avatar name (e.g., "FirstName LastName") that the AI bot should respond for
         /// </summary>
         public string? AvatarName { get; set; }

@@ -6,17 +6,19 @@ This document explains how to configure the AI Chat Bot for RadegastWeb.
 
 The AI bot is configured through `data/aibot.json`. The bot will only work when:
 1. `enabled` is set to `true`
-2. `avatarName` is set to a valid avatar name (e.g., "FirstName LastName")
+2. `linkedAccountId` is set to a valid account ID (required for account filtering)
 3. A valid API key is provided
 4. A system prompt is configured
+5. `avatarName` is set (optional - used only for AI context, not filtering)
 
 ## Basic Setup
 
-1. Find your avatar name from the RadegastWeb accounts page (e.g., "John Doe")
-2. Set `avatarName` to your avatar name exactly as shown
-3. Configure your AI provider settings in `apiConfig`
-4. Set `enabled` to `true`
-5. Restart RadegastWeb
+1. Get the account ID from the RadegastWeb accounts page (required)
+2. Set `linkedAccountId` to your account ID to link the bot to that specific account
+3. Set `avatarName` to your avatar name (used by AI for context, not for filtering)
+4. Configure your AI provider settings in `apiConfig`
+5. Set `enabled` to `true`
+6. Restart RadegastWeb
 
 ## AI Provider Examples
 
@@ -132,6 +134,20 @@ The AI bot is configured through `data/aibot.json`. The bot will only work when:
 
 ## Configuration Options
 
+### Account Linking
+- `linkedAccountId`: The specific account UUID that this AI bot is linked to
+  - **Required**: Must be set for the bot to function
+  - **Format**: Standard UUID format (e.g., "12345678-abcd-1234-5678-123456789abc")
+  - **Where to find**: Check the RadegastWeb accounts page for your account ID
+  - **Behavior**: Only chat received by this specific account will trigger AI responses
+  - **Security**: Prevents the bot from responding on wrong accounts in multi-account setups
+
+### Avatar Name
+- `avatarName`: The avatar name for AI context (e.g., "FirstName LastName")
+  - **Purpose**: Used by the AI to know what name to use in responses and roleplay
+  - **Not used for filtering**: This field does NOT determine which account's chat to process
+  - **Optional but recommended**: Helps the AI maintain consistent character identity
+
 ### System Prompt
 The `systemPrompt` defines your AI's personality and behavior. Make it specific to how you want your avatar to act in Second Life.
 
@@ -199,10 +215,21 @@ The AI bot will:
 
 1. Check the RadegastWeb logs for AI bot errors
 2. Verify your API key is correct and has sufficient credits
-3. Ensure the avatar name matches exactly (case insensitive, but spelling must be exact)
-4. Test with a simple trigger keyword like "hello"
-5. Check that `enabled` is `true` and not a string
-6. Make sure the avatar account is logged in and connected
+3. Ensure the `linkedAccountId` is set and matches an existing account ID
+4. Ensure the avatar name is set (for AI context, not filtering)
+5. Test with a simple trigger keyword like "hello"
+6. Check that `enabled` is `true` and not a string
+7. Make sure the linked avatar account is logged in and connected
+
+### Account Filtering Priority
+The AI bot filters incoming chat in this order:
+1. **Account ID Check**: Only processes chat from the account specified in `linkedAccountId`
+2. **Chat Type Check**: Only processes "normal" local chat (not IMs, groups, whispers)
+3. **Self-Message Check**: Ignores messages from the bot's own avatar
+4. **Ignore Lists**: Checks UUID and name-based ignore lists
+5. **Trigger Conditions**: Evaluates response probability and trigger keywords
+
+**Note**: `avatarName` is NOT used for filtering - it's only used by the AI for context and roleplay.
 
 ### Finding Avatar UUIDs for Ignore Lists
 
@@ -221,13 +248,14 @@ To get an avatar's UUID for secure blocking:
 - **Use UUID-based ignore lists** for reliable blocking of problem users
 - Regularly review and update ignore lists
 
-## Configuration Example
+## Configuration Examples
 
-Example configuration for "John Smith" avatar:
+### Basic Example - "John Smith" avatar:
 
 ```json
 {
   "enabled": true,
+  "linkedAccountId": "12345678-abcd-1234-5678-123456789abc",
   "avatarName": "John Smith",
   "systemPrompt": "You are John Smith, a friendly Second Life resident...",
   "apiConfig": {
@@ -244,6 +272,53 @@ Example configuration for "John Smith" avatar:
       "KnownTroll",
       "SpamBot"
     ]
+  }
+}
+```
+
+### Roleplay Example - "Bunny" character using Groq (Free):
+
+```json
+{
+  "enabled": true,
+  "linkedAccountId": "87654321-dcba-4321-8765-fedcba987654",
+  "avatarName": "Bunny",
+  "systemPrompt": "You are Bunny, a cheerful and helpful avatar in Second Life. You have dark hair and striking blue eyes, and you're currently wearing a stylish Adidas swimsuit. Your personality is bubbly, optimistic, and always ready to lend a helping hand to other residents. You love meeting new people, exploring virtual worlds, and participating in beach activities or water sports. You speak in a friendly, upbeat manner and often use cute expressions. You're knowledgeable about Second Life activities like shopping, events, clubs, and social gatherings. When someone needs help with anything - from finding places to avatar customization - you're always eager to assist with enthusiasm. Keep your responses concise but warm, and remember you're in a virtual beach/water setting. Use emotes occasionally like *giggles*, *splashes playfully*, or *adjusts swimsuit* to show your playful nature.",
+  "apiConfig": {
+    "provider": "openai",
+    "apiUrl": "https://api.groq.com/openai/v1",
+    "apiKey": "gsk_your-groq-api-key-here",
+    "model": "llama-3.1-8b-instant"
+  },
+  "responseConfig": {
+    "responseProbability": 0.7,
+    "respondToNameMentions": true,
+    "respondToQuestions": true,
+    "triggerKeywords": [
+      "help",
+      "bunny",
+      "swim",
+      "beach",
+      "cute",
+      "hi",
+      "hello",
+      "outfit",
+      "hair",
+      "eyes",
+      "adidas"
+    ],
+    "ignoreUuids": [],
+    "ignoreNames": [],
+    "minResponseDelaySeconds": 2,
+    "maxResponseDelaySeconds": 5
+  },
+  "historyConfig": {
+    "includeHistory": true,
+    "maxHistoryMessages": 8,
+    "maxHistoryAgeMinutes": 15,
+    "maxHistoryCharacters": 1500,
+    "maxMessageLength": 150,
+    "includeBotMessages": true
   }
 }
 ```
