@@ -1164,6 +1164,8 @@ namespace RadegastWeb.Core
                 }
             });
         }
+        
+
 
         private void UpdateRegionInfo()
         {

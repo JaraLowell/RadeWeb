@@ -96,39 +96,50 @@ namespace RadegastWeb.Services
             return Task.CompletedTask;
         }
         
-        public Task<bool> RespondToTeleportRequestAsync(TeleportRequestResponseRequest request)
+        public async Task<bool> RespondToTeleportRequestAsync(TeleportRequestResponseRequest request)
         {
             try
             {
                 if (!_activeRequests.TryGetValue(request.RequestId, out var teleportRequest))
                 {
                     _logger.LogWarning("Teleport request {RequestId} not found for account {AccountId}", request.RequestId, request.AccountId);
-                    return Task.FromResult(false);
+                    return false;
                 }
                 
                 if (teleportRequest.AccountId != request.AccountId)
                 {
                     _logger.LogWarning("Account {AccountId} attempted to respond to teleport request {RequestId} belonging to account {RequestAccountId}", 
                         request.AccountId, request.RequestId, teleportRequest.AccountId);
-                    return Task.FromResult(false);
+                    return false;
                 }
                 
                 if (teleportRequest.IsResponded)
                 {
                     _logger.LogWarning("Teleport request {RequestId} has already been responded to", request.RequestId);
-                    return Task.FromResult(false);
+                    return false;
                 }
                 
                 var instance = _accountService.GetInstance(request.AccountId);
                 if (instance == null || !instance.IsConnected)
                 {
                     _logger.LogWarning("Account {AccountId} not found or not connected", request.AccountId);
-                    return Task.FromResult(false);
+                    return false;
                 }
                 
                 // Send the teleport lure response to Second Life
                 var fromAgentId = UUID.Parse(teleportRequest.FromAgentId);
                 var sessionId = UUID.Parse(teleportRequest.SessionId);
+                
+                // If accepting the teleport and the avatar is currently sitting, stand up first
+                // This ensures animations are stopped and the avatar is ready to teleport
+                if (request.Accept && instance.IsSitting)
+                {
+                    _logger.LogInformation("Avatar is sitting, standing up before teleport for account {AccountId}", request.AccountId);
+                    instance.SetSitting(false); // This will stand up and stop animations
+                    
+                    // Small delay to allow the stand-up command to be processed
+                    await Task.Delay(100);
+                }
                 
                 instance.Client.Self.TeleportLureRespond(fromAgentId, sessionId, request.Accept);
                 
@@ -142,13 +153,13 @@ namespace RadegastWeb.Services
                 // Fire event for cleanup
                 TeleportRequestClosed?.Invoke(this, request.RequestId);
                 
-                return Task.FromResult(true);
+                return true;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error responding to teleport request {RequestId} for account {AccountId}", 
                     request.RequestId, request.AccountId);
-                return Task.FromResult(false);
+                return false;
             }
         }
         
