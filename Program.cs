@@ -5,6 +5,7 @@ using RadegastWeb.Models;
 using RadegastWeb.Middleware;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -53,7 +54,11 @@ builder.Services.AddScoped<RadegastDbContext>(provider =>
 });
 
 // Add services to the container.
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -163,7 +168,9 @@ using (var scope = app.Services.CreateScope())
     // Load existing accounts
     await accountService.LoadAccountsAsync();
     
-    // CorradeService initializes itself in its constructor
+    // Ensure services are initialized by requesting them once
+    var corradeService = scope.ServiceProvider.GetRequiredService<ICorradeService>();
+    var aiChatService = scope.ServiceProvider.GetRequiredService<IAiChatService>();
     
     // Ensure test account exists for development
     /*

@@ -467,14 +467,16 @@ namespace RadegastWeb.Services
             }
         }
 
-        public Task<IEnumerable<AccountStatus>> GetAccountStatusesAsync()
+        public async Task<IEnumerable<AccountStatus>> GetAccountStatusesAsync()
         {
             // Get presence service to check current presence status
             var presenceService = _serviceProvider.GetService<IPresenceService>();
             var aiChatService = _serviceProvider.GetService<IAiChatService>();
             var corradeService = _serviceProvider.GetService<ICorradeService>();
             
-            var statuses = _accounts.Values.Select(account => 
+            var accountStatuses = new List<AccountStatus>();
+            
+            foreach (var account in _accounts.Values)
             {
                 var status = account.Status;
                 
@@ -509,6 +511,9 @@ namespace RadegastWeb.Services
                         // Otherwise, only active for the specifically linked account
                         hasAiBotActive = string.IsNullOrWhiteSpace(aiConfig.LinkedAccountId) || 
                                          aiConfig.LinkedAccountId.Equals(account.Id.ToString(), StringComparison.OrdinalIgnoreCase);
+                        
+                        _logger.LogDebug("AI Bot check for account {AccountId}: IsEnabled={IsEnabled}, LinkedAccountId={LinkedAccountId}, HasActive={HasActive}", 
+                            account.Id, aiChatService.IsEnabled, aiConfig.LinkedAccountId, hasAiBotActive);
                     }
                 }
 
@@ -518,11 +523,10 @@ namespace RadegastWeb.Services
                 {
                     try
                     {
-                        // Use async method but we need to handle it synchronously here
-                        // This is a known limitation but acceptable for status checking
-                        var corradeTask = corradeService.ShouldProcessWhispersForAccountAsync(account.Id);
-                        corradeTask.Wait(TimeSpan.FromMilliseconds(100)); // Short timeout to avoid blocking
-                        hasCorradeActive = corradeTask.IsCompletedSuccessfully && corradeTask.Result;
+                        // Use async method properly
+                        hasCorradeActive = await corradeService.ShouldProcessWhispersForAccountAsync(account.Id);
+                        _logger.LogDebug("Corrade check for account {AccountId}: IsEnabled={IsEnabled}, HasActive={HasActive}", 
+                            account.Id, corradeService.IsEnabled, hasCorradeActive);
                     }
                     catch (Exception ex)
                     {
@@ -530,8 +534,13 @@ namespace RadegastWeb.Services
                         // Continue without Corrade status
                     }
                 }
+                else
+                {
+                    _logger.LogDebug("Corrade not enabled: corradeService={CorradeService}, IsEnabled={IsEnabled}", 
+                        corradeService != null, corradeService?.IsEnabled);
+                }
                 
-                return new AccountStatus
+                var accountStatus = new AccountStatus
                 {
                     AccountId = account.Id,
                     FirstName = account.FirstName,
@@ -546,9 +555,11 @@ namespace RadegastWeb.Services
                     HasAiBotActive = hasAiBotActive,
                     HasCorradeActive = hasCorradeActive
                 };
-            });
+                
+                accountStatuses.Add(accountStatus);
+            }
 
-            return Task.FromResult(statuses);
+            return accountStatuses;
         }
 
         public WebRadegastInstance? GetInstance(Guid accountId)
