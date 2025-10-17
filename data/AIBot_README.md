@@ -60,6 +60,76 @@ The AI bot is configured through `data/aibot.json`. The bot will only work when:
 }
 ```
 
+## Free GPT Options for Testing
+
+### Groq (Recommended for Testing)
+**Free Tier**: Very generous daily limits, extremely fast inference
+```json
+{
+  "provider": "openai",
+  "apiUrl": "https://api.groq.com/openai/v1",
+  "apiKey": "gsk_your-groq-key-here",
+  "model": "llama-3.1-8b-instant"
+}
+```
+
+### OpenAI Free Tier
+**Free Credits**: $5 in free credits for new accounts (3 months)
+```json
+{
+  "provider": "openai",
+  "apiUrl": "https://api.openai.com/v1",
+  "apiKey": "sk-your-openai-key-here",
+  "model": "gpt-3.5-turbo"
+}
+```
+
+### Google AI Studio (Gemini)
+**Free Tier**: Generous rate limits, long context windows
+```json
+{
+  "provider": "google",
+  "apiUrl": "https://generativelanguage.googleapis.com/v1beta",
+  "apiKey": "your-gemini-api-key-here",
+  "model": "gemini-1.5-flash"
+}
+```
+
+### Hugging Face Inference API
+**Free Tier**: Rate-limited but functional for testing
+```json
+{
+  "provider": "huggingface",
+  "apiUrl": "https://api-inference.huggingface.co/models",
+  "apiKey": "hf_your-huggingface-token-here",
+  "model": "microsoft/DialoGPT-medium"
+}
+```
+
+### DeepSeek (Chinese Provider)
+**Free Tier**: Competitive free limits
+```json
+{
+  "provider": "openai",
+  "apiUrl": "https://api.deepseek.com/v1",
+  "apiKey": "sk-your-deepseek-key-here",
+  "model": "deepseek-chat"
+}
+```
+
+### Together.ai
+**Free Credits**: $25 in free credits for new accounts
+```json
+{
+  "provider": "openai",
+  "apiUrl": "https://api.together.xyz/v1",
+  "apiKey": "your-together-api-key-here",
+  "model": "meta-llama/Llama-3-8b-chat-hf"
+}
+```
+
+**Note**: Free tiers have rate limits and may require account verification. For production use, consider upgrading to paid plans for better reliability and higher limits.
+
 ## Configuration Options
 
 ### System Prompt
