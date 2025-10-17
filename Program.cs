@@ -123,6 +123,7 @@ builder.Services.AddSingleton<ICorradeService, CorradeService>();
 builder.Services.AddSingleton<IAiChatService, AiChatService>();
 builder.Services.AddSingleton<IChatHistoryService, ChatHistoryService>();
 builder.Services.AddSingleton<IScriptDialogService, ScriptDialogService>();
+builder.Services.AddSingleton<ITeleportRequestService, TeleportRequestService>();
 builder.Services.AddSingleton<IConnectionTrackingService, ConnectionTrackingService>();
 builder.Services.AddSingleton<IChatProcessingService, ChatProcessingService>();
 

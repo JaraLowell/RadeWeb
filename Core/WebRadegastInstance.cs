@@ -20,6 +20,8 @@ namespace RadegastWeb.Core
         private readonly IAiChatService _aiChatService;
         private readonly IChatHistoryService _chatHistoryService;
         private readonly IScriptDialogService _scriptDialogService;
+        private readonly ITeleportRequestService _teleportRequestService;
+        private readonly IConnectionTrackingService _connectionTrackingService;
         private readonly IChatProcessingService _chatProcessingService;
         private readonly GridClient _client;
         private readonly string _accountId;
@@ -60,8 +62,9 @@ namespace RadegastWeb.Core
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
         public event EventHandler<Models.ScriptDialogEventArgs>? ScriptDialogReceived;
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
+        public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, IChatProcessingService chatProcessingService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -75,6 +78,8 @@ namespace RadegastWeb.Core
             _aiChatService = aiChatService;
             _chatHistoryService = chatHistoryService;
             _scriptDialogService = scriptDialogService;
+            _teleportRequestService = teleportRequestService;
+            _connectionTrackingService = connectionTrackingService;
             _chatProcessingService = chatProcessingService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
@@ -190,6 +195,9 @@ namespace RadegastWeb.Core
             _scriptDialogService.DialogReceived += ScriptDialogService_DialogReceived;
             _scriptDialogService.PermissionReceived += ScriptDialogService_PermissionReceived;
             
+            // Subscribe to teleport request service events
+            _teleportRequestService.TeleportRequestReceived += TeleportRequestService_TeleportRequestReceived;
+            
             // Register script dialog events
             _client.Self.ScriptDialog += Self_ScriptDialog;
             _client.Self.ScriptQuestion += Self_ScriptQuestion;
@@ -231,6 +239,9 @@ namespace RadegastWeb.Core
             // Unsubscribe from script dialog service events
             _scriptDialogService.DialogReceived -= ScriptDialogService_DialogReceived;
             _scriptDialogService.PermissionReceived -= ScriptDialogService_PermissionReceived;
+            
+            // Unsubscribe from teleport request service events
+            _teleportRequestService.TeleportRequestReceived -= TeleportRequestService_TeleportRequestReceived;
             
             // Unregister script dialog events
             _client.Self.ScriptDialog -= Self_ScriptDialog;
@@ -1733,11 +1744,10 @@ namespace RadegastWeb.Core
                 }
             }
 
-            // Filter out typing indicators and other non-chat dialogs
+            // Filter out typing indicators and other non-chat dialogs (except teleport requests which we handle)
             if (e.IM.Dialog == InstantMessageDialog.StartTyping ||
                 e.IM.Dialog == InstantMessageDialog.StopTyping ||
                 e.IM.Dialog == InstantMessageDialog.MessageBox ||
-                e.IM.Dialog == InstantMessageDialog.RequestTeleport ||
                 e.IM.Dialog == InstantMessageDialog.RequestLure ||
                 e.IM.Dialog == InstantMessageDialog.GroupInvitation ||
                 e.IM.Dialog == InstantMessageDialog.InventoryOffered ||
@@ -1746,6 +1756,33 @@ namespace RadegastWeb.Core
             {
                 // These are system notifications, not chat messages
                 // TODO: Could implement proper handling for these in the future
+                return;
+            }
+
+            // Handle teleport requests (offers)
+            if (e.IM.Dialog == InstantMessageDialog.RequestTeleport)
+            {
+                // Check if there are any active web connections for this account
+                var hasActiveConnections = _connectionTrackingService.HasActiveConnections(Guid.Parse(_accountId));
+                
+                if (!hasActiveConnections)
+                {
+                    // No web clients connected - auto-decline the teleport request immediately
+                    _logger.LogInformation("Auto-declining teleport request for account {AccountId} - no active web connections. Request from {FromAgentName} ({FromAgentId})", 
+                        _accountId, e.IM.FromAgentName, e.IM.FromAgentID);
+                    
+                    // Send decline response directly to Second Life
+                    _client.Self.TeleportLureRespond(e.IM.FromAgentID, e.IM.IMSessionID, false);
+                    return;
+                }
+
+                // Active web connections exist - process the teleport request normally
+                await _teleportRequestService.HandleTeleportRequestAsync(
+                    Guid.Parse(_accountId), 
+                    e.IM.FromAgentID, 
+                    e.IM.FromAgentName, 
+                    e.IM.Message, 
+                    e.IM.IMSessionID);
                 return;
             }
 
@@ -2716,6 +2753,22 @@ namespace RadegastWeb.Core
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling script permission received event for account {AccountId}", _accountId);
+            }
+        }
+
+        #endregion
+
+        #region Teleport Request Service Event Handlers
+
+        private void TeleportRequestService_TeleportRequestReceived(object? sender, TeleportRequestEventArgs e)
+        {
+            try
+            {
+                TeleportRequestReceived?.Invoke(this, e);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling teleport request received event for account {AccountId}", _accountId);
             }
         }
 

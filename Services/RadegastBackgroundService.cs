@@ -89,6 +89,7 @@ namespace RadegastWeb.Services
                     instance.NoticeReceived -= OnNoticeReceived;
                     instance.ScriptDialogReceived -= OnScriptDialogReceived;
                     instance.ScriptPermissionReceived -= OnScriptPermissionReceived;
+                    instance.TeleportRequestReceived -= OnTeleportRequestReceived;
                     
                     instance.ChatReceived += OnChatReceived;
                     instance.StatusChanged += OnStatusChanged;
@@ -101,6 +102,7 @@ namespace RadegastWeb.Services
                     instance.NoticeReceived += OnNoticeReceived;
                     instance.ScriptDialogReceived += OnScriptDialogReceived;
                     instance.ScriptPermissionReceived += OnScriptPermissionReceived;
+                    instance.TeleportRequestReceived += OnTeleportRequestReceived;
                 }
             }
         }
@@ -448,6 +450,29 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error broadcasting script permission request");
+            }
+        }
+
+        private async void OnTeleportRequestReceived(object? sender, TeleportRequestEventArgs e)
+        {
+            try
+            {
+                var groupName = $"account_{e.Request.AccountId}";
+                
+                // Note: Connection checking is now done at the WebRadegastInstance level
+                // If we receive this event, it means there are active web connections
+                
+                // Broadcast to connected web clients
+                await _hubContext.Clients
+                    .Group(groupName)
+                    .TeleportRequestReceived(e.Request);
+
+                _logger.LogInformation("Broadcasted teleport request for account {AccountId} from {FromAgentName} ({FromAgentId}): {Message}", 
+                    e.Request.AccountId, e.Request.FromAgentName, e.Request.FromAgentId, e.Request.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error broadcasting teleport request");
             }
         }
     }

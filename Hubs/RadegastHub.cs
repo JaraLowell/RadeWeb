@@ -12,17 +12,19 @@ namespace RadegastWeb.Hubs
         private readonly IPresenceService _presenceService;
         private readonly IAuthenticationService _authService;
         private readonly IScriptDialogService _scriptDialogService;
+        private readonly ITeleportRequestService _teleportRequestService;
         private readonly IConnectionTrackingService _connectionTrackingService;
         private readonly ILogger<RadegastHub> _logger;
         private readonly IHubContext<RadegastHub, IRadegastHubClient> _hubContext;
 
-        public RadegastHub(IAccountService accountService, IChatHistoryService chatHistoryService, IPresenceService presenceService, IAuthenticationService authService, IScriptDialogService scriptDialogService, IConnectionTrackingService connectionTrackingService, ILogger<RadegastHub> logger, IHubContext<RadegastHub, IRadegastHubClient> hubContext)
+        public RadegastHub(IAccountService accountService, IChatHistoryService chatHistoryService, IPresenceService presenceService, IAuthenticationService authService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, ILogger<RadegastHub> logger, IHubContext<RadegastHub, IRadegastHubClient> hubContext)
         {
             _accountService = accountService;
             _chatHistoryService = chatHistoryService;
             _presenceService = presenceService;
             _authService = authService;
             _scriptDialogService = scriptDialogService;
+            _teleportRequestService = teleportRequestService;
             _connectionTrackingService = connectionTrackingService;
             _logger = logger;
             _hubContext = hubContext;
@@ -744,6 +746,68 @@ namespace RadegastWeb.Hubs
             }
         }
 
+        public async Task RespondToTeleportRequest(TeleportRequestResponseRequest request)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                var success = await _teleportRequestService.RespondToTeleportRequestAsync(request);
+                
+                if (!success)
+                {
+                    await Clients.Caller.TeleportRequestError("Failed to respond to teleport request");
+                }
+                else
+                {
+                    // Notify the caller that the request was handled
+                    await Clients.Caller.TeleportRequestClosed(request.AccountId.ToString(), request.RequestId);
+                    _logger.LogInformation("Teleport request response sent for account {AccountId}, request {RequestId}: {Accept}", 
+                        request.AccountId, request.RequestId, request.Accept ? "Accepted" : "Declined");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error responding to teleport request via SignalR");
+                await Clients.Caller.TeleportRequestError("Error responding to teleport request");
+            }
+        }
+
+        public async Task GetActiveTeleportRequests(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    var requests = await _teleportRequestService.GetActiveTeleportRequestsAsync(accountGuid);
+                    
+                    foreach (var request in requests)
+                    {
+                        await Clients.Caller.TeleportRequestReceived(request);
+                    }
+                }
+                else
+                {
+                    await Clients.Caller.TeleportRequestError("Invalid account ID");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting active teleport requests via SignalR");
+                await Clients.Caller.TeleportRequestError("Error retrieving teleport requests");
+            }
+        }
+
         public async Task GetCurrentPresenceStatus(string accountId)
         {
             try
@@ -829,5 +893,10 @@ namespace RadegastWeb.Hubs
         Task ScriptPermissionReceived(ScriptPermissionDto permission);
         Task ScriptPermissionClosed(string accountId, string requestId);
         Task ScriptDialogError(string error);
+        
+        // Teleport Request methods
+        Task TeleportRequestReceived(TeleportRequestDto request);
+        Task TeleportRequestClosed(string accountId, string requestId);
+        Task TeleportRequestError(string error);
     }
 }

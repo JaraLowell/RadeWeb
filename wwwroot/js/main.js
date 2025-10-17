@@ -17,10 +17,13 @@ class RadegastWebClient {
         this.unreadNoticesCount = 0; // Track unread notices count
         this.scriptDialogQueue = []; // Queue for script dialogs
         this.scriptPermissionQueue = []; // Queue for script permissions
+        this.teleportRequestQueue = []; // Queue for teleport requests
         this.isShowingScriptDialog = false; // Track if a script dialog is currently being shown
         this.isShowingScriptPermission = false; // Track if a script permission is currently being shown
+        this.isShowingTeleportRequest = false; // Track if a teleport request is currently being shown
         this.currentDialogId = null; // Track the currently displayed dialog ID
         this.currentPermissionId = null; // Track the currently displayed permission ID
+        this.currentTeleportRequestId = null; // Track the currently displayed teleport request ID
         
         this.initializeSignalR();
         this.bindEvents();
@@ -176,6 +179,19 @@ class RadegastWebClient {
 
             this.connection.on("ScriptDialogError", (error) => {
                 this.showAlert("Script Dialog Error: " + error, "danger");
+            });
+
+            // Teleport request event handlers
+            this.connection.on("TeleportRequestReceived", (request) => {
+                this.handleTeleportRequestReceived(request);
+            });
+
+            this.connection.on("TeleportRequestClosed", (accountId, requestId) => {
+                this.handleTeleportRequestClosed(accountId, requestId);
+            });
+
+            this.connection.on("TeleportRequestError", (error) => {
+                this.showAlert("Teleport Request Error: " + error, "danger");
             });
 
             await this.connection.start();
@@ -1158,8 +1174,10 @@ class RadegastWebClient {
         // Clear script dialog and permission queues
         this.scriptDialogQueue = [];
         this.scriptPermissionQueue = [];
+        this.teleportRequestQueue = [];
         this.isShowingScriptDialog = false;
         this.isShowingScriptPermission = false;
+        this.isShowingTeleportRequest = false;
         this.currentDialogId = null;
         this.currentPermissionId = null;
         
@@ -2214,28 +2232,9 @@ class RadegastWebClient {
         // Update the tab count
         this.updateTabCounts();
         
-        // Display unread notices as notifications
-        const unreadNotices = notices.filter(n => !n.isRead);
-        unreadNotices.forEach(notice => {
-            // Filter out non-notice messages that might have been incorrectly classified
-            // Notice.Type is an enum: 0=Group, 1=Region, 2=System
-            if (notice.type === undefined || ![0, 1, 2].includes(notice.type)) {
-                console.log("Skipping non-notice message in recent notices:", notice);
-                return;
-            }
-            
-            const sessionId = notice.type === 0 && notice.groupId ? 
-                `group-${notice.groupId}` : 'local-chat';
-            const timestamp = new Date(notice.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-            const displayMessage = `[${timestamp}] ${notice.fromName} ${notice.title}\n${notice.message}`;
-            
-            // Use the same handling as live notices for chat display
-            this.handleNoticeReceived({
-                notice: notice,
-                sessionId: sessionId,
-                displayMessage: displayMessage
-            });
-        });
+        // Note: We don't need to call handleNoticeReceived for each notice here
+        // because displayNoticesInTab() already displays all notices.
+        // The handleNoticeReceived is only for live/new notices coming in real-time.
     }
 
     // Load recent notices for an account when it connects
@@ -3291,6 +3290,217 @@ class RadegastWebClient {
         } catch (error) {
             console.error("Error responding to script permission:", error);
             this.showAlert("Error responding to script permission", "danger");
+        }
+    }
+
+    // Teleport Request Methods
+    handleTeleportRequestReceived(request) {
+        console.log("Teleport request received:", request);
+        
+        // Only show requests for the current active account
+        if (request.accountId !== this.currentAccountId) {
+            return;
+        }
+        
+        // Check if this request is already in the queue to prevent duplicates
+        const existingRequest = this.teleportRequestQueue.find(r => r.requestId === request.requestId);
+        if (existingRequest) {
+            console.log(`Teleport request ${request.requestId} already in queue, ignoring duplicate`);
+            return;
+        }
+        
+        // Add request to queue
+        this.teleportRequestQueue.push(request);
+        console.log("Teleport request added to queue. Queue length:", this.teleportRequestQueue.length);
+        
+        // Process queue if not already showing a request
+        this.processTeleportRequestQueue();
+    }
+
+    handleTeleportRequestClosed(accountId, requestId) {
+        console.log(`Teleport request closed: ${requestId}, current displayed: ${this.currentTeleportRequestId}`);
+        
+        // Remove any matching request from the queue to prevent it from showing again
+        const initialQueueLength = this.teleportRequestQueue.length;
+        this.teleportRequestQueue = this.teleportRequestQueue.filter(request => request.requestId !== requestId);
+        const removedCount = initialQueueLength - this.teleportRequestQueue.length;
+        
+        if (removedCount > 0) {
+            console.log(`Removed ${removedCount} teleport request(s) from queue. Queue length now: ${this.teleportRequestQueue.length}`);
+        }
+        
+        // If this is the currently displayed request, hide it and continue processing queue
+        if (this.currentTeleportRequestId === requestId) {
+            this.isShowingTeleportRequest = false;
+            this.currentTeleportRequestId = null;
+            
+            // Hide the modal if it's open
+            const teleportModal = document.getElementById('teleportRequestModal');
+            if (teleportModal) {
+                const modalInstance = bootstrap.Modal.getInstance(teleportModal);
+                if (modalInstance) {
+                    modalInstance.hide();
+                }
+                
+                // Process next request in queue after modal is fully hidden
+                setTimeout(() => {
+                    this.processTeleportRequestQueue();
+                }, 300);
+            } else {
+                // Process next request immediately if modal wasn't open
+                this.processTeleportRequestQueue();
+            }
+        }
+    }
+
+    processTeleportRequestQueue() {
+        // Don't show new request if one is already being shown or queue is empty
+        if (this.isShowingTeleportRequest || this.teleportRequestQueue.length === 0) {
+            console.log(`Cannot process teleport request queue: isShowing=${this.isShowingTeleportRequest}, queueLength=${this.teleportRequestQueue.length}, currentRequestId=${this.currentTeleportRequestId}`);
+            return;
+        }
+        
+        // Get the next request from the queue
+        const request = this.teleportRequestQueue.shift();
+        console.log(`Processing teleport request from queue: ${request.requestId}. Remaining in queue: ${this.teleportRequestQueue.length}`);
+        
+        // Mark that we're showing a request
+        this.isShowingTeleportRequest = true;
+        this.currentTeleportRequestId = request.requestId;
+        
+        // Clean up any stray modal backdrops before showing new request
+        this.cleanupModalBackdrops();
+        
+        this.showTeleportRequest(request);
+    }
+
+    showTeleportRequest(request) {
+        const modal = document.getElementById('teleportRequestModal');
+        const fromAgentEl = document.getElementById('teleportFromAgent');
+        const messageEl = document.getElementById('teleportMessage');
+        const acceptBtn = document.getElementById('teleportAccept');
+        const declineBtn = document.getElementById('teleportDecline');
+
+        if (!modal || !fromAgentEl || !messageEl || !acceptBtn || !declineBtn) {
+            console.error("Teleport request modal elements not found, creating modal...");
+            this.createTeleportRequestModal();
+            // Try again after creating modal
+            setTimeout(() => this.showTeleportRequest(request), 100);
+            return;
+        }
+
+        // Set request content
+        fromAgentEl.textContent = request.fromAgentName || 'Unknown Avatar';
+        messageEl.innerHTML = this.escapeHtml(request.message || 'No message provided').replace(/\n/g, '<br>');
+
+        // Remove existing event listeners by cloning elements
+        const newAcceptBtn = acceptBtn.cloneNode(true);
+        const newDeclineBtn = declineBtn.cloneNode(true);
+        acceptBtn.parentNode.replaceChild(newAcceptBtn, acceptBtn);
+        declineBtn.parentNode.replaceChild(newDeclineBtn, declineBtn);
+
+        // Add event listeners
+        newAcceptBtn.addEventListener('click', () => {
+            this.respondToTeleportRequest(request.requestId, true);
+        });
+
+        newDeclineBtn.addEventListener('click', () => {
+            this.respondToTeleportRequest(request.requestId, false);
+        });
+
+        // Show the modal
+        const modalInstance = new bootstrap.Modal(modal, {
+            backdrop: 'static',
+            keyboard: false
+        });
+
+        modalInstance.show();
+
+        // Set focus to accept button by default
+        modal.addEventListener('shown.bs.modal', () => {
+            newAcceptBtn.focus();
+        }, { once: true });
+    }
+
+    createTeleportRequestModal() {
+        // Create the teleport request modal if it doesn't exist
+        const existingModal = document.getElementById('teleportRequestModal');
+        if (existingModal) {
+            return; // Modal already exists
+        }
+
+        const modalHtml = `
+            <div class="modal fade" id="teleportRequestModal" tabindex="-1" aria-labelledby="teleportRequestModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content">
+                        <div class="modal-header bg-primary text-white">
+                            <h5 class="modal-title" id="teleportRequestModalLabel">
+                                <i class="fas fa-rocket me-2"></i>Teleport Offer
+                            </h5>
+                        </div>
+                        <div class="modal-body">
+                            <div class="text-center mb-3">
+                                <h6 class="fw-bold" id="teleportFromAgent">Loading...</h6>
+                                <small class="text-muted">wants to teleport you to their location</small>
+                            </div>
+                            <div class="alert alert-info" role="alert">
+                                <div id="teleportMessage">Loading message...</div>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-success" id="teleportAccept">
+                                <i class="fas fa-check me-2"></i>Teleport
+                            </button>
+                            <button type="button" class="btn btn-secondary" id="teleportDecline">
+                                <i class="fas fa-times me-2"></i>Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Add the modal to the page
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        console.log("Teleport request modal created");
+    }
+
+    async respondToTeleportRequest(requestId, accept) {
+        try {
+            console.log(`Responding to teleport request ${requestId}: ${accept ? 'Accept' : 'Decline'}`);
+            
+            if (!this.currentAccountId) {
+                console.warn("Cannot respond to teleport request - no active account");
+                this.showAlert("Cannot respond to teleport request - no active account", "warning");
+                return;
+            }
+            
+            if (this.connection) {
+                await this.connection.invoke("RespondToTeleportRequest", {
+                    accountId: this.currentAccountId,
+                    requestId: requestId,
+                    accept: accept
+                });
+                
+                console.log(`Teleport request response sent: ${accept ? 'Accepted' : 'Declined'}`);
+                
+                // Hide the modal
+                const modal = document.getElementById('teleportRequestModal');
+                if (modal) {
+                    const modalInstance = bootstrap.Modal.getInstance(modal);
+                    if (modalInstance) {
+                        modalInstance.hide();
+                    }
+                }
+                
+                // Clean up any modal backdrops after a short delay
+                setTimeout(() => {
+                    this.cleanupModalBackdrops();
+                }, 300);
+            }
+        } catch (error) {
+            console.error("Error responding to teleport request:", error);
+            this.showAlert("Error responding to teleport request", "danger");
         }
     }
 
