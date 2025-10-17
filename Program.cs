@@ -65,7 +65,7 @@ builder.Services.AddSwaggerGen(options =>
     options.SwaggerDoc("v1", new() 
     { 
         Title = "Radegast Web API", 
-        Version = "v1",
+        Version = "v1.2",
         Description = "Multi-Account Second Life Web Client API",
         Contact = new() 
         {
@@ -185,7 +185,7 @@ using (var scope = app.Services.CreateScope())
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Radegast Web API v1");
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Radegast Web API v1.2");
     c.RoutePrefix = "swagger"; // Set swagger UI at /swagger
 });
 

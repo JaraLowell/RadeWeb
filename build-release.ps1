@@ -3,7 +3,7 @@
 # Supports both Windows PowerShell and PowerShell Core
 
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "1.2.0",
     [string]$Configuration = "Release",
     [switch]$Clean = $false,
     [switch]$WindowsOnly = $false,
