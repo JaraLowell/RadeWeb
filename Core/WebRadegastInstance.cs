@@ -1783,6 +1783,40 @@ namespace RadegastWeb.Core
                 });
             }
 
+            // Check for Corrade commands in IMs (for external chat interfaces)
+            if (_corradeService.IsEnabled &&
+                _corradeService.IsWhisperCorradeCommand(e.IM.Message))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        // Check if this account should process Corrade commands
+                        var shouldProcess = await _corradeService.ShouldProcessWhispersForAccountAsync(Guid.Parse(_accountId));
+                        if (!shouldProcess)
+                        {
+                            _logger.LogDebug("Corrade command in IM ignored - account {AccountId} not configured for Corrade processing", _accountId);
+                            return;
+                        }
+
+                        _logger.LogInformation("Processing Corrade command from IM: {SenderName} -> {Message}", senderDisplayName, e.IM.Message);
+
+                        var result = await _corradeService.ProcessWhisperCommandAsync(
+                            Guid.Parse(_accountId), 
+                            e.IM.FromAgentID.ToString(), 
+                            senderDisplayName, 
+                            e.IM.Message);
+                        
+                        _logger.LogInformation("Processed Corrade IM command from {SenderName}: Success={Success}, Message={Message}", 
+                            senderDisplayName, result.Success, result.Message);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing Corrade IM command from {SenderName}", senderDisplayName);
+                    }
+                });
+            }
+
             switch (e.IM.Dialog)
             {
                 case InstantMessageDialog.SessionSend:

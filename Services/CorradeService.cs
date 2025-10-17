@@ -33,15 +33,22 @@ namespace RadegastWeb.Services
             _configPath = Path.Combine("data", "corrade.json");
             
             // Check if plugin should be enabled
+            _logger.LogInformation("Initializing CorradeService...");
             _ = Task.Run(async () =>
             {
                 try
                 {
+                    _logger.LogDebug("Loading Corrade configuration...");
                     var config = await LoadConfigurationAsync();
+                    _logger.LogDebug("Corrade configuration loaded: {GroupCount} groups", config.Groups.Count);
                     _isEnabled = config.Groups.Count > 0;
                     if (_isEnabled)
                     {
                         _logger.LogInformation("Corrade plugin enabled with {GroupCount} groups configured", config.Groups.Count);
+                        foreach (var group in config.Groups)
+                        {
+                            _logger.LogInformation("Corrade group configured: {GroupName} ({GroupUuid})", group.GroupName ?? "Unknown", group.GroupUuid);
+                        }
                     }
                     else
                     {
@@ -50,7 +57,7 @@ namespace RadegastWeb.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to initialize Corrade plugin");
+                    _logger.LogError(ex, "Failed to initialize Corrade plugin");
                     _isEnabled = false;
                 }
             });

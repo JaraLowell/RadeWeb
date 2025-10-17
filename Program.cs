@@ -162,6 +162,11 @@ using (var scope = app.Services.CreateScope())
     // Load existing accounts
     await accountService.LoadAccountsAsync();
     
+    // Initialize CorradeService to ensure it loads configuration at startup
+    var corradeService = scope.ServiceProvider.GetRequiredService<ICorradeService>();
+    var corradeConfig = await corradeService.LoadConfigurationAsync();
+    Log.Information("CorradeService initialized with {GroupCount} groups", corradeConfig.Groups.Count);
+    
     // Ensure test account exists for development
     /*
     if (app.Environment.IsDevelopment())
