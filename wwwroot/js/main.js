@@ -1064,8 +1064,9 @@ class RadegastWebClient {
         if (!account || this.currentAccountId !== account.accountId) return;
         
         // Update the account name and status
-        document.getElementById('chatAccountName').textContent = 
-            account.displayName || `${account.firstName} ${account.lastName}`;
+        const accountNameElement = document.getElementById('chatAccountName');
+        const serviceIcons = `${account.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i> ' : ''}${account.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i> ' : ''}`;
+        accountNameElement.innerHTML = serviceIcons + (account.displayName || `${account.firstName} ${account.lastName}`);
         document.getElementById('chatAccountStatus').textContent = 
             `${account.status}${account.currentRegion ? ' • ' + account.currentRegion : ''}`;
         
@@ -1131,7 +1132,9 @@ class RadegastWebClient {
                     <div class="d-flex align-items-center">
                         <span class="account-status ${statusClass}" title="Status: ${account.isConnected ? 'Online' : 'Offline'}"></span>
                         <div class="account-info flex-grow-1">
-                            <div class="account-name">${account.displayName || account.firstName + ' ' + account.lastName}</div>
+                            <div class="account-name">
+                                ${account.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i> ' : ''}${account.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i> ' : ''}${account.displayName || account.firstName + ' ' + account.lastName}
+                            </div>
                             <div class="account-details">
                                 ${account.status}${account.currentRegion ? ' • ' + account.currentRegion : ''}
                             </div>
@@ -1288,8 +1291,9 @@ class RadegastWebClient {
         this.stopAvatarRefresh();
         
         // Update chat interface
-        document.getElementById('chatAccountName').textContent = 
-            account.displayName || `${account.firstName} ${account.lastName}`;
+        const accountNameElement = document.getElementById('chatAccountName');
+        const serviceIcons = `${account.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i> ' : ''}${account.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i> ' : ''}`;
+        accountNameElement.innerHTML = serviceIcons + (account.displayName || `${account.firstName} ${account.lastName}`);
         document.getElementById('chatAccountStatus').textContent = 
             `${account.status}${account.currentRegion ? ' • ' + account.currentRegion : ''}`;
         
@@ -1911,8 +1915,9 @@ class RadegastWebClient {
             // Update chat interface if this is the current account
             if (this.currentAccountId === status.accountId) {
                 // Update the account display name in case it changed
-                document.getElementById('chatAccountName').textContent = 
-                    status.displayName || `${status.firstName} ${status.lastName}`;
+                const accountNameElement = document.getElementById('chatAccountName');
+                const serviceIcons = `${status.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i> ' : ''}${status.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i> ' : ''}`;
+                accountNameElement.innerHTML = serviceIcons + (status.displayName || `${status.firstName} ${status.lastName}`);
                 
                 // Update the status text
                 document.getElementById('chatAccountStatus').textContent = 

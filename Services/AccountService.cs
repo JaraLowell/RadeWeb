@@ -471,6 +471,8 @@ namespace RadegastWeb.Services
         {
             // Get presence service to check current presence status
             var presenceService = _serviceProvider.GetService<IPresenceService>();
+            var aiChatService = _serviceProvider.GetService<IAiChatService>();
+            var corradeService = _serviceProvider.GetService<ICorradeService>();
             
             var statuses = _accounts.Values.Select(account => 
             {
@@ -495,6 +497,39 @@ namespace RadegastWeb.Services
                     
                     status = newStatus;
                 }
+
+                // Check if AI bot is active for this account
+                var hasAiBotActive = false;
+                if (aiChatService?.IsEnabled == true)
+                {
+                    var aiConfig = aiChatService.GetConfiguration();
+                    if (aiConfig != null)
+                    {
+                        // If LinkedAccountId is null/empty, AI bot is active for all accounts (legacy behavior)
+                        // Otherwise, only active for the specifically linked account
+                        hasAiBotActive = string.IsNullOrWhiteSpace(aiConfig.LinkedAccountId) || 
+                                         aiConfig.LinkedAccountId.Equals(account.Id.ToString(), StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+
+                // Check if Corrade is active for this account
+                var hasCorradeActive = false;
+                if (corradeService?.IsEnabled == true)
+                {
+                    try
+                    {
+                        // Use async method but we need to handle it synchronously here
+                        // This is a known limitation but acceptable for status checking
+                        var corradeTask = corradeService.ShouldProcessWhispersForAccountAsync(account.Id);
+                        corradeTask.Wait(TimeSpan.FromMilliseconds(100)); // Short timeout to avoid blocking
+                        hasCorradeActive = corradeTask.IsCompletedSuccessfully && corradeTask.Result;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error checking Corrade status for account {AccountId}", account.Id);
+                        // Continue without Corrade status
+                    }
+                }
                 
                 return new AccountStatus
                 {
@@ -507,7 +542,9 @@ namespace RadegastWeb.Services
                     CurrentRegion = account.CurrentRegion,
                     LastLoginAt = account.LastLoginAt,
                     AvatarUuid = account.AvatarUuid,
-                    GridUrl = account.GridUrl
+                    GridUrl = account.GridUrl,
+                    HasAiBotActive = hasAiBotActive,
+                    HasCorradeActive = hasCorradeActive
                 };
             });
 

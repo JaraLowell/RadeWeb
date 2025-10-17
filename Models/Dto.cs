@@ -12,6 +12,8 @@ namespace RadegastWeb.Models
         public DateTime? LastLoginAt { get; set; }
         public string? AvatarUuid { get; set; }
         public string GridUrl { get; set; } = string.Empty;
+        public bool HasAiBotActive { get; set; } = false;
+        public bool HasCorradeActive { get; set; } = false;
     }
     
     public class LoginRequest

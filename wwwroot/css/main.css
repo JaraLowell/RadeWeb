@@ -618,6 +618,13 @@ a {
 .account-name {
     font-weight: 500;
     margin-bottom: 0.125rem;
+    display: flex;
+    align-items: center;
+}
+
+.account-name .service-icon {
+    font-size: 0.75em;
+    opacity: 0.9;
 }
 
 .account-details {
@@ -1112,4 +1119,47 @@ a {
 
 [data-theme="dark"] .status-busy {
     color: #dc3545 !important;
+}
+
+/* FontAwesome Icon Color Override */
+/* Force all FontAwesome icons to use grey/black colors */
+.fa, .fas, .far, .fal, .fab, 
+i[class*="fa-"], i[class^="fa "] {
+    color: #6c757d !important; /* Grey color for light mode */
+}
+
+/* Dark mode FontAwesome icons */
+[data-theme="dark"] .fa, 
+[data-theme="dark"] .fas, 
+[data-theme="dark"] .far, 
+[data-theme="dark"] .fal, 
+[data-theme="dark"] .fab,
+[data-theme="dark"] i[class*="fa-"], 
+[data-theme="dark"] i[class^="fa "] {
+    color: #adb5bd !important; /* Light grey for dark mode */
+}
+
+/* Special cases where we want to keep some semantic colors */
+.btn .fa, .btn .fas, .btn .far, .btn .fal, .btn .fab,
+.btn i[class*="fa-"], .btn i[class^="fa "] {
+    color: inherit !important; /* Inherit button text color */
+}
+
+/* Status indicators can keep their colors */
+.status-online .fa, .status-online .fas, .status-online .far, .status-online .fal, .status-online .fab,
+.status-online i[class*="fa-"], .status-online i[class^="fa "],
+.status-away .fa, .status-away .fas, .status-away .far, .status-away .fal, .status-away .fab,
+.status-away i[class*="fa-"], .status-away i[class^="fa "],
+.status-busy .fa, .status-busy .fas, .status-busy .far, .status-busy .fal, .status-busy .fab,
+.status-busy i[class*="fa-"], .status-busy i[class^="fa "] {
+    color: inherit !important;
+}
+
+/* Service icons - override inline styles with grey/black */
+.service-icon {
+    color: #6c757d !important; /* Grey instead of colored */
+}
+
+[data-theme="dark"] .service-icon {
+    color: #adb5bd !important; /* Light grey for dark mode */
 }
