@@ -1743,34 +1743,16 @@ class RadegastWebClient {
             const session = this.chatSessions[sessionId];
             if (!session) return;
 
-            let sent = false;
             if (session.chatType === 'IM') {
                 if (this.connection) {
                     await this.connection.invoke("SendIM", this.currentAccountId, session.targetId, message);
-                    sent = true;
                 }
             } else if (session.chatType === 'Group') {
                 if (this.connection) {
                     await this.connection.invoke("SendGroupIM", this.currentAccountId, session.targetId, message);
-                    sent = true;
                 }
             }
 
-            if (sent) {
-                // Show the outgoing message in the chat window immediately
-                const chatMessage = {
-                    accountId: this.currentAccountId,
-                    sessionId: sessionId,
-                    sessionName: session.sessionName,
-                    chatType: session.chatType,
-                    senderId: this.currentAccountId,
-                    senderName: this.accounts.find(a => a.accountId === this.currentAccountId)?.displayName || 'You',
-                    message: message,
-                    timestamp: new Date().toISOString(),
-                    targetId: session.targetId
-                };
-                this.displayChatMessage(chatMessage);
-            }
             inputElement.value = '';
         } catch (error) {
             console.error("Error sending message:", error);

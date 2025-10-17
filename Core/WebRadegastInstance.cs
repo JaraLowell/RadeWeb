@@ -412,7 +412,7 @@ namespace RadegastWeb.Core
                 if (UUID.TryParse(targetId, out UUID targetUUID))
                 {
                     _client.Self.InstantMessage(targetUUID, message);
-                    
+
                     // Create session if it doesn't exist
                     var sessionId = $"im-{targetId}";
                     if (!_chatSessions.ContainsKey(sessionId))
@@ -424,12 +424,12 @@ namespace RadegastWeb.Core
                             // Fall back to account-specific service
                             targetDisplayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), targetId);
                         }
-                        
+
                         // If the display name is still invalid, proactively request a fresh one
                         if (string.IsNullOrWhiteSpace(targetDisplayName) || targetDisplayName == "Loading..." || targetDisplayName == "???")
                         {
                             targetDisplayName = "Unknown User"; // Temporary fallback
-                            
+
                             // Proactively request a proper display name for future use
                             _ = Task.Run(async () =>
                             {
@@ -437,7 +437,7 @@ namespace RadegastWeb.Core
                                 {
                                     // Request display name refresh for this avatar
                                     await _displayNameService.RefreshDisplayNameAsync(Guid.Parse(_accountId), targetId);
-                                    
+
                                     // Also trigger a legacy name request as fallback
                                     if (_client.Network.Connected && UUID.TryParse(targetId, out UUID avatarUUID))
                                     {
@@ -450,7 +450,7 @@ namespace RadegastWeb.Core
                                 }
                             });
                         }
-                        
+
                         var session = new ChatSessionDto
                         {
                             SessionId = sessionId,
@@ -480,7 +480,17 @@ namespace RadegastWeb.Core
                         TargetId = targetId,
                         SessionId = sessionId
                     };
-                    
+
+                    // Record outgoing IM in chat history
+                    try
+                    {
+                        await _chatHistoryService.SaveChatMessageAsync(chatMessage);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error recording outgoing IM in chat history");
+                    }
+
                     ChatReceived?.Invoke(this, chatMessage);
                 }
             }
