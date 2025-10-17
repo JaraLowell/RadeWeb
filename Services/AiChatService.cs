@@ -60,14 +60,14 @@ namespace RadegastWeb.Services
             }
         }
 
-        public async Task<bool> ShouldRespondAsync(ChatMessageDto message)
+        public Task<bool> ShouldRespondAsync(ChatMessageDto message)
         {
             if (!IsEnabled)
-                return false;
+                return Task.FromResult(false);
 
             var config = GetCachedConfiguration();
             if (config == null)
-                return false;
+                return Task.FromResult(false);
 
             // Check linkedAccountId - only process chat from the specified account
             if (!string.IsNullOrEmpty(config.LinkedAccountId))
@@ -77,24 +77,24 @@ namespace RadegastWeb.Services
                 {
                     _logger.LogDebug("Ignoring message - linkedAccountId {LinkedAccountId} doesn't match message AccountId {AccountId}",
                         config.LinkedAccountId, message.AccountId);
-                    return false;
+                    return Task.FromResult(false);
                 }
             }
             else
             {
                 // If no linkedAccountId is specified, don't process any chat (bot is effectively disabled)
                 _logger.LogDebug("No linkedAccountId specified - AI bot will not process any chat");
-                return false;
+                return Task.FromResult(false);
             }
 
             // Only respond to local chat (not IMs, groups, or whispers)
             if (message.ChatType.ToLower() != "normal")
-                return false;
+                return Task.FromResult(false);
 
             // Don't respond to our own messages
             var accountInstance = _accountService.GetInstance(message.AccountId);
             if (accountInstance != null && message.SenderName == accountInstance.Client.Self.Name)
-                return false;
+                return Task.FromResult(false);
 
             // Check ignore lists (UUID is more secure than name)
             if (!string.IsNullOrEmpty(message.SenderId) && 
@@ -102,7 +102,7 @@ namespace RadegastWeb.Services
                     string.Equals(uuid, message.SenderId, StringComparison.OrdinalIgnoreCase)))
             {
                 _logger.LogDebug("Ignoring message from UUID {SenderId} (in ignore UUID list)", message.SenderId);
-                return false;
+                return Task.FromResult(false);
             }
 
             // Also check name-based ignore list for legacy support
@@ -110,12 +110,12 @@ namespace RadegastWeb.Services
                 string.Equals(name, message.SenderName, StringComparison.OrdinalIgnoreCase)))
             {
                 _logger.LogDebug("Ignoring message from {SenderName} (in ignore name list)", message.SenderName);
-                return false;
+                return Task.FromResult(false);
             }
 
             // Check response probability
             if (_random.NextDouble() > config.ResponseConfig.ResponseProbability)
-                return false;
+                return Task.FromResult(false);
 
             // Check for trigger conditions
             var shouldRespond = false;
@@ -137,7 +137,7 @@ namespace RadegastWeb.Services
                 message.Message.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
                 shouldRespond = true;
 
-            return shouldRespond;
+            return Task.FromResult(shouldRespond);
         }
 
         public async Task<string?> GenerateResponseAsync(ChatMessageDto message, IEnumerable<ChatMessageDto> chatHistory)

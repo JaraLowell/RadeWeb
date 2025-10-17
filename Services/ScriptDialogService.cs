@@ -95,7 +95,7 @@ namespace RadegastWeb.Services
             );
         }
         
-        public async Task HandleScriptDialogAsync(Guid accountId, string message, string objectName, UUID imageId, UUID objectId, string firstName, string lastName, int channel, List<string> buttons)
+        public Task HandleScriptDialogAsync(Guid accountId, string message, string objectName, UUID imageId, UUID objectId, string firstName, string lastName, int channel, List<string> buttons)
         {
             try
             {
@@ -129,16 +129,16 @@ namespace RadegastWeb.Services
                 
                 // Fire event for SignalR broadcast
                 DialogReceived?.Invoke(this, new Models.ScriptDialogEventArgs(dialog));
-                
-                await Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling script dialog for account {AccountId}", accountId);
             }
+            
+            return Task.CompletedTask;
         }
         
-        public async Task HandleScriptPermissionAsync(Guid accountId, UUID taskId, UUID itemId, string objectName, string objectOwner, ScriptPermission permissions)
+        public Task HandleScriptPermissionAsync(Guid accountId, UUID taskId, UUID itemId, string objectName, string objectOwner, ScriptPermission permissions)
         {
             try
             {
@@ -165,13 +165,13 @@ namespace RadegastWeb.Services
                 
                 // Fire event for SignalR broadcast
                 PermissionReceived?.Invoke(this, new Models.ScriptPermissionEventArgs(permission));
-                
-                await Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling script permission request for account {AccountId}", accountId);
             }
+            
+            return Task.CompletedTask;
         }
         
         public Task<bool> RespondToDialogAsync(ScriptDialogResponseRequest request)

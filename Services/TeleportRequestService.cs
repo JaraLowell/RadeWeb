@@ -61,7 +61,7 @@ namespace RadegastWeb.Services
             );
         }
         
-        public async Task HandleTeleportRequestAsync(Guid accountId, UUID fromAgentId, string fromAgentName, string message, UUID sessionId)
+        public Task HandleTeleportRequestAsync(Guid accountId, UUID fromAgentId, string fromAgentName, string message, UUID sessionId)
         {
             try
             {
@@ -87,13 +87,13 @@ namespace RadegastWeb.Services
                 
                 // Fire event for SignalR broadcast
                 TeleportRequestReceived?.Invoke(this, new TeleportRequestEventArgs(request));
-                
-                await Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling teleport request for account {AccountId}", accountId);
             }
+            
+            return Task.CompletedTask;
         }
         
         public Task<bool> RespondToTeleportRequestAsync(TeleportRequestResponseRequest request)
