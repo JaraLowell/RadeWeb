@@ -131,6 +131,9 @@ namespace RadegastWeb.Services
                 if (sender is not Core.WebRadegastInstance instance)
                     return;
 
+                // Get service status information
+                (bool hasAiBotActive, bool hasCorradeActive) = await GetServiceStatusAsync(Guid.Parse(instance.AccountId));
+
                 var accountStatus = new AccountStatus
                 {
                     AccountId = Guid.Parse(instance.AccountId),
@@ -142,7 +145,9 @@ namespace RadegastWeb.Services
                     CurrentRegion = instance.AccountInfo.CurrentRegion,
                     LastLoginAt = instance.AccountInfo.LastLoginAt,
                     AvatarUuid = instance.AccountInfo.AvatarUuid,
-                    GridUrl = instance.AccountInfo.GridUrl
+                    GridUrl = instance.AccountInfo.GridUrl,
+                    HasAiBotActive = hasAiBotActive,
+                    HasCorradeActive = hasCorradeActive
                 };
 
                 await _hubContext.Clients
@@ -162,6 +167,9 @@ namespace RadegastWeb.Services
                 if (sender is not Core.WebRadegastInstance instance)
                     return;
 
+                // Get service status information
+                (bool hasAiBotActive, bool hasCorradeActive) = await GetServiceStatusAsync(Guid.Parse(instance.AccountId));
+
                 var accountStatus = new AccountStatus
                 {
                     AccountId = Guid.Parse(instance.AccountId),
@@ -173,7 +181,9 @@ namespace RadegastWeb.Services
                     CurrentRegion = instance.AccountInfo.CurrentRegion,
                     LastLoginAt = instance.AccountInfo.LastLoginAt,
                     AvatarUuid = instance.AccountInfo.AvatarUuid,
-                    GridUrl = instance.AccountInfo.GridUrl
+                    GridUrl = instance.AccountInfo.GridUrl,
+                    HasAiBotActive = hasAiBotActive,
+                    HasCorradeActive = hasCorradeActive
                 };
 
                 await _hubContext.Clients
@@ -184,6 +194,50 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error broadcasting connection change");
             }
+        }
+
+        /// <summary>
+        /// Gets the service status (AI Bot and Corrade) for a specific account
+        /// </summary>
+        /// <param name="accountId">The account ID to check</param>
+        /// <returns>Tuple containing (hasAiBotActive, hasCorradeActive)</returns>
+        private async Task<(bool hasAiBotActive, bool hasCorradeActive)> GetServiceStatusAsync(Guid accountId)
+        {
+            var hasAiBotActive = false;
+            var hasCorradeActive = false;
+
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                
+                // Check AI Bot status
+                var aiChatService = scope.ServiceProvider.GetService<IAiChatService>();
+                if (aiChatService?.IsEnabled == true)
+                {
+                    var aiConfig = aiChatService.GetConfiguration();
+                    if (aiConfig != null)
+                    {
+                        // If LinkedAccountId is null/empty, AI bot is active for all accounts (legacy behavior)
+                        // Otherwise, only active for the specifically linked account
+                        hasAiBotActive = string.IsNullOrWhiteSpace(aiConfig.LinkedAccountId) || 
+                                         aiConfig.LinkedAccountId.Equals(accountId.ToString(), StringComparison.OrdinalIgnoreCase);
+                    }
+                }
+
+                // Check Corrade status
+                var corradeService = scope.ServiceProvider.GetService<ICorradeService>();
+                if (corradeService?.IsEnabled == true)
+                {
+                    hasCorradeActive = await corradeService.ShouldProcessWhispersForAccountAsync(accountId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error getting service status for account {AccountId}", accountId);
+                // Return false for both services if there's an error
+            }
+
+            return (hasAiBotActive, hasCorradeActive);
         }
 
         private async void OnChatSessionUpdated(object? sender, ChatSessionDto session)

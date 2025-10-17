@@ -327,7 +327,46 @@ class RadegastWebClient {
             this.currentChatSession = 'notices';
         }
         
+        // Update monitoring indicator
+        this.updateMonitoringIndicator(tabId);
+        
         console.log(`Active tab set to: ${tabId}, currentChatSession: ${this.currentChatSession}`);
+    }
+
+    updateMonitoringIndicator(tabId) {
+        const indicator = document.getElementById('chatMonitoringIndicator');
+        if (!indicator) return;
+        
+        let indicatorText = '';
+        let iconClass = 'fas fa-eye';
+        
+        if (tabId === 'local-chat') {
+            indicatorText = 'Monitoring Local Chat';
+            iconClass = 'fas fa-comments';
+        } else if (tabId === 'notices') {
+            indicatorText = 'Monitoring Notices';
+            iconClass = 'fas fa-bell';
+        } else if (tabId.startsWith('chat-')) {
+            const sessionId = tabId.replace('chat-', '');
+            const session = this.chatSessions[sessionId];
+            if (session) {
+                if (session.chatType === 'IM') {
+                    indicatorText = `Monitoring IM: ${session.sessionName}`;
+                    iconClass = 'fas fa-envelope';
+                } else if (session.chatType === 'Group') {
+                    indicatorText = `Monitoring Group: ${session.sessionName}`;
+                    iconClass = 'fas fa-users';
+                } else {
+                    indicatorText = `Monitoring ${session.chatType}: ${session.sessionName}`;
+                }
+            } else {
+                indicatorText = 'Monitoring Chat Session';
+            }
+        } else {
+            indicatorText = 'Monitoring Chat';
+        }
+        
+        indicator.innerHTML = `<small class="text-muted"><i class="${iconClass} me-1"></i>${this.escapeHtml(indicatorText)}</small>`;
     }
 
     scrollChatToBottom(tabId, smooth = false) {
@@ -1860,6 +1899,8 @@ class RadegastWebClient {
         // Reset unread count when switching to this tab
         if (this.currentChatSession === `chat-${session.sessionId}`) {
             this.updateTabUnreadCount(session.sessionId, 0);
+            // Update monitoring indicator with the updated session info
+            this.updateMonitoringIndicator(`chat-${session.sessionId}`);
         }
     }
 
@@ -1881,6 +1922,8 @@ class RadegastWebClient {
         // Reset unread count when switching to this tab
         if (this.currentChatSession === `chat-${session.sessionId}`) {
             this.updateTabUnreadCount(session.sessionId, 0);
+            // Update monitoring indicator with the updated session info
+            this.updateMonitoringIndicator(`chat-${session.sessionId}`);
         }
     }
 

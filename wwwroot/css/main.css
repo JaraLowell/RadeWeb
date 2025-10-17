@@ -296,6 +296,17 @@ a {
     background-color: #f8f9fa;
 }
 
+/* Chat Monitoring Indicator */
+.chat-monitoring-indicator {
+    background-color: var(--nav-tab-bg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+[data-theme="dark"] .chat-monitoring-indicator {
+    background-color: var(--card-bg);
+    border-bottom-color: var(--border-color);
+}
+
 .chat-input-area {
     background-color: white;
 }
@@ -667,6 +678,20 @@ a {
 
 .tab-pane {
     min-height: 450px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Ensure all chat messages containers have consistent sizing */
+.tab-pane .chat-messages {
+    height: 350px;
+    flex: 1;
+    min-height: 350px;
+    max-height: 350px;
+}
+
+.tab-pane .chat-input-area {
+    flex-shrink: 0;
 }
 
 /* New message indicators */
