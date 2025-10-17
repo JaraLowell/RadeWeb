@@ -1065,7 +1065,7 @@ class RadegastWebClient {
         
         // Update the account name and status
         const accountNameElement = document.getElementById('chatAccountName');
-        const serviceIcons = `${account.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i> ' : ''}${account.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i> ' : ''}`;
+        const serviceIcons = `${account.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i>&nbsp;' : ''}${account.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i>&nbsp;' : ''}`;
         accountNameElement.innerHTML = serviceIcons + (account.displayName || `${account.firstName} ${account.lastName}`);
         document.getElementById('chatAccountStatus').textContent = 
             `${account.status}${account.currentRegion ? ' • ' + account.currentRegion : ''}`;
@@ -1133,7 +1133,7 @@ class RadegastWebClient {
                         <span class="account-status ${statusClass}" title="Status: ${account.isConnected ? 'Online' : 'Offline'}"></span>
                         <div class="account-info flex-grow-1">
                             <div class="account-name">
-                                ${account.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i> ' : ''}${account.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i> ' : ''}${account.displayName || account.firstName + ' ' + account.lastName}
+                                ${account.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i>&nbsp;' : ''}${account.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i>&nbsp;' : ''}${account.displayName || account.firstName + ' ' + account.lastName}
                             </div>
                             <div class="account-details">
                                 ${account.status}${account.currentRegion ? ' • ' + account.currentRegion : ''}
@@ -1292,7 +1292,7 @@ class RadegastWebClient {
         
         // Update chat interface
         const accountNameElement = document.getElementById('chatAccountName');
-        const serviceIcons = `${account.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i> ' : ''}${account.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i> ' : ''}`;
+        const serviceIcons = `${account.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i>&nbsp;' : ''}${account.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i>&nbsp;' : ''}`;
         accountNameElement.innerHTML = serviceIcons + (account.displayName || `${account.firstName} ${account.lastName}`);
         document.getElementById('chatAccountStatus').textContent = 
             `${account.status}${account.currentRegion ? ' • ' + account.currentRegion : ''}`;
@@ -1916,7 +1916,7 @@ class RadegastWebClient {
             if (this.currentAccountId === status.accountId) {
                 // Update the account display name in case it changed
                 const accountNameElement = document.getElementById('chatAccountName');
-                const serviceIcons = `${status.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i> ' : ''}${status.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i> ' : ''}`;
+                const serviceIcons = `${status.hasAiBotActive ? '<i class="fas fa-user-circle service-icon" title="AI Bot Active" style="color: #007bff;"></i>&nbsp;' : ''}${status.hasCorradeActive ? '<i class="fas fa-server service-icon" title="Corrade Active" style="color: #28a745;"></i>&nbsp;' : ''}`;
                 accountNameElement.innerHTML = serviceIcons + (status.displayName || `${status.firstName} ${status.lastName}`);
                 
                 // Update the status text
