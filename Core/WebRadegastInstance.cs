@@ -2555,7 +2555,12 @@ namespace RadegastWeb.Core
                 {
                     // Stand up
                     _client.Self.Stand();
-                    _logger.LogInformation("Requested to stand up for account {AccountId}", _accountId);
+                    
+                    // Stop all animations that aren't basic avatar animations
+                    // This fixes the issue where object animations continue after standing up
+                    StopAllAnimations();
+                    
+                    _logger.LogInformation("Requested to stand up for account {AccountId} and stopped all animations", _accountId);
                 }
 
                 return true;
@@ -2579,6 +2584,95 @@ namespace RadegastWeb.Core
 
             // Search through all objects in the simulator to find one with the matching UUID
             return _client.Network.CurrentSim.ObjectsPrimitives.Values.Any(prim => prim.ID == objectId);
+        }
+        
+        /// <summary>
+        /// Stop all animations except for known system animations
+        /// This is used when standing up to stop object animations that would otherwise continue
+        /// Based on Radegast's implementation to handle animation persistence issues
+        /// </summary>
+        public void StopAllAnimations()
+        {
+            try
+            {
+                if (!_client.Network.Connected)
+                {
+                    _logger.LogWarning("Cannot stop animations - not connected");
+                    return;
+                }
+
+                var stop = new Dictionary<UUID, bool>();
+
+                // Get all currently signaled animations
+                _client.Self.SignaledAnimations.ForEach(anim =>
+                {
+                    // Only stop animations that are not known system animations
+                    if (!IsKnownSystemAnimation(anim))
+                    {
+                        stop.Add(anim, false); // false = stop animation
+                    }
+                });
+
+                if (stop.Count > 0)
+                {
+                    _client.Self.Animate(stop, true);
+                    _logger.LogInformation("Stopped {Count} non-system animations for account {AccountId}", stop.Count, _accountId);
+                }
+                else
+                {
+                    _logger.LogDebug("No non-system animations to stop for account {AccountId}", _accountId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error stopping animations for account {AccountId}", _accountId);
+            }
+        }
+        
+        /// <summary>
+        /// Checks if an animation UUID is a known system animation that should not be stopped
+        /// Based on OpenMetaverse's Animations class constants
+        /// </summary>
+        /// <param name="animationId">Animation UUID to check</param>
+        /// <returns>True if this is a known system animation</returns>
+        private bool IsKnownSystemAnimation(UUID animationId)
+        {
+            // Known system animations from OpenMetaverse.Animations
+            // These are basic avatar animations that should not be stopped
+            var knownAnimations = new HashSet<UUID>
+            {
+                new UUID("16384f8e-291f-4020-a393-2aa672699b6d"), // STAND
+                new UUID("2408fe9e-df1d-1d7d-f4ff-1384fa7b350f"), // STAND_1
+                new UUID("15468e00-3400-466d-a13b-5efa71fa55d4"), // STAND_2
+                new UUID("370f3a20-6ca6-9971-848c-9a01bc42ae3c"), // STAND_3
+                new UUID("42b46214-4b44-79ae-deb8-0df61424ff4b"), // STAND_4
+                new UUID("6ed24bd8-91aa-4b12-ccc7-c97c857ab4e0"), // WALK
+                new UUID("056e8d4e-4a8b-cfbb-d8b8-0498afe9d97f"), // RUN
+                new UUID("2d25f9fc-0a91-b464-9b03-cdbb69b60c26"), // FLY
+                new UUID("aec4610c-757f-bc4e-c092-c6e9caf18daf"), // HOVER
+                new UUID("4ae8016b-31b9-03bb-c401-b1ea941db41d"), // HOVER_UP
+                new UUID("20f063ea-8306-2562-0b07-5c853b37b31e"), // HOVER_DOWN
+                new UUID("62c5de58-cb33-5743-3d07-9e4cd4352864"), // LAND
+                new UUID("1a5fe8ac-a804-8a5d-7cbd-56bd83184568"), // FALLDOWN
+                new UUID("7a17b059-12b2-41b1-570a-186368b6aa6f"), // SIT
+                new UUID("1c7600d6-661f-b87b-efe2-d7421eb93c86"), // SIT_GROUND
+                new UUID("245f3c54-f1c0-bf2e-811f-46d8eeb386e7"), // SIT_GROUND_CONSTRAINED
+                new UUID("1a2bd58e-87ff-0df8-0b4c-53e047b0bb6e"), // SIT_GENERIC
+                new UUID("1c5c77d1-1201-b215-88d8-0519b8cc0304"), // SIT_TO_STAND
+                new UUID("a8dee56f-2eae-9e7a-05a2-6fb92b97e21e"), // STAND_UP
+                new UUID("6883a61a-b27b-5914-a61e-dda118a9ee2c"), // TURNLEFT
+                new UUID("d2f2ee58-8ad1-06c9-d8d3-3827ba31567a"), // TURNRIGHT
+                new UUID("6bd01860-4ebd-127a-bb3d-d1427e8e0c42"), // AWAY
+                new UUID("efcf670c-2d18-8128-973a-034ebc806b67"), // BUSY
+                new UUID("c0d38bd4-0711-a87f-2a49-8c2a4a0b9fc3"), // TYPE
+                new UUID("92624d3e-1068-f1aa-a5ec-8244585193ed"), // CROUCH
+                new UUID("201f3fdf-cb1f-dbec-201f-7333e328ae7c"), // CROUCHWALK
+                new UUID("47f5f6fb-22e5-ae44-f871-73aaaf4a6022"), // JUMP
+                new UUID("2305bd75-1ca9-b03b-1faa-b176b8a8c49e"), // PREJUMP
+                new UUID("7a4e87fe-de39-6fcb-6223-024b00893244"), // SOFT_LAND
+            };
+
+            return knownAnimations.Contains(animationId);
         }
         
         /// <summary>
