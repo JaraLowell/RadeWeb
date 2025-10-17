@@ -415,7 +415,33 @@ namespace RadegastWeb.Services
                     _ => "/v1/chat/completions" // Default to OpenAI format
                 };
 
-                var response = await _httpClient.PostAsync($"{apiConfig.ApiUrl.TrimEnd('/')}{endpoint}", content, cts.Token);
+                // Smart URL construction to avoid double paths
+                var baseUrl = apiConfig.ApiUrl.TrimEnd('/');
+                string fullUrl;
+                
+                // If the base URL already contains the endpoint path, use it as-is
+                if (baseUrl.EndsWith("/chat/completions") || baseUrl.EndsWith("/messages"))
+                {
+                    fullUrl = baseUrl;
+                }
+                // If the base URL ends with /v1, append only the specific endpoint
+                else if (baseUrl.EndsWith("/v1"))
+                {
+                    var specificEndpoint = apiConfig.Provider.ToLower() switch
+                    {
+                        "openai" => "/chat/completions",
+                        "anthropic" => "/messages", 
+                        _ => "/chat/completions"
+                    };
+                    fullUrl = baseUrl + specificEndpoint;
+                }
+                // Otherwise, append the full endpoint
+                else
+                {
+                    fullUrl = baseUrl + endpoint;
+                }
+
+                var response = await _httpClient.PostAsync(fullUrl, content, cts.Token);
                 
                 if (response.IsSuccessStatusCode)
                 {
