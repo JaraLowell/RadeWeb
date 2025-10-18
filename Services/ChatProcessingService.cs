@@ -33,6 +33,7 @@ namespace RadegastWeb.Services
         private void RegisterBuiltInProcessors()
         {
             // Register processors in priority order (lower numbers first)
+            RegisterProcessor(new GroupIgnoreFilterProcessor(_serviceProvider, _logger), 5); // First to filter out ignored groups
             RegisterProcessor(new UrlProcessingProcessor(_serviceProvider, _logger), 10);
             RegisterProcessor(new DatabaseSaveProcessor(_serviceProvider, _logger), 20);
             RegisterProcessor(new SignalRBroadcastProcessor(_hubContext, _logger), 30);
@@ -376,6 +377,58 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error processing AI chat response for message from {SenderName}", message.SenderName);
                 return ChatProcessingResult.CreateSuccess(); // Continue processing even if AI fails
+            }
+        }
+    }
+
+    /// <summary>
+    /// Processor for filtering out messages from ignored groups early in the pipeline
+    /// </summary>
+    internal class GroupIgnoreFilterProcessor : IChatMessageProcessor
+    {
+        private readonly IServiceProvider _serviceProvider;
+        private readonly ILogger _logger;
+
+        public GroupIgnoreFilterProcessor(IServiceProvider serviceProvider, ILogger logger)
+        {
+            _serviceProvider = serviceProvider;
+            _logger = logger;
+        }
+
+        public string Name => "Group Ignore Filter";
+        public int Priority => 5;
+
+        public async Task<ChatProcessingResult> ProcessAsync(ChatMessageDto message, ChatProcessingContext context)
+        {
+            // Only check group messages
+            if (message.ChatType?.ToLower() != "group" || string.IsNullOrEmpty(message.TargetId))
+                return ChatProcessingResult.CreateSuccess();
+
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
+                
+                var isIgnored = await groupService.IsGroupIgnoredAsync(context.AccountId, message.TargetId);
+                
+                if (isIgnored)
+                {
+                    _logger.LogDebug("Filtering out message from ignored group {GroupId} on account {AccountId}", 
+                        message.TargetId, context.AccountId);
+                    
+                    // Stop processing entirely - this message should not be processed further
+                    return ChatProcessingResult.CreateSuccessStop();
+                }
+
+                return ChatProcessingResult.CreateSuccess();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking group ignore status for {GroupId} on account {AccountId}", 
+                    message.TargetId, context.AccountId);
+                
+                // On error, continue processing to avoid breaking the pipeline
+                return ChatProcessingResult.CreateSuccess();
             }
         }
     }
