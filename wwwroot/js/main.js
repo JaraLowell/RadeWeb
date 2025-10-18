@@ -465,6 +465,17 @@ class RadegastWebClient {
         `;
         contentContainer.appendChild(newPane);
         
+        // Add Enter key listener to the input field
+        const inputElement = document.getElementById(`input-${sessionId}`);
+        if (inputElement) {
+            inputElement.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.sendMessage(sessionId);
+                }
+            });
+        }
+        
         // Store session info
         this.chatSessions[sessionId] = session;
         
@@ -544,6 +555,17 @@ class RadegastWebClient {
             </div>
         `;
         contentContainer.appendChild(newPane);
+        
+        // Add Enter key listener to the input field
+        const inputElement = document.getElementById(`input-${sessionId}`);
+        if (inputElement) {
+            inputElement.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.sendMessage(sessionId);
+                }
+            });
+        }
         
         // Store session info
         this.chatSessions[sessionId] = session;
