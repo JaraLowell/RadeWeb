@@ -943,7 +943,7 @@ class RadegastWebClient {
             const group = this.groups.find(g => g.id === groupId);
             if (group) {
                 group.isIgnored = setIgnored;
-                this.updateGroupsList();
+                this.renderGroupsList();
             }
 
             const statusText = setIgnored ? 'ignored' : 'unignored';
