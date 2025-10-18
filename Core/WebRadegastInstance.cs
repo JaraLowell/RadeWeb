@@ -929,6 +929,38 @@ namespace RadegastWeb.Core
             }
         }
 
+        /// <summary>
+        /// Set the ignore status for a group
+        /// </summary>
+        public async Task SetGroupIgnoreStatusAsync(string groupId, bool isIgnored)
+        {
+            try
+            {
+                await _groupService.SetGroupIgnoreStatusAsync(Guid.Parse(_accountId), groupId, isIgnored);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error setting ignore status for group {GroupId} on account {AccountId}", groupId, _accountId);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Check if a group is ignored
+        /// </summary>
+        public async Task<bool> IsGroupIgnoredAsync(string groupId)
+        {
+            try
+            {
+                return await _groupService.IsGroupIgnoredAsync(Guid.Parse(_accountId), groupId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error checking ignore status for group {GroupId} on account {AccountId}", groupId, _accountId);
+                return false;
+            }
+        }
+
         public void TriggerStatusUpdate()
         {
             UpdateStatus(Status);

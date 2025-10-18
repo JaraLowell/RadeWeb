@@ -161,6 +161,15 @@ namespace RadegastWeb.Services
                 // Extract group ID from binary bucket
                 var groupId = im.BinaryBucket.Length >= 18 ? new UUID(im.BinaryBucket, 2) : im.FromAgentID;
 
+                // Check if this group is ignored
+                var isIgnored = await _groupService.IsGroupIgnoredAsync(accountId, groupId.ToString());
+                if (isIgnored)
+                {
+                    _logger.LogDebug("Skipping group notice from ignored group {GroupId} on account {AccountId}", 
+                        groupId, accountId);
+                    return null;
+                }
+
                 // Parse the notice message (format: "title|message")
                 var parts = im.Message.Split('|', 2);
                 var title = parts.Length > 0 ? parts[0] : "Group Notice";
@@ -221,6 +230,15 @@ namespace RadegastWeb.Services
             {
                 // This is when someone requests a specific group notice - similar to group notice but requires acknowledgment
                 var groupId = im.BinaryBucket.Length >= 18 ? new UUID(im.BinaryBucket, 2) : im.FromAgentID;
+
+                // Check if this group is ignored
+                var isIgnored = await _groupService.IsGroupIgnoredAsync(accountId, groupId.ToString());
+                if (isIgnored)
+                {
+                    _logger.LogDebug("Skipping group notice requested from ignored group {GroupId} on account {AccountId}", 
+                        groupId, accountId);
+                    return null;
+                }
 
                 var parts = im.Message.Split('|', 2);
                 var title = parts.Length > 0 ? parts[0] : "Group Notice";

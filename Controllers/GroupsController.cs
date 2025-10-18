@@ -93,5 +93,62 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, "Internal server error");
             }
         }
+
+        /// <summary>
+        /// Set the ignore status for a group
+        /// </summary>
+        [HttpPut("{accountId}/group/{groupId}/ignore")]
+        public async Task<ActionResult> SetGroupIgnoreStatus(Guid accountId, string groupId, [FromBody] SetGroupIgnoreRequest request)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null)
+                {
+                    return NotFound($"Account {accountId} not found or not initialized");
+                }
+
+                await instance.SetGroupIgnoreStatusAsync(groupId, request.IsIgnored);
+                
+                var statusText = request.IsIgnored ? "ignored" : "unignored";
+                _logger.LogInformation("Group {GroupId} {Status} for account {AccountId}", groupId, statusText, accountId);
+                
+                return Ok(new { success = true, message = $"Group {statusText} successfully" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error setting ignore status for group {GroupId} on account {AccountId}", groupId, accountId);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Check if a group is ignored
+        /// </summary>
+        [HttpGet("{accountId}/group/{groupId}/ignored")]
+        public async Task<ActionResult<bool>> IsGroupIgnored(Guid accountId, string groupId)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null)
+                {
+                    return NotFound($"Account {accountId} not found or not initialized");
+                }
+
+                var isIgnored = await instance.IsGroupIgnoredAsync(groupId);
+                return Ok(isIgnored);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking ignore status for group {GroupId} on account {AccountId}", groupId, accountId);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+    }
+
+    public class SetGroupIgnoreRequest
+    {
+        public bool IsIgnored { get; set; }
     }
 }

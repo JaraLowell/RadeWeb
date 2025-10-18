@@ -41,6 +41,16 @@ namespace RadegastWeb.Services
         Task<string> GetGroupNameAsync(Guid accountId, string groupId, string fallbackName = "Unknown Group");
 
         /// <summary>
+        /// Set the ignore status for a group
+        /// </summary>
+        Task SetGroupIgnoreStatusAsync(Guid accountId, string groupId, bool isIgnored);
+
+        /// <summary>
+        /// Check if a group is ignored
+        /// </summary>
+        Task<bool> IsGroupIgnoredAsync(Guid accountId, string groupId);
+
+        /// <summary>
         /// Clean up account resources
         /// </summary>
         void CleanupAccount(Guid accountId);
@@ -68,6 +78,7 @@ namespace RadegastWeb.Services
         public bool MaturePublish { get; set; }
         public string GroupPowers { get; set; } = string.Empty;
         public Guid AccountId { get; set; }
+        public bool IsIgnored { get; set; } = false;
     }
 
     public class GroupsUpdatedEventArgs : EventArgs

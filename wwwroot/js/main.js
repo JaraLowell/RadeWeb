@@ -830,14 +830,22 @@ class RadegastWebClient {
         groupsList.innerHTML = sortedGroups.map(group => `
             <div class="group-item d-flex justify-content-between align-items-center p-2 border-bottom" data-group-id="${group.id}">
                 <div class="group-info flex-grow-1">
-                    <div class="group-name small fw-bold text-truncate">${this.escapeHtml(group.name)}</div>
+                    <div class="group-name small fw-bold text-truncate ${group.isIgnored ? 'text-muted text-decoration-line-through' : ''}">${this.escapeHtml(group.name)}</div>
                     <div class="group-details text-muted" style="font-size: 0.75rem;">
-                        ${group.memberTitle || 'Member'}
+                        ${group.memberTitle || 'Member'}${group.isIgnored ? ' (Ignored)' : ''}
                     </div>
                 </div>
                 <div class="group-actions">
-                    <button class="btn btn-sm btn-outline-primary" onclick="radegastClient.openGroupChat('${group.id}', '${this.escapeHtml(group.name)}')" title="Open Group Chat">
+                    <button class="btn btn-sm ${group.isIgnored ? 'btn-outline-secondary' : 'btn-outline-primary'}" 
+                            onclick="radegastClient.openGroupChat('${group.id}', '${this.escapeHtml(group.name)}')" 
+                            title="Open Group Chat"
+                            ${group.isIgnored ? 'disabled' : ''}>
                         <i class="fas fa-comments"></i>
+                    </button>
+                    <button class="btn btn-sm ${group.isIgnored ? 'btn-warning' : 'btn-outline-warning'}" 
+                            onclick="radegastClient.toggleGroupIgnore('${group.id}', ${!group.isIgnored})" 
+                            title="${group.isIgnored ? 'Unignore Group' : 'Ignore Group'}">
+                        <i class="fas ${group.isIgnored ? 'fa-bell' : 'fa-bell-slash'}"></i>
                     </button>
                 </div>
             </div>
@@ -877,6 +885,44 @@ class RadegastWebClient {
         } catch (error) {
             console.error("Error opening group chat:", error);
             this.showAlert("Failed to open group chat", "danger");
+        }
+    }
+
+    async toggleGroupIgnore(groupId, setIgnored) {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/groups/${this.currentAccountId}/group/${groupId}/ignore`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ isIgnored: setIgnored })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to update group ignore status');
+            }
+
+            const result = await response.json();
+            
+            // Update the local groups list
+            const group = this.groups.find(g => g.id === groupId);
+            if (group) {
+                group.isIgnored = setIgnored;
+                this.updateGroupsList();
+            }
+
+            const statusText = setIgnored ? 'ignored' : 'unignored';
+            this.showAlert(`Group ${statusText} successfully`, "success");
+            
+            console.log(`Group ${groupId} ${statusText}`);
+        } catch (error) {
+            console.error("Error toggling group ignore status:", error);
+            this.showAlert("Failed to update group ignore status", "danger");
         }
     }
 

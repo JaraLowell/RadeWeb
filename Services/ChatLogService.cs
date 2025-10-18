@@ -18,16 +18,19 @@ namespace RadegastWeb.Services
     {
         private readonly ILogger<ChatLogService> _logger;
         private readonly IDisplayNameService _displayNameService;
+        private readonly IGroupService _groupService;
         private readonly string _dataRoot;
         private readonly SemaphoreSlim _fileLock = new(1, 1);
 
         public ChatLogService(
             ILogger<ChatLogService> logger, 
             IDisplayNameService displayNameService,
+            IGroupService groupService,
             IConfiguration configuration)
         {
             _logger = logger;
             _displayNameService = displayNameService;
+            _groupService = groupService;
             
             // Get the data root directory
             var contentRoot = configuration.GetValue<string>("ContentRoot") ?? Directory.GetCurrentDirectory();
@@ -44,6 +47,18 @@ namespace RadegastWeb.Services
         {
             try
             {
+                // Check if this is a group chat from an ignored group
+                if (message.ChatType.ToLower() == "group" && !string.IsNullOrEmpty(message.TargetId))
+                {
+                    var isIgnored = await _groupService.IsGroupIgnoredAsync(message.AccountId, message.TargetId);
+                    if (isIgnored)
+                    {
+                        _logger.LogDebug("Skipping chat log for ignored group {GroupId} on account {AccountId}", 
+                            message.TargetId, message.AccountId);
+                        return;
+                    }
+                }
+
                 // For IM messages, we need to get the legacy name for the file path
                 string? sessionNameForFile = message.SessionName;
                 if (message.ChatType.ToLower() == "im")
