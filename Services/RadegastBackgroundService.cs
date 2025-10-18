@@ -15,6 +15,7 @@ namespace RadegastWeb.Services
         private IPresenceService? _presenceService;
         private IRegionInfoService? _regionInfoService;
         private IGroupService? _groupService;
+        private volatile bool _isShuttingDown = false;
 
         public RadegastBackgroundService(
             IServiceProvider serviceProvider,
@@ -32,39 +33,70 @@ namespace RadegastWeb.Services
         {
             _logger.LogInformation("Radegast Background Service started");
 
-            // Initialize presence service
-            using var scope = _serviceProvider.CreateScope();
-            _presenceService = scope.ServiceProvider.GetRequiredService<IPresenceService>();
-            _presenceService.PresenceStatusChanged += OnPresenceStatusChanged;
-
-            // Initialize region info service
-            _regionInfoService = scope.ServiceProvider.GetRequiredService<IRegionInfoService>();
-            _regionInfoService.RegionStatsUpdated += OnRegionStatsUpdated;
-
-            // Initialize group service
-            _groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
-            _groupService.GroupsUpdated += OnGroupsUpdated;
-
-            while (!stoppingToken.IsCancellationRequested)
+            try
             {
-                try
+                // Initialize presence service
+                using var scope = _serviceProvider.CreateScope();
+                _presenceService = scope.ServiceProvider.GetRequiredService<IPresenceService>();
+                _presenceService.PresenceStatusChanged += OnPresenceStatusChanged;
+
+                // Initialize region info service
+                _regionInfoService = scope.ServiceProvider.GetRequiredService<IRegionInfoService>();
+                _regionInfoService.RegionStatsUpdated += OnRegionStatsUpdated;
+
+                // Initialize group service
+                _groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
+                _groupService.GroupsUpdated += OnGroupsUpdated;
+
+                while (!stoppingToken.IsCancellationRequested && !_isShuttingDown)
                 {
-                    await ProcessAccountEvents(stoppingToken);
-                    await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Expected when cancellation is requested
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error in RadegastBackgroundService");
-                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                    try
+                    {
+                        await ProcessAccountEvents(stoppingToken);
+                        await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when cancellation is requested
+                        break;
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        // Service provider disposed during shutdown
+                        _logger.LogDebug("Service provider disposed, stopping background service");
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error in RadegastBackgroundService");
+                        
+                        if (!stoppingToken.IsCancellationRequested && !_isShuttingDown)
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                        }
+                    }
                 }
             }
-
-            _logger.LogInformation("Radegast Background Service stopped");
+            finally
+            {
+                _isShuttingDown = true;
+                
+                // Cleanup event subscriptions
+                if (_presenceService != null)
+                {
+                    _presenceService.PresenceStatusChanged -= OnPresenceStatusChanged;
+                }
+                if (_regionInfoService != null)
+                {
+                    _regionInfoService.RegionStatsUpdated -= OnRegionStatsUpdated;
+                }
+                if (_groupService != null)
+                {
+                    _groupService.GroupsUpdated -= OnGroupsUpdated;
+                }
+                
+                _logger.LogInformation("Radegast Background Service stopped");
+            }
         }
 
         private async Task ProcessAccountEvents(CancellationToken cancellationToken)
@@ -133,7 +165,7 @@ namespace RadegastWeb.Services
         {
             try
             {
-                if (sender is not Core.WebRadegastInstance instance)
+                if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
                 // Get service status information
@@ -169,7 +201,7 @@ namespace RadegastWeb.Services
         {
             try
             {
-                if (sender is not Core.WebRadegastInstance instance)
+                if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
                 // Get service status information
@@ -211,8 +243,22 @@ namespace RadegastWeb.Services
             var hasAiBotActive = false;
             var hasCorradeActive = false;
 
+            // Early return if shutting down
+            if (_isShuttingDown)
+            {
+                _logger.LogDebug("Service is shutting down, returning default service status for account {AccountId}", accountId);
+                return (hasAiBotActive, hasCorradeActive);
+            }
+
             try
             {
+                // Check if the service provider is disposed
+                if (_serviceProvider == null)
+                {
+                    _logger.LogDebug("Service provider is null, returning default service status for account {AccountId}", accountId);
+                    return (hasAiBotActive, hasCorradeActive);
+                }
+
                 using var scope = _serviceProvider.CreateScope();
                 
                 // Check AI Bot status
@@ -236,6 +282,12 @@ namespace RadegastWeb.Services
                     hasCorradeActive = await corradeService.ShouldProcessWhispersForAccountAsync(accountId);
                 }
             }
+            catch (ObjectDisposedException ex)
+            {
+                _logger.LogDebug("Service provider disposed during service status check for account {AccountId}: {Message}", accountId, ex.Message);
+                _isShuttingDown = true; // Mark as shutting down if we encounter this
+                // Return false for both services if the service provider is disposed (likely during shutdown)
+            }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error getting service status for account {AccountId}", accountId);
@@ -249,7 +301,7 @@ namespace RadegastWeb.Services
         {
             try
             {
-                if (sender is not Core.WebRadegastInstance instance)
+                if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
                 if (session.ChatType == "Group")
@@ -275,7 +327,7 @@ namespace RadegastWeb.Services
         {
             try
             {
-                if (sender is not Core.WebRadegastInstance instance)
+                if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
                 // Get all nearby avatars with display names and broadcast the updated list
@@ -294,7 +346,7 @@ namespace RadegastWeb.Services
         {
             try
             {
-                if (sender is not Core.WebRadegastInstance instance)
+                if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
                 // Broadcast the individual avatar update (more efficient than full list)
@@ -315,7 +367,7 @@ namespace RadegastWeb.Services
         {
             try
             {
-                if (sender is not Core.WebRadegastInstance instance)
+                if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
                 // Get all nearby avatars with display names and broadcast the updated list
@@ -334,7 +386,7 @@ namespace RadegastWeb.Services
         {
             try
             {
-                if (sender is not Core.WebRadegastInstance instance)
+                if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
                 await _hubContext.Clients
@@ -357,7 +409,7 @@ namespace RadegastWeb.Services
         {
             try
             {
-                if (sender is not Core.WebRadegastInstance instance)
+                if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
                 // Convert to DTO for SignalR transmission
@@ -385,6 +437,8 @@ namespace RadegastWeb.Services
         {
             try
             {
+                if (_isShuttingDown)
+                    return;
                 await _hubContext.Clients
                     .Group($"account_{e.AccountId}")
                     .RegionStatsUpdated(e.Stats);
@@ -402,6 +456,8 @@ namespace RadegastWeb.Services
         {
             try
             {
+                if (_isShuttingDown)
+                    return;
                 await _hubContext.Clients
                     .Group($"account_{e.AccountId}")
                     .PresenceStatusChanged(e.AccountId.ToString(), e.Status.ToString(), e.StatusText);
@@ -419,6 +475,8 @@ namespace RadegastWeb.Services
         {
             try
             {
+                if (_isShuttingDown)
+                    return;
                 var groupsList = e.Groups.ToList();
                 
                 await _hubContext.Clients
@@ -447,6 +505,9 @@ namespace RadegastWeb.Services
         {
             try
             {
+                if (_isShuttingDown)
+                    return;
+
                 var groupName = $"account_{e.Dialog.AccountId}";
                 
                 // Check if there are any active connections in the account group
@@ -490,6 +551,9 @@ namespace RadegastWeb.Services
         {
             try
             {
+                if (_isShuttingDown)
+                    return;
+
                 var groupName = $"account_{e.Permission.AccountId}";
                 
                 // Check if there are any active connections in the account group
@@ -535,6 +599,8 @@ namespace RadegastWeb.Services
         {
             try
             {
+                if (_isShuttingDown)
+                    return;
                 var groupName = $"account_{e.Request.AccountId}";
                 
                 // Note: Connection checking is now done at the WebRadegastInstance level
