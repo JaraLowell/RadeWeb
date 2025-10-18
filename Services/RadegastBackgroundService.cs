@@ -14,6 +14,7 @@ namespace RadegastWeb.Services
         private readonly IConnectionTrackingService _connectionTrackingService;
         private IPresenceService? _presenceService;
         private IRegionInfoService? _regionInfoService;
+        private IGroupService? _groupService;
 
         public RadegastBackgroundService(
             IServiceProvider serviceProvider,
@@ -39,6 +40,10 @@ namespace RadegastWeb.Services
             // Initialize region info service
             _regionInfoService = scope.ServiceProvider.GetRequiredService<IRegionInfoService>();
             _regionInfoService.RegionStatsUpdated += OnRegionStatsUpdated;
+
+            // Initialize group service
+            _groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
+            _groupService.GroupsUpdated += OnGroupsUpdated;
 
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -407,6 +412,25 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error broadcasting presence status change");
+            }
+        }
+
+        private async void OnGroupsUpdated(object? sender, GroupsUpdatedEventArgs e)
+        {
+            try
+            {
+                var groupsList = e.Groups.ToList();
+                
+                await _hubContext.Clients
+                    .Group($"account_{e.AccountId}")
+                    .GroupsUpdated(e.AccountId.ToString(), groupsList);
+                    
+                _logger.LogDebug("Broadcasted groups update for account {AccountId}: {Count} groups (with ignore status)", 
+                    e.AccountId, groupsList.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error broadcasting groups update");
             }
         }
 

@@ -881,6 +881,9 @@ namespace RadegastWeb.Hubs
         Task UnreadNoticesCountLoaded(string accountId, int count);
         Task ChatHistoryCleared(string accountId, string sessionId);
         
+        // Groups methods
+        Task GroupsUpdated(string accountId, List<GroupDto> groups);
+        
         // Sit/Stand methods
         Task SitStandSuccess(string message);
         Task SitStandError(string error);

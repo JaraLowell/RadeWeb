@@ -99,6 +99,14 @@ class RadegastWebClient {
                 this.updateRegionInfo(regionInfo);
             });
 
+            this.connection.on("GroupsUpdated", (accountId, groups) => {
+                if (accountId === this.currentAccountId) {
+                    this.groups = groups;
+                    this.renderGroupsList();
+                    console.log('Groups updated via SignalR:', groups.length, 'groups');
+                }
+            });
+
             this.connection.on("IMSessionStarted", (session) => {
                 this.createIMTab(session);
             });
