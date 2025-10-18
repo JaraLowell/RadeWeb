@@ -9,7 +9,9 @@ namespace RadegastWeb.Middleware
         private readonly string[] _publicPaths = {
             "/api/auth/login",
             "/api/auth/verify",
+            "/api/stats/",
             "/login.html",
+            "/stats.html",
             "/css/",
             "/js/",
             "/img/",
