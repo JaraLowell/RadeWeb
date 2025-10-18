@@ -108,7 +108,7 @@ namespace RadegastWeb.Services
             try
             {
                 // Check cooldown to prevent too frequent recordings
-                var cacheKey = $"{avatarId}:{regionName}:{DateTime.UtcNow:yyyy-MM-dd:HH}"; // Per avatar per region per hour
+                var cacheKey = $"{avatarId}:{regionName}:{DateTime.UtcNow:yyyy-MM-dd}"; // Per avatar per region per day
                 if (_recentRecordings.TryGetValue(cacheKey, out var lastRecording))
                 {
                     if (DateTime.UtcNow - lastRecording < _recordingCooldown)
