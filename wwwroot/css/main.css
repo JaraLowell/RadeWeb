@@ -138,7 +138,7 @@ a {
 
 .fw-bold {
     font-weight: 500 !important;
-    font-size: 0.9rem;
+    font-size: 1.1rem;
 }
 
 .bg-primary,
@@ -339,9 +339,10 @@ a {
 
 .chat-message-time {
     flex-shrink: 0;
-    width: 4rem;
+    width: 3.5rem;
     text-align: left;
     align-self: flex-start; /* Align to top of the container */
+    line-height: 1.0;
 }
 
 .chat-message-right {
@@ -351,7 +352,7 @@ a {
 
 .chat-message-header {
     margin-bottom: 0.25rem;
-    line-height: 1.2;
+    line-height: 1.0;
     color: #78a6e1; /* Name color */
 }
 
