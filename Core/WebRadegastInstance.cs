@@ -629,7 +629,8 @@ namespace RadegastWeb.Core
             // Add detailed avatars
             foreach (var avatar in _nearbyAvatars.Values)
             {
-                avatarData.Add((avatar.ID.ToString(), avatar.Name ?? "Unknown", avatar.Position));
+                var actualPosition = GetAvatarActualPosition(avatar);
+                avatarData.Add((avatar.ID.ToString(), avatar.Name ?? "Unknown", actualPosition));
             }
             
             // Add coarse location avatars that aren't already detailed
@@ -734,20 +735,23 @@ namespace RadegastWeb.Core
             {
                 legacyName = avatarName;
             }
+
+            // Calculate actual avatar position accounting for seating
+            var actualPosition = GetAvatarActualPosition(avatar);
             
             return new AvatarDto
             {
                 Id = avatar.ID.ToString(),
                 Name = legacyName,
                 DisplayName = displayName,
-                Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
+                Distance = Calculate3DDistance(GetOurActualPosition(), actualPosition),
                 Status = "Online", // TODO: Get actual status if available
                 AccountId = Guid.Parse(_accountId),
                 Position = new PositionDto
                 {
-                    X = avatar.Position.X,
-                    Y = avatar.Position.Y,
-                    Z = avatar.Position.Z
+                    X = actualPosition.X,
+                    Y = actualPosition.Y,
+                    Z = actualPosition.Z
                 }
             };
         }
@@ -791,19 +795,22 @@ namespace RadegastWeb.Core
                 _logger.LogDebug(ex, "Error accessing global display name cache for {AvatarId}", avatar.ID);
             }
 
+            // Calculate actual avatar position accounting for seating
+            var actualPosition = GetAvatarActualPosition(avatar);
+            
             return new AvatarDto
             {
                 Id = avatar.ID.ToString(),
                 Name = avatarName,
                 DisplayName = displayName,
-                Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
+                Distance = Calculate3DDistance(GetOurActualPosition(), actualPosition),
                 Status = "Online", // TODO: Get actual status if available
                 AccountId = Guid.Parse(_accountId),
                 Position = new PositionDto
                 {
-                    X = avatar.Position.X,
-                    Y = avatar.Position.Y,
-                    Z = avatar.Position.Z
+                    X = actualPosition.X,
+                    Y = actualPosition.Y,
+                    Z = actualPosition.Z
                 }
             };
         }
@@ -1265,7 +1272,7 @@ namespace RadegastWeb.Core
             if (_coarseLocationAvatars.TryGetValue(e.Avatar.ID, out var coarseAvatar))
             {
                 coarseAvatar.IsDetailed = true;
-                coarseAvatar.Position = e.Avatar.Position; // Update position from detailed data
+                coarseAvatar.Position = GetAvatarActualPosition(e.Avatar); // Update position with proper calculation
                 coarseAvatar.LastUpdate = DateTime.UtcNow;
                 if (!string.IsNullOrEmpty(e.Avatar.Name))
                 {
@@ -1318,19 +1325,22 @@ namespace RadegastWeb.Core
                 displayName = avatarName;
             }
 
+            // Calculate actual avatar position accounting for seating
+            var actualPosition = GetAvatarActualPosition(e.Avatar);
+
             var avatarDto = new AvatarDto
             {
                 Id = e.Avatar.ID.ToString(),
                 Name = avatarName,
                 DisplayName = displayName,
-                Distance = Calculate3DDistance(GetOurActualPosition(), e.Avatar.Position),
+                Distance = Calculate3DDistance(GetOurActualPosition(), actualPosition),
                 Status = "Online",
                 AccountId = Guid.Parse(_accountId),
                 Position = new PositionDto
                 {
-                    X = e.Avatar.Position.X,
-                    Y = e.Avatar.Position.Y,
-                    Z = e.Avatar.Position.Z
+                    X = actualPosition.X,
+                    Y = actualPosition.Y,
+                    Z = actualPosition.Z
                 }
             };
 
@@ -1498,17 +1508,20 @@ namespace RadegastWeb.Core
                     // Get detailed avatar object if available
                     var detailedAvatar = e.Simulator.ObjectsAvatars.Values.FirstOrDefault(av => av.ID == avatarPos.Key);
                     
-                    // Handle altitude issues (SecondLife uses 1020f, OpenSim uses 0f for high altitudes)
-                    bool unknownAltitude = _client.Settings.LOGIN_SERVER.Contains("secondlife") ? pos.Z == 1020f : pos.Z == 0f;
-                    if (unknownAltitude && detailedAvatar != null)
+                    // If we have detailed avatar info, use the properly calculated position
+                    if (detailedAvatar != null)
                     {
-                        if (detailedAvatar.ParentID == 0)
+                        var detailedPosition = GetAvatarActualPosition(detailedAvatar);
+                        pos = detailedPosition;
+                    }
+                    else
+                    {
+                        // Handle altitude issues for coarse-only avatars (SecondLife uses 1020f, OpenSim uses 0f for high altitudes)
+                        bool unknownAltitude = _client.Settings.LOGIN_SERVER.Contains("secondlife") ? pos.Z == 1020f : pos.Z == 0f;
+                        if (unknownAltitude)
                         {
-                            pos.Z = detailedAvatar.Position.Z;
-                        }
-                        else if (e.Simulator.ObjectsPrimitives.TryGetValue(detailedAvatar.ParentID, out var seatObject))
-                        {
-                            pos.Z = seatObject.Position.Z;
+                            // For coarse-only avatars with unknown altitude, we can't do much more
+                            // The position from CoarseLocationUpdate is the best we have
                         }
                     }
 
@@ -2335,19 +2348,20 @@ namespace RadegastWeb.Core
                 if (UUID.TryParse(e.AvatarId, out var avatarUuid) && _nearbyAvatars.TryGetValue(avatarUuid, out var avatar))
                 {
                     // Create updated avatar DTO with new display name
+                    var actualPosition = GetAvatarActualPosition(avatar);
                     var avatarDto = new AvatarDto
                     {
                         Id = e.AvatarId,
                         Name = e.DisplayName.LegacyFullName,
                         DisplayName = e.DisplayName.DisplayNameValue,
-                        Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
+                        Distance = Calculate3DDistance(GetOurActualPosition(), actualPosition),
                         Status = "Online",
                         AccountId = Guid.Parse(_accountId),
                         Position = new PositionDto
                         {
-                            X = avatar.Position.X,
-                            Y = avatar.Position.Y,
-                            Z = avatar.Position.Z
+                            X = actualPosition.X,
+                            Y = actualPosition.Y,
+                            Z = actualPosition.Z
                         }
                     };
                     
@@ -2384,19 +2398,20 @@ namespace RadegastWeb.Core
                 if (UUID.TryParse(e.AvatarId, out var avatarUuid) && _nearbyAvatars.TryGetValue(avatarUuid, out var avatar))
                 {
                     // Create updated avatar DTO with new display name
+                    var actualPosition = GetAvatarActualPosition(avatar);
                     var avatarDto = new AvatarDto
                     {
                         Id = e.AvatarId,
                         Name = e.DisplayName.LegacyFullName,
                         DisplayName = e.DisplayName.DisplayNameValue,
-                        Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
+                        Distance = Calculate3DDistance(GetOurActualPosition(), actualPosition),
                         Status = "Online",
                         AccountId = Guid.Parse(_accountId),
                         Position = new PositionDto
                         {
-                            X = avatar.Position.X,
-                            Y = avatar.Position.Y,
-                            Z = avatar.Position.Z
+                            X = actualPosition.X,
+                            Y = actualPosition.Y,
+                            Z = actualPosition.Z
                         }
                     };
                     
@@ -2892,6 +2907,32 @@ namespace RadegastWeb.Core
             }
             
             return basePosition;
+        }
+
+        /// <summary>
+        /// Gets the actual world position of an avatar, accounting for seating on objects.
+        /// This matches Radegast's avatar position calculation logic.
+        /// </summary>
+        /// <param name="avatar">The avatar to get position for</param>
+        /// <returns>Actual world position of the avatar</returns>
+        private Vector3 GetAvatarActualPosition(Avatar avatar)
+        {
+            // If avatar is not seated (ParentID == 0), return their direct position
+            if (avatar.ParentID == 0)
+            {
+                return avatar.Position;
+            }
+            
+            // Avatar is seated on an object - need to calculate actual position
+            if (_client.Network.CurrentSim?.ObjectsPrimitives.TryGetValue(avatar.ParentID, out var seatObject) == true)
+            {
+                // The avatar's position is relative to the seat object
+                // Following Radegast's logic: seat position + avatar offset * seat rotation
+                return seatObject.Position + avatar.Position * seatObject.Rotation;
+            }
+            
+            // Fallback if we can't find the seat object
+            return avatar.Position;
         }
 
         /// <summary>
