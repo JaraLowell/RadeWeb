@@ -330,7 +330,8 @@ class MiniMap {
             // Apply bounds checking
             if (adjustedX <= 0) adjustedX = 0.5;
             if (adjustedY <= 0) adjustedY = 0.5;
-            
+            if (adjustedX >= 256) adjustedX = 255.5;
+            if (adjustedY >= 256) adjustedY = 255.5;
             // Convert avatar position to canvas coordinates (with 1px padding)
             const canvasX = ((adjustedX / 256) * 256) + 1;
             const canvasY = (((256 - adjustedY) / 256) * 256) + 1; // Flip Y coordinate
