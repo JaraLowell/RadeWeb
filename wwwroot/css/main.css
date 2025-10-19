@@ -169,6 +169,14 @@ a {
     color: var(--text-color);
 }
 
+[data-theme="dark"] .chat-message-header {
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .chat-message-content {
+    color: var(--text-color);
+}
+
 [data-theme="dark"] .chat-input-area {
     background-color: var(--card-bg);
     border-color: var(--border-color);
@@ -317,6 +325,20 @@ a {
     border-radius: 0.375rem;
     background-color: white;
     border-left: 3px solid #dee2e6;
+}
+
+/* Chat message header and content styling */
+.chat-message-header {
+    margin-bottom: 0.25rem;
+    line-height: 1.2;
+}
+
+.chat-message-content {
+    margin-left: 1.25rem; /* Align with the pipe character from the header */
+    word-wrap: break-word;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    line-height: 1.4;
 }
 
 .chat-message.system {

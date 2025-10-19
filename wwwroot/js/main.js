@@ -1927,9 +1927,13 @@ class RadegastWebClient {
         const nameFormat = isPersonalThought ? '' : ':';
         
         messageDiv.innerHTML = `
-            <div class="d-flex">
-                <span class="text-muted me-2 small">${timestamp}</span>
-                <span class="fw-bold me-2">${this.escapeHtml(chatMessage.senderName)}${nameFormat}</span>
+            <div class="chat-message-header d-flex align-items-center">
+                <span class="text-muted small me-2">${timestamp}</span>
+                <span class="text-muted small me-2">|</span>
+                <span class="fw-bold">${this.escapeHtml(chatMessage.senderName)}${nameFormat}</span>
+            </div>
+            <div class="chat-message-content">
+                <span class="text-muted small me-2">|</span>
                 <span>${this.renderMessageContent(displayMessage)}</span>
             </div>
         `;
@@ -2269,9 +2273,13 @@ class RadegastWebClient {
         const nameFormat = isPersonalThought ? '' : ':';
         
         messageDiv.innerHTML = `
-            <div class="d-flex">
-                <span class="text-muted me-2 small">${timestamp}</span>
-                <span class="fw-bold me-2">${senderName}${nameFormat}</span>
+            <div class="chat-message-header d-flex align-items-center">
+                <span class="text-muted small me-2">${timestamp}</span>
+                <span class="text-muted small me-2">|</span>
+                <span class="fw-bold">${senderName}${nameFormat}</span>
+            </div>
+            <div class="chat-message-content">
+                <span class="text-muted small me-2">|</span>
                 <span>${this.renderMessageContent(displayMessage)}</span>
             </div>
         `;
