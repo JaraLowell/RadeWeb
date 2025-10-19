@@ -174,7 +174,7 @@ a {
 }
 
 [data-theme="dark"] .chat-message-header {
-    color: var(--text-color);
+    color: #78a6e1; /* Keep same name color in dark mode */
 }
 
 [data-theme="dark"] .chat-message-content {
@@ -341,7 +341,7 @@ a {
     flex-shrink: 0;
     width: 4rem;
     text-align: left;
-    padding-top: 0.125rem; /* Align with name text baseline */
+    align-self: flex-start; /* Align to top of the container */
 }
 
 .chat-message-right {
@@ -352,6 +352,7 @@ a {
 .chat-message-header {
     margin-bottom: 0.25rem;
     line-height: 1.2;
+    color: #78a6e1; /* Name color */
 }
 
 .chat-message-content {
