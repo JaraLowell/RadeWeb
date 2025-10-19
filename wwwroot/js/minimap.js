@@ -11,6 +11,8 @@ class MiniMap {
         this.avatarPosition = { x: 128, y: 128, z: 0 };
         this.regionName = '';
         this.isVisible = false;
+        this.lastAvatarsHash = null; // Track changes in nearby avatars
+        this.lastAvatarPositions = new Map(); // Cache of avatar positions by ID
         
         this.createUI();
         this.bindEvents();
@@ -24,8 +26,8 @@ class MiniMap {
         const mapHtml = `
             <div class="minimap-container" style="display: none;">
                 <div class="minimap-content">
-                    <div class="minimap-canvas-container" style="position: relative; width: 256px; height: 256px; margin: 0 auto; border: 1px solid #4a73a9; background: #4a73a9;">
-                        <canvas width="256" height="256" style="width: 100%; height: 100%; display: block;"></canvas>
+                    <div class="minimap-canvas-container" style="position: relative; width: 258px; height: 258px; margin: 0 auto; border: 1px solid #4a73a9; background: #4a73a9;">
+                        <canvas width="258" height="258" style="width: 100%; height: 100%; display: block;"></canvas>
                         <div class="minimap-overlay">
                             <div class="avatar-dot" style="position: absolute; width: 6px; height: 6px; background: #ff0000; border: 1px solid #fff; border-radius: 50%; transform: translate(-50%, -50%);"></div>
                         </div>
@@ -52,27 +54,17 @@ class MiniMap {
 
         this.container.innerHTML = mapHtml;
         
-        // Get canvas references
+        // Get canvas references and ensure context is available
         this.canvas = this.container.querySelector('canvas');
-        this.ctx = this.canvas ? this.canvas.getContext('2d') : null;
+        if (this.canvas) {
+            this.ctx = this.canvas.getContext('2d');
+            console.log('MiniMap: Canvas context initialized:', !!this.ctx);
+        } else {
+            console.error('MiniMap: Failed to find canvas element');
+        }
     }
 
     bindEvents() {
-        // Subscribe to SignalR events for real-time updates
-        if (window.radegastConnection) {
-            window.radegastConnection.on('RegionInfoUpdated', (regionInfo) => {
-                if (this.isVisible && regionInfo.accountId === this.currentAccountId) {
-                    this.updateMapInfo(regionInfo);
-                }
-            });
-
-            window.radegastConnection.on('PresenceUpdate', (presence) => {
-                if (this.isVisible && presence.accountId === this.currentAccountId) {
-                    this.updateAvatarPosition(presence);
-                }
-            });
-        }
-
         // Add click handler for canvas to show coordinates
         if (this.canvas) {
             this.canvas.addEventListener('click', (e) => {
@@ -85,7 +77,14 @@ class MiniMap {
     }
 
     async show(accountId) {
-        this.currentAccountId = accountId;
+        // Check if we're switching accounts
+        if (this.currentAccountId !== accountId) {
+            console.log(`MiniMap: Switching from account ${this.currentAccountId} to ${accountId}`);
+            this.currentAccountId = accountId;
+            this.lastAvatarsHash = null; // Reset avatar tracking for new account
+            this.lastAvatarPositions.clear();
+        }
+        
         this.isVisible = true;
         
         const container = this.container.querySelector('.minimap-container');
@@ -96,24 +95,19 @@ class MiniMap {
         // Load initial map data
         await this.loadRegionMap();
 
-        // Start periodic updates for position
-        this.updateInterval = setInterval(() => {
-            if (this.isVisible) {
-                this.updateAvatarPosition();
-            }
-        }, 2000); // Update every 2 seconds
+        // Note: Updates are now triggered via main client's avatar events
+        // No need for periodic timer as we get real-time updates
     }
 
     hide() {
         this.isVisible = false;
+        this.currentAccountId = null;
+        this.lastAvatarsHash = null; // Clear avatar tracking
+        this.lastAvatarPositions.clear();
+        
         const container = this.container.querySelector('.minimap-container');
         if (container) {
             container.style.display = 'none';
-        }
-
-        if (this.updateInterval) {
-            clearInterval(this.updateInterval);
-            this.updateInterval = null;
         }
     }
 
@@ -180,15 +174,96 @@ class MiniMap {
         }
     }
 
-    drawMap() {
-        if (!this.ctx || !this.canvas) return;
+    // Method called when the main client is ready
+    onClientReady() {
+        console.log('MiniMap: Main client is now ready');
+        // If we're visible and have been waiting to draw, try now
+        if (this.isVisible) {
+            this.safeRedraw();
+        }
+    }
 
-        // Clear canvas
-        this.ctx.clearRect(0, 0, 256, 256);
+    // Check if nearby avatars have actually changed
+    hasAvatarsChanged() {
+        if (!window.radegastClient || !window.radegastClient.nearbyAvatars) {
+            return false;
+        }
+
+        const nearbyAvatars = window.radegastClient.nearbyAvatars;
+        
+        // Filter to only current account's avatars
+        const currentAccountAvatars = nearbyAvatars.filter(avatar => 
+            avatar.accountId === this.currentAccountId
+        );
+
+        // Create a hash of the current avatar positions
+        const currentHash = currentAccountAvatars
+            .map(avatar => `${avatar.id}:${avatar.position?.x || 0},${avatar.position?.y || 0}`)
+            .sort()
+            .join('|');
+
+        // Check if hash has changed
+        if (this.lastAvatarsHash === currentHash) {
+            return false; // No changes
+        }
+
+        // Update the hash and position cache
+        this.lastAvatarsHash = currentHash;
+        this.lastAvatarPositions.clear();
+        currentAccountAvatars.forEach(avatar => {
+            if (avatar.position) {
+                this.lastAvatarPositions.set(avatar.id, {
+                    x: avatar.position.x,
+                    y: avatar.position.y,
+                    z: avatar.position.z,
+                    name: avatar.name
+                });
+            }
+        });
+        return true;
+    }
+
+    // Method to safely redraw the map, ensuring all components are ready
+    safeRedraw() {
+        // Check if the minimap is visible and canvas is ready
+        if (!this.isVisible) {
+            return;
+        }
+
+        // Ensure canvas context is available
+        if (!this.ctx && this.canvas) {
+            this.ctx = this.canvas.getContext('2d');
+        }
+
+        if (!this.ctx || !this.canvas) {
+            return;
+        }
+
+        // Only redraw if avatars have actually changed
+        if (!this.hasAvatarsChanged()) {
+            return;
+        }
+
+        // Use a small delay to ensure any pending updates are complete
+        requestAnimationFrame(() => {
+            this.drawMap();
+        });
+    }
+
+    drawMap() {
+        if (!this.ctx || !this.canvas) {
+            console.log('MiniMap: No canvas context available for drawMap');
+            return;
+        }
+
+        console.log('MiniMap: Redrawing map');
+
+        // Clear canvas (now 258x258)
+        this.ctx.clearRect(0, 0, 258, 258);
 
         if (this.mapImage) {
-            // Draw the map image, scaled to fit the canvas
-            this.ctx.drawImage(this.mapImage, 0, 0, 256, 256);
+            // Draw the map image with 1px padding on all sides
+            this.ctx.drawImage(this.mapImage, 1, 1, 256, 256);
             
             // Hide placeholder
             const placeholder = this.container.querySelector('.minimap-placeholder');
@@ -200,7 +275,10 @@ class MiniMap {
             this.showPlaceholder();
         }
 
-        // Draw avatar position
+        // Draw nearby avatars first (so they appear behind our avatar)
+        this.drawNearbyAvatars();
+
+        // Draw avatar position (our red dot on top)
         this.drawAvatarPosition();
     }
 
@@ -209,14 +287,61 @@ class MiniMap {
 
         const avatarDot = this.container.querySelector('.avatar-dot');
         if (avatarDot) {
-            // Position the avatar dot overlay
-            const x = (this.avatarPosition.x / 256) * 100;
-            const y = ((256 - this.avatarPosition.y) / 256) * 100; // Flip Y coordinate
+            // Position the avatar dot overlay (accounting for 1px padding)
+            const x = ((this.avatarPosition.x / 256) * (256/258) * 100) + (1/258 * 100);
+            const y = (((256 - this.avatarPosition.y) / 256) * (256/258) * 100) + (1/258 * 100); // Flip Y coordinate
             
             avatarDot.style.left = x + '%';
             avatarDot.style.top = y + '%';
             avatarDot.style.display = 'block';
         }
+    }
+
+    drawNearbyAvatars() {
+        // Check if we have the required components
+        if (!this.ctx) {
+            return;
+        }
+        
+        if (!window.radegastClient) {
+            return;
+        }
+        
+        if (!window.radegastClient.isInitialized) {
+            return;
+        }
+
+        // Use cached positions from our change detection
+        if (this.lastAvatarPositions.size === 0) {
+            return;
+        }
+
+        console.log(`MiniMap: Drawing ${this.lastAvatarPositions.size} nearby avatars for account ${this.currentAccountId}`);
+
+        // Draw yellow dots for each cached avatar
+        this.ctx.save();
+        this.ctx.fillStyle = '#FFD700'; // Gold/yellow color
+        this.ctx.strokeStyle = '#FFFFFF'; // White border
+        this.ctx.lineWidth = 1;
+
+        this.lastAvatarPositions.forEach((position, avatarId) => {
+            // Convert avatar position to canvas coordinates (with 1px padding)
+            const canvasX = ((position.x / 256) * 256) + 1;
+            const canvasY = (((256 - position.y) / 256) * 256) + 1; // Flip Y coordinate
+            
+            console.log(`MiniMap: Avatar ${position.name} at SL pos (${position.x}, ${position.y}) -> canvas (${canvasX.toFixed(1)}, ${canvasY.toFixed(1)})`);
+            
+            // Ensure the dot is within canvas bounds (now 258x258)
+            if (canvasX >= 0 && canvasX <= 258 && canvasY >= 0 && canvasY <= 258) {
+                // Draw yellow dot with white border
+                this.ctx.beginPath();
+                this.ctx.arc(canvasX, canvasY, 2, 0, 2 * Math.PI);
+                this.ctx.fill();
+                this.ctx.stroke();
+            }
+        });
+
+        this.ctx.restore();
     }
 
     updateRegionDisplay(mapInfo) {
@@ -290,10 +415,26 @@ class MiniMap {
         }
     }
 
+    // Method to force a redraw (ignoring change detection)
+    forceRedraw() {
+        if (!this.isVisible || !this.ctx || !this.canvas) {
+            return;
+        }
+
+        this.lastAvatarsHash = null; // Reset to force detection of changes
+        
+        // Use a small delay to ensure any pending updates are complete
+        requestAnimationFrame(() => {
+            this.drawMap();
+        });
+    }
+
     // Method to refresh the map (called on teleport/login)
     async refresh() {
         if (this.isVisible) {
             await this.loadRegionMap();
+            // Force a redraw to update avatar positions
+            this.forceRedraw();
         }
     }
 }
@@ -304,6 +445,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const regionInfoContainer = document.getElementById('regionInfo');
     if (regionInfoContainer) {
         window.miniMap = new MiniMap('regionInfo');
+        console.log('MiniMap initialized');
+        
+        // Check if the main client is already available and initialized
+        if (window.radegastClient && window.radegastClient.isInitialized) {
+            window.miniMap.onClientReady();
+        }
     }
 });
 

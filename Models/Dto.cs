@@ -58,6 +58,14 @@ namespace RadegastWeb.Models
         public string Status { get; set; } = "Online"; // Online, Away, Busy
         public string? GroupTitle { get; set; }
         public Guid AccountId { get; set; }
+        public PositionDto? Position { get; set; }
+    }
+
+    public class PositionDto
+    {
+        public float X { get; set; }
+        public float Y { get; set; }
+        public float Z { get; set; }
     }
     
     public class RegionInfoDto

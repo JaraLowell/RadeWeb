@@ -742,7 +742,13 @@ namespace RadegastWeb.Core
                 DisplayName = displayName,
                 Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
                 Status = "Online", // TODO: Get actual status if available
-                AccountId = Guid.Parse(_accountId)
+                AccountId = Guid.Parse(_accountId),
+                Position = new PositionDto
+                {
+                    X = avatar.Position.X,
+                    Y = avatar.Position.Y,
+                    Z = avatar.Position.Z
+                }
             };
         }
 
@@ -792,7 +798,13 @@ namespace RadegastWeb.Core
                 DisplayName = displayName,
                 Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
                 Status = "Online", // TODO: Get actual status if available
-                AccountId = Guid.Parse(_accountId)
+                AccountId = Guid.Parse(_accountId),
+                Position = new PositionDto
+                {
+                    X = avatar.Position.X,
+                    Y = avatar.Position.Y,
+                    Z = avatar.Position.Z
+                }
             };
         }
 
@@ -826,7 +838,13 @@ namespace RadegastWeb.Core
                 DisplayName = displayName,
                 Distance = Calculate3DDistance(GetOurActualPosition(), coarseAvatar.Position),
                 Status = "Online", // Coarse location avatars are assumed online
-                AccountId = Guid.Parse(_accountId)
+                AccountId = Guid.Parse(_accountId),
+                Position = new PositionDto
+                {
+                    X = coarseAvatar.Position.X,
+                    Y = coarseAvatar.Position.Y,
+                    Z = coarseAvatar.Position.Z
+                }
             };
         }
 
@@ -872,7 +890,13 @@ namespace RadegastWeb.Core
                 DisplayName = displayName,
                 Distance = Calculate3DDistance(GetOurActualPosition(), coarseAvatar.Position),
                 Status = "Online", // Coarse location avatars are assumed online
-                AccountId = Guid.Parse(_accountId)
+                AccountId = Guid.Parse(_accountId),
+                Position = new PositionDto
+                {
+                    X = coarseAvatar.Position.X,
+                    Y = coarseAvatar.Position.Y,
+                    Z = coarseAvatar.Position.Z
+                }
             };
         }
 
@@ -1301,7 +1325,13 @@ namespace RadegastWeb.Core
                 DisplayName = displayName,
                 Distance = Calculate3DDistance(GetOurActualPosition(), e.Avatar.Position),
                 Status = "Online",
-                AccountId = Guid.Parse(_accountId)
+                AccountId = Guid.Parse(_accountId),
+                Position = new PositionDto
+                {
+                    X = e.Avatar.Position.X,
+                    Y = e.Avatar.Position.Y,
+                    Z = e.Avatar.Position.Z
+                }
             };
 
             AvatarAdded?.Invoke(this, avatarDto);
@@ -2312,7 +2342,13 @@ namespace RadegastWeb.Core
                         DisplayName = e.DisplayName.DisplayNameValue,
                         Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
                         Status = "Online",
-                        AccountId = Guid.Parse(_accountId)
+                        AccountId = Guid.Parse(_accountId),
+                        Position = new PositionDto
+                        {
+                            X = avatar.Position.X,
+                            Y = avatar.Position.Y,
+                            Z = avatar.Position.Z
+                        }
                     };
                     
                     // Fire the avatar updated event
@@ -2355,7 +2391,13 @@ namespace RadegastWeb.Core
                         DisplayName = e.DisplayName.DisplayNameValue,
                         Distance = Calculate3DDistance(GetOurActualPosition(), avatar.Position),
                         Status = "Online",
-                        AccountId = Guid.Parse(_accountId)
+                        AccountId = Guid.Parse(_accountId),
+                        Position = new PositionDto
+                        {
+                            X = avatar.Position.X,
+                            Y = avatar.Position.Y,
+                            Z = avatar.Position.Z
+                        }
                     };
                     
                     // Fire the avatar updated event

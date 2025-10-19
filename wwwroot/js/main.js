@@ -24,6 +24,7 @@ class RadegastWebClient {
         this.currentDialogId = null; // Track the currently displayed dialog ID
         this.currentPermissionId = null; // Track the currently displayed permission ID
         this.currentTeleportRequestId = null; // Track the currently displayed teleport request ID
+        this.isInitialized = false; // Track if the client is fully initialized
         
         this.initializeSignalR();
         this.bindEvents();
@@ -36,6 +37,16 @@ class RadegastWebClient {
         // Load accounts after initialization and set up periodic refresh
         this.loadAccounts().catch(error => {
             console.error("Failed to load accounts on startup:", error);
+        }).finally(() => {
+            // Mark as initialized after accounts are loaded
+            this.isInitialized = true;
+            console.log('RadegastWebClient fully initialized');
+            
+            // Notify other components that the client is ready
+            if (window.miniMap) {
+                console.log('Notifying minimap that client is ready');
+                window.miniMap.onClientReady();
+            }
         });
         
         // Set up periodic account status refresh every 30 seconds
@@ -732,6 +743,12 @@ class RadegastWebClient {
         if (!this.currentAccountId || avatars.length === 0) {
             this.nearbyAvatars = avatars;
             this.renderPeopleList();
+            
+            // Notify minimap to redraw (will clear yellow dots if no avatars)
+            if (window.miniMap && typeof window.miniMap.safeRedraw === 'function') {
+                console.log('Main: Triggering minimap redraw (clearing avatars)');
+                window.miniMap.safeRedraw();
+            }
             return;
         }
         
@@ -744,6 +761,12 @@ class RadegastWebClient {
         if (currentAccountAvatars.length > 0 && currentAccountAvatars[0].accountId === this.currentAccountId) {
             this.nearbyAvatars = currentAccountAvatars;
             this.renderPeopleList();
+            
+            // Notify minimap to redraw with updated avatar positions (only if changed)
+            if (window.miniMap && typeof window.miniMap.safeRedraw === 'function') {
+                console.log('Main: Checking if minimap needs redraw after avatar update');
+                window.miniMap.safeRedraw();
+            }
         } else if (avatars.length > 0 && avatars[0].accountId !== this.currentAccountId) {
             // Don't update if avatars are for a different account
             console.log(`Ignoring avatar update for account ${avatars[0].accountId}, current account is ${this.currentAccountId}`);
@@ -768,6 +791,12 @@ class RadegastWebClient {
         }
         
         this.renderPeopleList();
+        
+        // Notify minimap to redraw with updated avatar positions
+        if (window.miniMap && typeof window.miniMap.safeRedraw === 'function') {
+            console.log('Main: Triggering minimap redraw after single avatar update');
+            window.miniMap.safeRedraw();
+        }
     }
 
     renderPeopleList() {
@@ -2057,6 +2086,12 @@ class RadegastWebClient {
                     // Show minimap for connected accounts
                     if (window.miniMap) {
                         window.miniMap.show(status.accountId);
+                        // Force initial redraw to show any existing avatars
+                        setTimeout(() => {
+                            if (window.miniMap && typeof window.miniMap.forceRedraw === 'function') {
+                                window.miniMap.forceRedraw();
+                            }
+                        }, 500); // Small delay to allow avatar data to load
                     }
                     
                     // Load recent notices for this account
@@ -3651,4 +3686,7 @@ class RadegastWebClient {
 let radegastClient;
 document.addEventListener('DOMContentLoaded', () => {
     radegastClient = new RadegastWebClient();
+    // Make it globally available for other components
+    window.radegastClient = radegastClient;
+    console.log('RadegastWebClient initialized and made globally available');
 });
