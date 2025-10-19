@@ -316,8 +316,6 @@ class MiniMap {
             return;
         }
 
-        console.log(`MiniMap: Drawing ${this.lastAvatarPositions.size} nearby avatars for account ${this.currentAccountId}`);
-
         // Draw yellow dots for each cached avatar
         this.ctx.save();
         this.ctx.fillStyle = '#FFD700'; // Gold/yellow color
@@ -325,11 +323,17 @@ class MiniMap {
         this.ctx.lineWidth = 1;
 
         this.lastAvatarPositions.forEach((position, avatarId) => {
-            // Convert avatar position to canvas coordinates (with 1px padding)
-            const canvasX = ((position.x / 256) * 256) + 1;
-            const canvasY = (((256 - position.y) / 256) * 256) + 1; // Flip Y coordinate
+            // Create local copies for bounds checking without affecting original position
+            let adjustedX = position.x;
+            let adjustedY = position.y;
             
-            console.log(`MiniMap: Avatar ${position.name} at SL pos (${position.x}, ${position.y}) -> canvas (${canvasX.toFixed(1)}, ${canvasY.toFixed(1)})`);
+            // Apply bounds checking
+            if (adjustedX <= 0) adjustedX = 0.5;
+            if (adjustedY <= 0) adjustedY = 0.5;
+            
+            // Convert avatar position to canvas coordinates (with 1px padding)
+            const canvasX = ((adjustedX / 256) * 256) + 1;
+            const canvasY = (((256 - adjustedY) / 256) * 256) + 1; // Flip Y coordinate
             
             // Ensure the dot is within canvas bounds (now 258x258)
             if (canvasX >= 0 && canvasX <= 258 && canvasY >= 0 && canvasY <= 258) {
