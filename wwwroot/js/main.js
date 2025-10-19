@@ -1927,14 +1927,18 @@ class RadegastWebClient {
         const nameFormat = isPersonalThought ? '' : ':';
         
         messageDiv.innerHTML = `
-            <div class="chat-message-header d-flex align-items-center">
-                <span class="text-muted small me-2">${timestamp}</span>
-                <span class="text-muted small me-2">|</span>
-                <span class="fw-bold">${this.escapeHtml(chatMessage.senderName)}${nameFormat}</span>
-            </div>
-            <div class="chat-message-content">
-                <span class="text-muted small me-2">|</span>
-                <span>${this.renderMessageContent(displayMessage)}</span>
+            <div class="chat-message-layout d-flex">
+                <div class="chat-message-time">
+                    <span class="text-muted small">${timestamp}</span>
+                </div>
+                <div class="chat-message-right">
+                    <div class="chat-message-header">
+                        <span class="fw-bold">${this.escapeHtml(chatMessage.senderName)}${nameFormat}</span>
+                    </div>
+                    <div class="chat-message-content">
+                        <span>${this.renderMessageContent(displayMessage)}</span>
+                    </div>
+                </div>
             </div>
         `;
 
@@ -2273,14 +2277,18 @@ class RadegastWebClient {
         const nameFormat = isPersonalThought ? '' : ':';
         
         messageDiv.innerHTML = `
-            <div class="chat-message-header d-flex align-items-center">
-                <span class="text-muted small me-2">${timestamp}</span>
-                <span class="text-muted small me-2">|</span>
-                <span class="fw-bold">${senderName}${nameFormat}</span>
-            </div>
-            <div class="chat-message-content">
-                <span class="text-muted small me-2">|</span>
-                <span>${this.renderMessageContent(displayMessage)}</span>
+            <div class="chat-message-layout d-flex">
+                <div class="chat-message-time">
+                    <span class="text-muted small">${timestamp}</span>
+                </div>
+                <div class="chat-message-right">
+                    <div class="chat-message-header">
+                        <span class="fw-bold">${senderName}${nameFormat}</span>
+                    </div>
+                    <div class="chat-message-content">
+                        <span>${this.renderMessageContent(displayMessage)}</span>
+                    </div>
+                </div>
             </div>
         `;
         

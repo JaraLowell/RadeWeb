@@ -169,6 +169,10 @@ a {
     color: var(--text-color);
 }
 
+[data-theme="dark"] .chat-message-time {
+    color: var(--text-color);
+}
+
 [data-theme="dark"] .chat-message-header {
     color: var(--text-color);
 }
@@ -328,13 +332,29 @@ a {
 }
 
 /* Chat message header and content styling */
+.chat-message-layout {
+    gap: 0.75rem;
+    align-items: flex-start;
+}
+
+.chat-message-time {
+    flex-shrink: 0;
+    width: 4rem;
+    text-align: left;
+    padding-top: 0.125rem; /* Align with name text baseline */
+}
+
+.chat-message-right {
+    flex: 1;
+    min-width: 0; /* Allow text to wrap */
+}
+
 .chat-message-header {
     margin-bottom: 0.25rem;
     line-height: 1.2;
 }
 
 .chat-message-content {
-    margin-left: 1.25rem; /* Align with the pipe character from the header */
     word-wrap: break-word;
     word-break: break-word;
     overflow-wrap: break-word;
