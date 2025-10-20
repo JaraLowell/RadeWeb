@@ -77,14 +77,17 @@ class StatsManager {
     }
 
     updateDashboard(data) {
-        // Use the correct property names from the backend (with capital letters)
-        this.animateNumber('visitorsToday', data.TotalVisitorsToday || 0);
-        this.animateNumber('visitors7Days', data.TotalUniqueVisitors7Days || 0);
-        this.animateNumber('visitors30Days', data.TotalUniqueVisitors30Days || 0);
-        this.animateNumber('monitoredRegions', data.MonitoredRegionsCount || 0);
+        // Debug: Log the received data to see structure
+        console.log('Dashboard data received:', data);
+        
+        // Use the correct property names from the backend, with fallbacks for both naming conventions
+        this.animateNumber('visitorsToday', data.TotalVisitorsToday || data.totalVisitorsToday || 0);
+        this.animateNumber('visitors7Days', data.TotalUniqueVisitors7Days || data.totalUniqueVisitors7Days || 0);
+        this.animateNumber('visitors30Days', data.TotalUniqueVisitors30Days || data.totalUniqueVisitors30Days || 0);
+        this.animateNumber('monitoredRegions', data.MonitoredRegionsCount || data.monitoredRegionsCount || 0);
 
         // Update region stats table
-        this.updateRegionStats(data.RegionStats || []);
+        this.updateRegionStats(data.RegionStats || data.regionStats || []);
     }
 
     updateCharts(visitorStats) {
