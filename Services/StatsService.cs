@@ -62,6 +62,11 @@ namespace RadegastWeb.Services
         /// This is useful for day boundary transitions
         /// </summary>
         Task TriggerBulkRecordingAsync();
+        
+        /// <summary>
+        /// Get detailed visitor classification for a specific date range
+        /// </summary>
+        Task<VisitorClassificationDto> GetVisitorClassificationAsync(string regionName, DateTime startDate, DateTime endDate);
     }
     
     /// <summary>
@@ -211,30 +216,44 @@ namespace RadegastWeb.Services
                         vs.VisitDate <= endDate.Date)
                     .ToListAsync();
                 
-                // Get historical data for the 60 days before the start date to determine true unique visitors
-                var historicalCutoff = startDate.Date.AddDays(-60);
-                var historicalVisitors = await context.VisitorStats
+                // Get ALL historical data before the start date to determine truly new vs returning visitors
+                // This ensures we properly identify visitors who have EVER been seen before
+                var allHistoricalVisitors = await context.VisitorStats
                     .Where(vs => vs.RegionName == regionName && 
-                        vs.VisitDate >= historicalCutoff && 
                         vs.VisitDate < startDate.Date)
                     .Select(vs => vs.AvatarId)
                     .Distinct()
                     .ToListAsync();
                 
-                var historicalVisitorSet = new HashSet<string>(historicalVisitors);
+                var historicalVisitorSet = new HashSet<string>(allHistoricalVisitors);
+                
+                // Track which visitors we've already seen in the current period to avoid double-counting
+                var seenInPeriod = new HashSet<string>();
                 
                 var stats = rawStats
                     .GroupBy(vs => vs.VisitDate)
-                    .Select(g => new DailyVisitorStatsDto
+                    .OrderBy(g => g.Key) // Important: process dates in order
+                    .Select(g => 
                     {
-                        Date = g.Key,
-                        RegionName = regionName,
-                        UniqueVisitors = g.Select(vs => vs.AvatarId).Distinct().Count(),
-                        TrueUniqueVisitors = g.Select(vs => vs.AvatarId).Distinct()
-                            .Count(avatarId => !historicalVisitorSet.Contains(avatarId)),
-                        TotalVisits = g.Count()
+                        var dailyVisitors = g.Select(vs => vs.AvatarId).Distinct().ToList();
+                        var newVisitorsToday = dailyVisitors.Where(id => !seenInPeriod.Contains(id)).ToList();
+                        var trueUniqueToday = newVisitorsToday.Count(id => !historicalVisitorSet.Contains(id));
+                        
+                        // Add today's visitors to our running total
+                        foreach (var visitorId in dailyVisitors)
+                        {
+                            seenInPeriod.Add(visitorId);
+                        }
+                        
+                        return new DailyVisitorStatsDto
+                        {
+                            Date = g.Key,
+                            RegionName = regionName,
+                            UniqueVisitors = dailyVisitors.Count, // Total unique visitors this day
+                            TrueUniqueVisitors = trueUniqueToday, // New visitors never seen before
+                            TotalVisits = g.Count() // Total visit records (could be multiple per avatar if they teleported in/out)
+                        };
                     })
-                    .OrderBy(d => d.Date)
                     .ToList();
                 
                 // Fill in missing dates with zero counts
@@ -254,9 +273,9 @@ namespace RadegastWeb.Services
                     }).ToList();
                 
                 // Calculate totals in memory to avoid SQLite limitations
-                var totalUniqueVisitors = rawStats.Select(vs => vs.AvatarId).Distinct().Count();
-                var totalTrueUniqueVisitors = rawStats.Select(vs => vs.AvatarId).Distinct()
-                    .Count(avatarId => !historicalVisitorSet.Contains(avatarId));
+                var allVisitorsInPeriod = rawStats.Select(vs => vs.AvatarId).Distinct().ToList();
+                var totalUniqueVisitors = allVisitorsInPeriod.Count;
+                var totalTrueUniqueVisitors = allVisitorsInPeriod.Count(avatarId => !historicalVisitorSet.Contains(avatarId));
                 var totalVisits = rawStats.Count;
                 
                 return new VisitorStatsSummaryDto
@@ -319,11 +338,9 @@ namespace RadegastWeb.Services
                     query = query.Where(vs => vs.RegionName == regionName);
                 }
                 
-                // Get historical data for the 60 days before the start date to determine true unique visitors
-                var historicalCutoff = startDate.Date.AddDays(-60);
+                // Get ALL historical data before the start date to determine truly new vs returning visitors
                 var historicalVisitors = await context.VisitorStats
                     .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
-                        vs.VisitDate >= historicalCutoff && 
                         vs.VisitDate < startDate.Date)
                     .Select(vs => vs.AvatarId)
                     .Distinct()
@@ -334,6 +351,16 @@ namespace RadegastWeb.Services
                 // Get all visitor stats and process in memory to avoid SQLite limitations
                 var allVisitorStats = await query.ToListAsync();
                 
+                // Get historical data to determine visitor types
+                var historicalData = await context.VisitorStats
+                    .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
+                        vs.VisitDate < startDate.Date)
+                    .ToListAsync();
+                
+                var lastVisitDates = historicalData
+                    .GroupBy(vs => vs.AvatarId)
+                    .ToDictionary(g => g.Key, g => g.Max(vs => vs.VisitDate));
+                
                 // Group by avatar ID and process in memory
                 var visitors = allVisitorStats
                     .GroupBy(vs => vs.AvatarId)
@@ -341,6 +368,22 @@ namespace RadegastWeb.Services
                     {
                         var latestRecord = g.OrderByDescending(vs => vs.LastSeenAt).First();
                         var isTrueUnique = !historicalVisitorSet.Contains(g.Key);
+                        
+                        // Determine visitor type
+                        VisitorType visitorType;
+                        if (isTrueUnique)
+                        {
+                            visitorType = VisitorType.Brand_New;
+                        }
+                        else if (lastVisitDates.ContainsKey(g.Key))
+                        {
+                            var daysSinceLastVisit = (startDate.Date - lastVisitDates[g.Key]).TotalDays;
+                            visitorType = daysSinceLastVisit > 30 ? VisitorType.Returning : VisitorType.Regular;
+                        }
+                        else
+                        {
+                            visitorType = VisitorType.Returning; // Default for edge cases
+                        }
                         
                         return new UniqueVisitorDto
                         {
@@ -351,7 +394,8 @@ namespace RadegastWeb.Services
                             LastSeen = g.Max(vs => vs.LastSeenAt),
                             VisitCount = g.Count(),
                             RegionsVisited = g.Select(vs => vs.RegionName).Distinct().ToList(),
-                            IsTrueUnique = isTrueUnique
+                            IsTrueUnique = isTrueUnique,
+                            VisitorType = visitorType
                         };
                     })
                     .ToList();
@@ -550,6 +594,153 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error triggering bulk recording");
+            }
+        }
+        
+        public async Task<VisitorClassificationDto> GetVisitorClassificationAsync(string regionName, DateTime startDate, DateTime endDate)
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                
+                // Get all visitor data for the period
+                var periodVisitors = await context.VisitorStats
+                    .Where(vs => vs.RegionName == regionName && 
+                        vs.VisitDate >= startDate.Date && 
+                        vs.VisitDate <= endDate.Date)
+                    .ToListAsync();
+                
+                // Get all historical data to classify visitors properly
+                var allHistoricalData = await context.VisitorStats
+                    .Where(vs => vs.RegionName == regionName && vs.VisitDate < startDate.Date)
+                    .ToListAsync();
+                
+                // Create lookup for last visit dates
+                var lastVisitDates = allHistoricalData
+                    .GroupBy(vs => vs.AvatarId)
+                    .ToDictionary(g => g.Key, g => g.Max(vs => vs.VisitDate));
+                
+                // Classify each unique visitor
+                var uniqueVisitors = periodVisitors
+                    .GroupBy(vs => vs.AvatarId)
+                    .Select(g =>
+                    {
+                        var latestRecord = g.OrderByDescending(vs => vs.LastSeenAt).First();
+                        var firstSeenInPeriod = g.Min(vs => vs.FirstSeenAt);
+                        
+                        // Determine visitor type
+                        VisitorType visitorType;
+                        bool isNewVisitor = !lastVisitDates.ContainsKey(g.Key);
+                        
+                        if (isNewVisitor)
+                        {
+                            visitorType = VisitorType.Brand_New;
+                        }
+                        else
+                        {
+                            var daysSinceLastVisit = (startDate.Date - lastVisitDates[g.Key]).TotalDays;
+                            if (daysSinceLastVisit > 30)
+                                visitorType = VisitorType.Returning;
+                            else
+                                visitorType = VisitorType.Regular;
+                        }
+                        
+                        return new UniqueVisitorDto
+                        {
+                            AvatarId = g.Key,
+                            AvatarName = latestRecord.AvatarName,
+                            DisplayName = latestRecord.DisplayName,
+                            FirstSeen = firstSeenInPeriod,
+                            LastSeen = g.Max(vs => vs.LastSeenAt),
+                            VisitCount = g.Count(),
+                            RegionsVisited = new List<string> { regionName },
+                            IsTrueUnique = isNewVisitor,
+                            VisitorType = visitorType
+                        };
+                    })
+                    .ToList();
+                
+                // Enhance names
+                await EnhanceVisitorNamesAsync(uniqueVisitors);
+                
+                // Create daily breakdown
+                var seenInPeriod = new HashSet<string>();
+                var dailyBreakdown = periodVisitors
+                    .GroupBy(vs => vs.VisitDate)
+                    .OrderBy(g => g.Key)
+                    .Select(g =>
+                    {
+                        var dailyVisitors = g.Select(vs => vs.AvatarId).Distinct().ToList();
+                        var newTodayVisitors = dailyVisitors.Where(id => !seenInPeriod.Contains(id)).ToList();
+                        
+                        var brandNew = 0;
+                        var returning = 0;
+                        var regular = 0;
+                        
+                        foreach (var visitorId in newTodayVisitors)
+                        {
+                            var visitor = uniqueVisitors.FirstOrDefault(v => v.AvatarId == visitorId);
+                            if (visitor != null)
+                            {
+                                switch (visitor.VisitorType)
+                                {
+                                    case VisitorType.Brand_New:
+                                        brandNew++;
+                                        break;
+                                    case VisitorType.Returning:
+                                        returning++;
+                                        break;
+                                    case VisitorType.Regular:
+                                        regular++;
+                                        break;
+                                }
+                            }
+                        }
+                        
+                        // Add to seen set
+                        foreach (var visitorId in dailyVisitors)
+                        {
+                            seenInPeriod.Add(visitorId);
+                        }
+                        
+                        return new DailyClassificationDto
+                        {
+                            Date = g.Key,
+                            BrandNewVisitors = brandNew,
+                            ReturningVisitors = returning,
+                            RegularVisitors = regular,
+                            TotalUniqueVisitors = dailyVisitors.Count
+                        };
+                    })
+                    .ToList();
+                
+                // Calculate totals
+                var totalBrandNew = uniqueVisitors.Count(v => v.VisitorType == VisitorType.Brand_New);
+                var totalReturning = uniqueVisitors.Count(v => v.VisitorType == VisitorType.Returning);
+                var totalRegular = uniqueVisitors.Count(v => v.VisitorType == VisitorType.Regular);
+                
+                return new VisitorClassificationDto
+                {
+                    RegionName = regionName,
+                    StartDate = startDate,
+                    EndDate = endDate,
+                    BrandNewVisitors = totalBrandNew,
+                    ReturningVisitors = totalReturning,
+                    RegularVisitors = totalRegular,
+                    TotalUniqueVisitors = uniqueVisitors.Count,
+                    DailyBreakdown = dailyBreakdown,
+                    VisitorDetails = uniqueVisitors.OrderByDescending(v => v.LastSeen).ToList()
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting visitor classification for region {RegionName}", regionName);
+                return new VisitorClassificationDto 
+                { 
+                    RegionName = regionName, 
+                    StartDate = startDate, 
+                    EndDate = endDate 
+                };
             }
         }
     }

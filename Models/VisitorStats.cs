@@ -84,6 +84,52 @@ namespace RadegastWeb.Models
         public DateTime LastSeen { get; set; }
         public int VisitCount { get; set; }
         public List<string> RegionsVisited { get; set; } = new();
-        public bool IsTrueUnique { get; set; } // True if visitor hasn't been seen in past 60 days
+        public bool IsTrueUnique { get; set; } // True if visitor has never been seen before this period
+        public VisitorType VisitorType { get; set; } // Classification of visitor type
+    }
+    
+    /// <summary>
+    /// Visitor classification types
+    /// </summary>
+    public enum VisitorType
+    {
+        Brand_New,      // Never seen before anywhere
+        Returning,      // Seen before but not recently  
+        Regular,        // Seen recently (within last 30 days)
+        Daily           // Seen today already
+    }
+    
+    /// <summary>
+    /// DTO for detailed visitor classification analysis
+    /// </summary>
+    public class VisitorClassificationDto
+    {
+        public string RegionName { get; set; } = string.Empty;
+        public DateTime StartDate { get; set; }
+        public DateTime EndDate { get; set; }
+        
+        // Counts by visitor type
+        public int BrandNewVisitors { get; set; }      // Never seen before
+        public int ReturningVisitors { get; set; }     // Last seen 31+ days ago
+        public int RegularVisitors { get; set; }       // Last seen 1-30 days ago
+        public int TotalUniqueVisitors { get; set; }   // All unique visitors in period
+        
+        // Daily breakdown
+        public List<DailyClassificationDto> DailyBreakdown { get; set; } = new();
+        
+        // Visitor details
+        public List<UniqueVisitorDto> VisitorDetails { get; set; } = new();
+    }
+    
+    /// <summary>
+    /// Daily visitor classification breakdown
+    /// </summary>
+    public class DailyClassificationDto
+    {
+        public DateTime Date { get; set; }
+        public int BrandNewVisitors { get; set; }
+        public int ReturningVisitors { get; set; }
+        public int RegularVisitors { get; set; }
+        public int TotalUniqueVisitors { get; set; }
     }
 }

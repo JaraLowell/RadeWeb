@@ -101,6 +101,29 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
+        /// Get detailed visitor classification for a region
+        /// </summary>
+        [HttpGet("visitors/classification/{regionName}")]
+        public async Task<ActionResult<VisitorClassificationDto>> GetVisitorClassification(
+            string regionName,
+            [FromQuery] int days = 30)
+        {
+            try
+            {
+                var endDate = DateTime.UtcNow.Date;
+                var startDate = endDate.AddDays(-Math.Max(1, days));
+
+                var classification = await _statsService.GetVisitorClassificationAsync(regionName, startDate, endDate);
+                return Ok(classification);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting visitor classification for region {RegionName}", regionName);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
         /// Get regions currently being monitored
         /// </summary>
         [HttpGet("regions/monitored")]
