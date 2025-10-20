@@ -67,6 +67,11 @@ namespace RadegastWeb.Services
         /// Get detailed visitor classification for a specific date range
         /// </summary>
         Task<VisitorClassificationDto> GetVisitorClassificationAsync(string regionName, DateTime startDate, DateTime endDate);
+        
+        /// <summary>
+        /// Get hourly visitor activity for the past 24 hours (or specified days) in SLT time
+        /// </summary>
+        Task<HourlyActivitySummaryDto> GetHourlyActivityAsync(DateTime startDate, DateTime endDate, string? regionName = null);
     }
     
     /// <summary>
@@ -738,6 +743,157 @@ namespace RadegastWeb.Services
                 return new VisitorClassificationDto 
                 { 
                     RegionName = regionName, 
+                    StartDate = startDate, 
+                    EndDate = endDate 
+                };
+            }
+        }
+        
+        public async Task<HourlyActivitySummaryDto> GetHourlyActivityAsync(DateTime startDate, DateTime endDate, string? regionName = null)
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                
+                var query = context.VisitorStats
+                    .Where(vs => vs.VisitDate >= startDate.Date && vs.VisitDate <= endDate.Date);
+                
+                if (!string.IsNullOrEmpty(regionName))
+                {
+                    query = query.Where(vs => vs.RegionName == regionName);
+                }
+                
+                // Get all visitor records for the period
+                var visitorRecords = await query.ToListAsync();
+                
+                // Convert UTC timestamps to SLT (Pacific Time) and group by hour
+                var timeZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+                
+                // Create hourly buckets (0-23)
+                var hourlyStats = new Dictionary<int, List<string>>(); // Hour -> List of unique avatar IDs
+                var hourlyVisits = new Dictionary<int, int>(); // Hour -> Total visit count
+                
+                for (int hour = 0; hour < 24; hour++)
+                {
+                    hourlyStats[hour] = new List<string>();
+                    hourlyVisits[hour] = 0;
+                }
+                
+                // Process each visitor record
+                foreach (var record in visitorRecords)
+                {
+                    // Convert both FirstSeenAt and LastSeenAt to SLT
+                    var firstSeenSLT = TimeZoneInfo.ConvertTimeFromUtc(record.FirstSeenAt, timeZone);
+                    var lastSeenSLT = TimeZoneInfo.ConvertTimeFromUtc(record.LastSeenAt, timeZone);
+                    
+                    // Add visitor to the hour buckets they were active in
+                    // For simplicity, we'll use the FirstSeenAt hour, but we could expand this
+                    // to cover the entire time range if FirstSeenAt and LastSeenAt are significantly different
+                    
+                    var activeHour = firstSeenSLT.Hour;
+                    
+                    // Add unique visitor to the hour
+                    if (!hourlyStats[activeHour].Contains(record.AvatarId))
+                    {
+                        hourlyStats[activeHour].Add(record.AvatarId);
+                    }
+                    
+                    // Increment visit count for the hour
+                    hourlyVisits[activeHour]++;
+                    
+                    // If LastSeenAt is significantly different (more than 1 hour), 
+                    // add presence to those hours too
+                    if ((lastSeenSLT - firstSeenSLT).TotalHours > 1)
+                    {
+                        var startHour = firstSeenSLT.Hour;
+                        var endHour = lastSeenSLT.Hour;
+                        
+                        // Handle day boundary crossings
+                        if (endHour < startHour) // Crossed midnight
+                        {
+                            // Add to hours from startHour to 23
+                            for (int h = startHour + 1; h <= 23; h++)
+                            {
+                                if (!hourlyStats[h].Contains(record.AvatarId))
+                                {
+                                    hourlyStats[h].Add(record.AvatarId);
+                                }
+                            }
+                            // Add to hours from 0 to endHour
+                            for (int h = 0; h <= endHour; h++)
+                            {
+                                if (!hourlyStats[h].Contains(record.AvatarId))
+                                {
+                                    hourlyStats[h].Add(record.AvatarId);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Normal case - add to intermediate hours
+                            for (int h = startHour + 1; h <= endHour; h++)
+                            {
+                                if (!hourlyStats[h].Contains(record.AvatarId))
+                                {
+                                    hourlyStats[h].Add(record.AvatarId);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Calculate the number of days analyzed
+                var daysAnalyzed = (int)(endDate.Date - startDate.Date).TotalDays + 1;
+                
+                // Build the hourly statistics DTOs
+                var hourlyStatsList = new List<HourlyVisitorStatsDto>();
+                
+                for (int hour = 0; hour < 24; hour++)
+                {
+                    var uniqueVisitors = hourlyStats[hour].Count;
+                    var totalVisits = hourlyVisits[hour];
+                    var averageVisitors = daysAnalyzed > 0 ? (double)uniqueVisitors / daysAnalyzed : 0;
+                    
+                    // Format hour label in 12-hour format
+                    var hourLabel = DateTime.Today.AddHours(hour).ToString("h:00 tt");
+                    
+                    hourlyStatsList.Add(new HourlyVisitorStatsDto
+                    {
+                        Hour = hour,
+                        HourLabel = hourLabel,
+                        UniqueVisitors = uniqueVisitors,
+                        TotalVisits = totalVisits,
+                        AverageVisitors = Math.Round(averageVisitors, 2)
+                    });
+                }
+                
+                // Find peak and quiet hours
+                var peakHour = hourlyStatsList.OrderByDescending(h => h.AverageVisitors).First();
+                var quietHour = hourlyStatsList.OrderBy(h => h.AverageVisitors).First();
+                
+                var summary = new HourlyActivitySummaryDto
+                {
+                    RegionName = regionName ?? "All Regions",
+                    StartDate = startDate,
+                    EndDate = endDate,
+                    DaysAnalyzed = daysAnalyzed,
+                    HourlyStats = hourlyStatsList,
+                    PeakHour = peakHour.Hour,
+                    PeakHourLabel = peakHour.HourLabel,
+                    PeakHourAverage = peakHour.AverageVisitors,
+                    QuietHour = quietHour.Hour,
+                    QuietHourLabel = quietHour.HourLabel,
+                    QuietHourAverage = quietHour.AverageVisitors
+                };
+                
+                return summary;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting hourly activity for region {RegionName}", regionName);
+                return new HourlyActivitySummaryDto 
+                { 
+                    RegionName = regionName ?? "All Regions", 
                     StartDate = startDate, 
                     EndDate = endDate 
                 };

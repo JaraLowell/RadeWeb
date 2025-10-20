@@ -165,6 +165,29 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
+        /// Get hourly visitor activity for the past X days (default 7) in SLT time
+        /// </summary>
+        [HttpGet("hourly")]
+        public async Task<ActionResult<HourlyActivitySummaryDto>> GetHourlyActivity(
+            [FromQuery] int days = 7,
+            [FromQuery] string? region = null)
+        {
+            try
+            {
+                var endDate = DateTime.UtcNow.Date;
+                var startDate = endDate.AddDays(-Math.Max(1, days));
+
+                var hourlyStats = await _statsService.GetHourlyActivityAsync(startDate, endDate, region);
+                return Ok(hourlyStats);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting hourly activity for region {RegionName}", region);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
         /// Get statistics summary for dashboard
         /// </summary>
         [HttpGet("dashboard")]

@@ -132,4 +132,34 @@ namespace RadegastWeb.Models
         public int RegularVisitors { get; set; }
         public int TotalUniqueVisitors { get; set; }
     }
+    
+    /// <summary>
+    /// DTO for hourly visitor activity in SLT time
+    /// </summary>
+    public class HourlyVisitorStatsDto
+    {
+        public int Hour { get; set; } // 0-23 in SLT
+        public string HourLabel { get; set; } = string.Empty; // "12:00 AM", "1:00 PM", etc.
+        public int UniqueVisitors { get; set; }
+        public int TotalVisits { get; set; }
+        public double AverageVisitors { get; set; } // Average across all days in period
+    }
+    
+    /// <summary>
+    /// DTO for 24-hour activity summary
+    /// </summary>
+    public class HourlyActivitySummaryDto
+    {
+        public string RegionName { get; set; } = string.Empty;
+        public DateTime StartDate { get; set; }
+        public DateTime EndDate { get; set; }
+        public int DaysAnalyzed { get; set; }
+        public List<HourlyVisitorStatsDto> HourlyStats { get; set; } = new();
+        public int PeakHour { get; set; } // Hour with most activity (0-23 SLT)
+        public string PeakHourLabel { get; set; } = string.Empty;
+        public double PeakHourAverage { get; set; } // Average visitors during peak hour
+        public int QuietHour { get; set; } // Hour with least activity (0-23 SLT)  
+        public string QuietHourLabel { get; set; } = string.Empty;
+        public double QuietHourAverage { get; set; } // Average visitors during quiet hour
+    }
 }

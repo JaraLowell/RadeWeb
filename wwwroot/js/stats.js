@@ -7,6 +7,7 @@ class StatsManager {
         this.charts = {};
         this.currentPeriod = 30;
         this.currentRegion = '';
+        this.currentHourlyPeriod = 7;
         this.lastUpdateTime = null;
         
         this.initializeEventListeners();
@@ -22,6 +23,14 @@ class StatsManager {
             radio.addEventListener('change', (e) => {
                 this.currentPeriod = parseInt(e.target.value);
                 this.loadStatistics();
+            });
+        });
+
+        // Hourly period selector
+        document.querySelectorAll('input[name="hourlyPeriod"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                this.currentHourlyPeriod = parseInt(e.target.value);
+                this.loadHourlyActivity();
             });
         });
 
@@ -59,6 +68,9 @@ class StatsManager {
             // Load monitored regions for filter
             const regions = await this.fetchAPI('/api/stats/regions/monitored');
             this.updateRegionFilter(regions);
+
+            // Load hourly activity
+            await this.loadHourlyActivity();
 
             this.updateLastUpdated();
             this.showContent();
@@ -474,6 +486,138 @@ class StatsManager {
         document.getElementById('loadingSpinner').classList.add('d-none');
         document.getElementById('statsContent').classList.remove('d-none');
         document.getElementById('errorState').classList.add('d-none');
+    }
+
+    async loadHourlyActivity() {
+        try {
+            const params = new URLSearchParams({
+                days: this.currentHourlyPeriod.toString()
+            });
+            if (this.currentRegion) {
+                params.append('region', this.currentRegion);
+            }
+            
+            const hourlyData = await this.fetchAPI(`/api/stats/hourly?${params}`);
+            this.updateHourlyChart(hourlyData);
+        } catch (error) {
+            console.error('Error loading hourly activity:', error);
+        }
+    }
+
+    updateHourlyChart(hourlyData) {
+        const ctx = document.getElementById('hourlyActivityChart').getContext('2d');
+        
+        // Destroy existing chart
+        if (this.charts.hourlyActivity) {
+            this.charts.hourlyActivity.destroy();
+        }
+
+        if (!hourlyData || !hourlyData.HourlyStats || hourlyData.HourlyStats.length === 0) {
+            console.warn('No hourly activity data available');
+            return;
+        }
+
+        // Update summary info
+        document.getElementById('hourlyDaysLabel').textContent = hourlyData.DaysAnalyzed || this.currentHourlyPeriod;
+        document.getElementById('peakHourLabel').textContent = hourlyData.PeakHourLabel || '-';
+        document.getElementById('peakHourAvg').textContent = (hourlyData.PeakHourAverage || 0).toFixed(1);
+        document.getElementById('quietHourLabel').textContent = hourlyData.QuietHourLabel || '-';
+        document.getElementById('quietHourAvg').textContent = (hourlyData.QuietHourAverage || 0).toFixed(1);
+        document.getElementById('daysAnalyzed').textContent = hourlyData.DaysAnalyzed || '-';
+
+        // Prepare chart data
+        const labels = hourlyData.HourlyStats.map(h => h.HourLabel || `${h.Hour}:00`);
+        const averageData = hourlyData.HourlyStats.map(h => h.AverageVisitors || 0);
+        const totalData = hourlyData.HourlyStats.map(h => h.UniqueVisitors || 0);
+
+        this.charts.hourlyActivity = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Average Visitors per Hour',
+                    data: averageData,
+                    backgroundColor: 'rgba(74, 115, 169, 0.7)',
+                    borderColor: 'rgb(74, 115, 169)',
+                    borderWidth: 1,
+                    yAxisID: 'y'
+                }, {
+                    label: 'Total Unique Visitors',
+                    data: totalData,
+                    type: 'line',
+                    borderColor: 'rgb(220, 53, 69)',
+                    backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                    borderWidth: 2,
+                    fill: false,
+                    tension: 0.4,
+                    yAxisID: 'y1'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: false
+                    },
+                    legend: {
+                        position: 'top'
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            afterLabel: function(context) {
+                                const hourData = hourlyData.HourlyStats[context.dataIndex];
+                                return `Total Visits: ${hourData.TotalVisits || 0}`;
+                            }
+                        }
+                    }
+                },
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time (SLT)'
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: {
+                            display: true,
+                            text: 'Average Visitors'
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        },
+                        beginAtZero: true
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Total Unique Visitors'
+                        },
+                        grid: {
+                            drawOnChartArea: false,
+                        },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
     }
 
     showError(message) {
