@@ -35,7 +35,9 @@ namespace RadegastWeb.Controllers
                 // Get current SLT date and calculate date range in SLT
                 var currentSLT = _sltTimeService.GetCurrentSLT().Date;
                 var endDate = currentSLT;
-                var startDate = endDate.AddDays(-Math.Max(1, days));
+                
+                // FIX: For days=1, show just today. For days>1, show that many days back from today
+                var startDate = days == 1 ? endDate : endDate.AddDays(-days + 1);
                 
                 // Convert SLT dates to UTC for database queries
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
@@ -76,7 +78,9 @@ namespace RadegastWeb.Controllers
                 // Get current SLT date and calculate date range in SLT
                 var currentSLT = _sltTimeService.GetCurrentSLT().Date;
                 var endDate = currentSLT;
-                var startDate = endDate.AddDays(-Math.Max(1, days));
+                
+                // FIX: For days=1, show just today. For days>1, show that many days back from today
+                var startDate = days == 1 ? endDate : endDate.AddDays(-days + 1);
                 
                 // Convert SLT dates to UTC for database queries
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
@@ -106,7 +110,9 @@ namespace RadegastWeb.Controllers
                 // Get current SLT date and calculate date range in SLT
                 var currentSLT = _sltTimeService.GetCurrentSLT().Date;
                 var endDate = currentSLT;
-                var startDate = endDate.AddDays(-Math.Max(1, days));
+                
+                // FIX: For days=1, show just today. For days>1, show that many days back from today
+                var startDate = days == 1 ? endDate : endDate.AddDays(-days + 1);
                 
                 // Convert SLT dates to UTC for database queries
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
@@ -136,7 +142,9 @@ namespace RadegastWeb.Controllers
                 // Get current SLT date and calculate date range in SLT
                 var currentSLT = _sltTimeService.GetCurrentSLT().Date;
                 var endDate = currentSLT;
-                var startDate = endDate.AddDays(-Math.Max(1, days));
+                
+                // FIX: For days=1, show just today. For days>1, show that many days back from today
+                var startDate = days == 1 ? endDate : endDate.AddDays(-days + 1);
                 
                 // Convert SLT dates to UTC for database queries
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
@@ -259,7 +267,9 @@ namespace RadegastWeb.Controllers
                 // Get current SLT date and calculate date range in SLT
                 var currentSLT = _sltTimeService.GetCurrentSLT().Date;
                 var endDate = currentSLT;
-                var startDate = endDate.AddDays(-Math.Max(1, days));
+                
+                // FIX: For days=1, show just today. For days>1, show that many days back from today
+                var startDate = days == 1 ? endDate : endDate.AddDays(-days + 1);
                 
                 // Convert SLT dates to UTC for database queries
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
