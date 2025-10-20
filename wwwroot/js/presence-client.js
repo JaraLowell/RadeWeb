@@ -16,8 +16,6 @@ class RadegastWebClient {
     }
 
     async init() {
-        console.log('Initializing RadegastWeb client...');
-        
         // Initialize SignalR connection
         await this.initializeSignalR();
         
