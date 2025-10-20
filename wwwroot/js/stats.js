@@ -117,6 +117,9 @@ class StatsManager {
     }
 
     updateDailyVisitorsChart(visitorStats) {
+        console.log('=== DEBUGGING DAILY VISITORS CHART ===');
+        console.log('Raw visitorStats received:', JSON.stringify(visitorStats, null, 2));
+        
         const ctx = document.getElementById('dailyVisitorsChart').getContext('2d');
         
         // Destroy existing chart
@@ -143,7 +146,7 @@ class StatsManager {
                 return;
             }
             
-            console.log(`Region: ${regionData.RegionName || regionData.regionName}, Daily stats:`, dailyStats.length, 'days');
+            console.log(`Region: ${regionData.RegionName || regionData.regionName}, Daily stats:`, dailyStats);
             
             dailyStats.forEach(dayData => {
                 const date = (dayData.Date || dayData.date || '').split('T')[0]; // Get date part only
@@ -154,7 +157,7 @@ class StatsManager {
                 const totalVisits = dayData.TotalVisits || dayData.totalVisits || 0;
                 const sltDate = dayData.SLTDate || dayData.sltDate;
                 
-                console.log(`  Date: ${date} (SLT: ${sltDate}) - Unique: ${uniqueVisitors}, True Unique: ${trueUnique}, Visits: ${totalVisits}`);
+                console.log(`  Processing: Date: ${date}, SLT: ${sltDate}, Unique: ${uniqueVisitors}, True Unique: ${trueUnique}, Visits: ${totalVisits}`);
                 
                 if (!dateMap.has(date)) {
                     dateMap.set(date, { visitors: 0, trueUnique: 0, visits: 0, regions: new Set(), sltDate: sltDate });
@@ -164,13 +167,16 @@ class StatsManager {
                 existing.trueUnique += trueUnique;
                 existing.visits += totalVisits;
                 existing.regions.add(regionData.RegionName || regionData.regionName || 'Unknown');
+                
+                console.log(`  Updated dateMap for ${date}:`, existing);
             });
         });
         
-        console.log('Final dateMap:', Array.from(dateMap.entries()));
+        console.log('Final dateMap before sorting:', Array.from(dateMap.entries()));
 
         // Sort by date and prepare chart data
         const sortedDates = Array.from(dateMap.keys()).sort();
+        console.log('Sorted dates:', sortedDates);
         
         // Create labels using SLT dates from the stored data, with fix for today's data
         const labels = sortedDates.map(date => {
@@ -187,9 +193,25 @@ class StatsManager {
             return sltLabel;
         });
         
+        console.log('Chart labels:', labels);
+        
         // FIX: Correct the data mapping for chart datasets
-        const uniqueVisitorsData = sortedDates.map(date => dateMap.get(date).visitors); // Total unique visitors per day
-        const trueUniqueData = sortedDates.map(date => dateMap.get(date).trueUnique);   // Truly new visitors per day
+        const uniqueVisitorsData = sortedDates.map(date => {
+            const value = dateMap.get(date).visitors;
+            console.log(`Chart data for ${date}: ${value} visitors`);
+            return value;
+        });
+        const trueUniqueData = sortedDates.map(date => {
+            const value = dateMap.get(date).trueUnique;
+            console.log(`Chart data for ${date}: ${value} true unique`);
+            return value;
+        });
+        
+        console.log('Final chart data:', {
+            labels: labels,
+            uniqueVisitorsData: uniqueVisitorsData,
+            trueUniqueData: trueUniqueData
+        });
         const totalVisitsData = sortedDates.map(date => dateMap.get(date).visits);     // Total visits (including repeat visits)
 
         this.charts.dailyVisitors = new Chart(ctx, {
