@@ -447,15 +447,19 @@ class StatsManager {
         document.getElementById('lastUpdated').textContent = this.formatTime(now);
     }
 
+    // Convert UTC timestamp to SLT (Pacific Time - PST/PDT) for date display
     formatDate(dateString) {
         return new Date(dateString).toLocaleDateString('en-US', {
+            timeZone: 'America/Los_Angeles',
             month: 'short',
             day: 'numeric'
         });
     }
 
+    // Convert UTC timestamp to SLT (Pacific Time - PST/PDT) for date-time display
     formatDateTime(dateString) {
         return new Date(dateString).toLocaleDateString('en-US', {
+            timeZone: 'America/Los_Angeles',
             month: 'short',
             day: 'numeric',
             hour: '2-digit',
@@ -463,8 +467,10 @@ class StatsManager {
         });
     }
 
+    // Convert to SLT (Pacific Time - PST/PDT) for time display
     formatTime(date) {
         return date.toLocaleTimeString('en-US', {
+            timeZone: 'America/Los_Angeles',
             hour: '2-digit',
             minute: '2-digit'
         });
@@ -659,11 +665,15 @@ class StatsManager {
         document.getElementById('quietHourAvg').textContent = '0';
         document.getElementById('daysAnalyzed').textContent = '0';
 
-        // Create 24-hour labels
+        // Create 24-hour labels in SLT (Pacific Time)
         const labels = Array.from({length: 24}, (_, i) => {
             const date = new Date();
             date.setHours(i, 0, 0, 0);
-            return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+            return date.toLocaleTimeString('en-US', { 
+                timeZone: 'America/Los_Angeles',
+                hour: 'numeric', 
+                hour12: true 
+            });
         });
 
         const emptyData = new Array(24).fill(0);
