@@ -766,8 +766,29 @@ namespace RadegastWeb.Services
                 // Get all visitor records for the period
                 var visitorRecords = await query.ToListAsync();
                 
+                _logger.LogDebug("Found {Count} visitor records for hourly analysis from {StartDate} to {EndDate} for region {RegionName}", 
+                    visitorRecords.Count, startDate, endDate, regionName ?? "All");
+                
                 // Convert UTC timestamps to SLT (Pacific Time) and group by hour
-                var timeZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+                TimeZoneInfo timeZone;
+                try 
+                {
+                    timeZone = TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+                }
+                catch
+                {
+                    try
+                    {
+                        // Try alternative ID for Unix systems
+                        timeZone = TimeZoneInfo.FindSystemTimeZoneById("America/Los_Angeles");
+                    }
+                    catch
+                    {
+                        // Fall back to UTC-8 if timezone lookup fails
+                        timeZone = TimeZoneInfo.CreateCustomTimeZone("SLT", TimeSpan.FromHours(-8), "SLT", "SLT");
+                        _logger.LogWarning("Could not find Pacific timezone, using UTC-8 fallback");
+                    }
+                }
                 
                 // Create hourly buckets (0-23)
                 var hourlyStats = new Dictionary<int, List<string>>(); // Hour -> List of unique avatar IDs
@@ -867,9 +888,11 @@ namespace RadegastWeb.Services
                     });
                 }
                 
-                // Find peak and quiet hours
-                var peakHour = hourlyStatsList.OrderByDescending(h => h.AverageVisitors).First();
-                var quietHour = hourlyStatsList.OrderBy(h => h.AverageVisitors).First();
+                // Find peak and quiet hours (handle empty data case)
+                var peakHour = hourlyStatsList.Any() ? hourlyStatsList.OrderByDescending(h => h.AverageVisitors).First() : 
+                    new HourlyVisitorStatsDto { Hour = 12, HourLabel = "12:00 PM", AverageVisitors = 0 };
+                var quietHour = hourlyStatsList.Any() ? hourlyStatsList.OrderBy(h => h.AverageVisitors).First() : 
+                    new HourlyVisitorStatsDto { Hour = 0, HourLabel = "12:00 AM", AverageVisitors = 0 };
                 
                 var summary = new HourlyActivitySummaryDto
                 {

@@ -498,6 +498,7 @@ class StatsManager {
             }
             
             const hourlyData = await this.fetchAPI(`/api/stats/hourly?${params}`);
+            console.log('Hourly data received:', hourlyData);
             this.updateHourlyChart(hourlyData);
         } catch (error) {
             console.error('Error loading hourly activity:', error);
@@ -512,23 +513,32 @@ class StatsManager {
             this.charts.hourlyActivity.destroy();
         }
 
-        if (!hourlyData || !hourlyData.HourlyStats || hourlyData.HourlyStats.length === 0) {
-            console.warn('No hourly activity data available');
+        // Handle both PascalCase and camelCase property names
+        const hourlyStats = hourlyData.HourlyStats || hourlyData.hourlyStats || [];
+        
+        if (!hourlyData || hourlyStats.length === 0) {
+            console.warn('No hourly activity data available', hourlyData);
             return;
         }
 
-        // Update summary info
-        document.getElementById('hourlyDaysLabel').textContent = hourlyData.DaysAnalyzed || this.currentHourlyPeriod;
-        document.getElementById('peakHourLabel').textContent = hourlyData.PeakHourLabel || '-';
-        document.getElementById('peakHourAvg').textContent = (hourlyData.PeakHourAverage || 0).toFixed(1);
-        document.getElementById('quietHourLabel').textContent = hourlyData.QuietHourLabel || '-';
-        document.getElementById('quietHourAvg').textContent = (hourlyData.QuietHourAverage || 0).toFixed(1);
-        document.getElementById('daysAnalyzed').textContent = hourlyData.DaysAnalyzed || '-';
+        // Update summary info (handle both naming conventions)
+        const daysAnalyzed = hourlyData.DaysAnalyzed || hourlyData.daysAnalyzed || this.currentHourlyPeriod;
+        const peakHourLabel = hourlyData.PeakHourLabel || hourlyData.peakHourLabel || '-';
+        const peakHourAverage = hourlyData.PeakHourAverage || hourlyData.peakHourAverage || 0;
+        const quietHourLabel = hourlyData.QuietHourLabel || hourlyData.quietHourLabel || '-';
+        const quietHourAverage = hourlyData.QuietHourAverage || hourlyData.quietHourAverage || 0;
+        
+        document.getElementById('hourlyDaysLabel').textContent = daysAnalyzed;
+        document.getElementById('peakHourLabel').textContent = peakHourLabel;
+        document.getElementById('peakHourAvg').textContent = peakHourAverage.toFixed(1);
+        document.getElementById('quietHourLabel').textContent = quietHourLabel;
+        document.getElementById('quietHourAvg').textContent = quietHourAverage.toFixed(1);
+        document.getElementById('daysAnalyzed').textContent = daysAnalyzed;
 
-        // Prepare chart data
-        const labels = hourlyData.HourlyStats.map(h => h.HourLabel || `${h.Hour}:00`);
-        const averageData = hourlyData.HourlyStats.map(h => h.AverageVisitors || 0);
-        const totalData = hourlyData.HourlyStats.map(h => h.UniqueVisitors || 0);
+        // Prepare chart data (handle both naming conventions)
+        const labels = hourlyStats.map(h => (h.HourLabel || h.hourLabel) || `${(h.Hour || h.hour || 0)}:00`);
+        const averageData = hourlyStats.map(h => (h.AverageVisitors || h.averageVisitors) || 0);
+        const totalData = hourlyStats.map(h => (h.UniqueVisitors || h.uniqueVisitors) || 0);
 
         this.charts.hourlyActivity = new Chart(ctx, {
             type: 'bar',
@@ -568,8 +578,9 @@ class StatsManager {
                         intersect: false,
                         callbacks: {
                             afterLabel: function(context) {
-                                const hourData = hourlyData.HourlyStats[context.dataIndex];
-                                return `Total Visits: ${hourData.TotalVisits || 0}`;
+                                const hourData = hourlyStats[context.dataIndex];
+                                const totalVisits = (hourData.TotalVisits || hourData.totalVisits) || 0;
+                                return `Total Visits: ${totalVisits}`;
                             }
                         }
                     }
