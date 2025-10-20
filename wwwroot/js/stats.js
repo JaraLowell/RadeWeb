@@ -315,6 +315,12 @@ class StatsManager {
             return;
         }
 
+        // Debug: Log first visitor to see what properties are available
+        if (visitors.length > 0) {
+            console.log('Sample visitor data:', visitors[0]);
+            console.log('Available properties:', Object.keys(visitors[0]));
+        }
+
         // Sort by last seen (most recent first) and take top 20
         const recentVisitors = visitors
             .sort((a, b) => new Date(b.LastSeen || b.lastSeen || 0) - new Date(a.LastSeen || a.lastSeen || 0))
@@ -323,13 +329,15 @@ class StatsManager {
         tbody.innerHTML = recentVisitors.map(visitor => {
             // Use the best available name from our enhanced cache data
             // Priority: displayName > avatarName > fallback to truncated avatar ID
-            let displayName = this.getBestAvailableName(visitor);
+            const displayName = this.getBestAvailableName(visitor);
             
             const firstSeen = this.formatDateTime(visitor.FirstSeen || visitor.firstSeen);
             const lastSeen = this.formatDateTime(visitor.LastSeen || visitor.lastSeen);
             
             // Add visual indicator for true unique visitors (new in 60 days)
-            const isTrueUnique = visitor.IsTrueUnique || visitor.isTrueUnique || false;
+            // Check if this visitor is truly new (not seen in past 60 days)
+            const isTrueUnique = visitor.isTrueUnique === true || visitor.IsTrueUnique === true;
+            
             const uniqueBadge = isTrueUnique ? 
                 '<small class="badge bg-success ms-1" title="New visitor (not seen in past 60 days)">NEW</small>' : 
                 '<small class="badge bg-secondary ms-1" title="Returning visitor (seen in past 60 days)">RET</small>';

@@ -404,9 +404,11 @@ namespace RadegastWeb.Services
                 }
                 
                 // Get ALL historical data before the start date to determine truly new vs returning visitors
+                // For "true unique" determination, we look back 60 days from the start date
+                var trueUniqueThresholdDate = startDate.Date.AddDays(-60);
                 var historicalVisitors = await context.VisitorStats
                     .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
-                        vs.VisitDate < startDate.Date)
+                        vs.VisitDate < trueUniqueThresholdDate)
                     .Select(vs => vs.AvatarId)
                     .Distinct()
                     .ToListAsync();
@@ -416,7 +418,7 @@ namespace RadegastWeb.Services
                 // Get all visitor stats and process in memory to avoid SQLite limitations
                 var allVisitorStats = await query.ToListAsync();
                 
-                // Get historical data to determine visitor types
+                // Get historical data to determine visitor types (look back from start date for visitor classification)
                 var historicalData = await context.VisitorStats
                     .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
                         vs.VisitDate < startDate.Date)
