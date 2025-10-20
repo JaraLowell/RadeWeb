@@ -209,6 +209,42 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
+        /// Debug endpoint to show date conversion logic
+        /// </summary>
+        [HttpGet("debug/dates")]
+        public ActionResult<object> DebugDates()
+        {
+            try
+            {
+                var currentSLT = _sltTimeService.GetCurrentSLT().Date;
+                var endDate = currentSLT;
+                var startDateToday = endDate;
+                
+                var sltTimeZone = _sltTimeService.GetSLTTimeZone();
+                var utcStartDateToday = TimeZoneInfo.ConvertTimeToUtc(startDateToday, sltTimeZone);
+                var utcEndDate = TimeZoneInfo.ConvertTimeToUtc(endDate.AddDays(1), sltTimeZone);
+                
+                return Ok(new {
+                    CurrentUTC = DateTime.UtcNow,
+                    CurrentSLT = _sltTimeService.GetCurrentSLT(),
+                    CurrentSLTDate = currentSLT,
+                    StartDateToday = startDateToday,
+                    EndDate = endDate,
+                    UTCStartDateToday = utcStartDateToday,
+                    UTCEndDate = utcEndDate,
+                    SLTTimeZone = sltTimeZone.Id,
+                    SLTFormattedStart = _sltTimeService.FormatSLTWithDate(utcStartDateToday, "MMM dd, yyyy HH:mm:ss"),
+                    SLTFormattedEnd = _sltTimeService.FormatSLTWithDate(utcEndDate, "MMM dd, yyyy HH:mm:ss")
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in debug dates endpoint");
+                return StatusCode(500, ex.Message);
+            }
+        }
+
+        /// <summary>
         /// Get hourly visitor activity for the past X days (default 7) in SLT time
         /// </summary>
         [HttpGet("hourly")]
