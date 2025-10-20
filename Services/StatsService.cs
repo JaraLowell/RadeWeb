@@ -369,8 +369,15 @@ namespace RadegastWeb.Services
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
+                // TEMPORARY FIX: Use expanded date range to find all regions with data
+                var sltTimeZone = _sltTimeService.GetSLTTimeZone();
+                var rawSLTStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
+                var rawSLTEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
+                var expandedStartDate = new DateTime[] { startDate.Date, rawSLTStartDate }.Min();
+                var expandedEndDate = new DateTime[] { endDate.Date, rawSLTEndDate }.Max();
+                
                 var regions = await context.VisitorStats
-                    .Where(vs => vs.VisitDate >= startDate.Date && vs.VisitDate <= endDate.Date)
+                    .Where(vs => vs.VisitDate >= expandedStartDate && vs.VisitDate <= expandedEndDate)
                     .Select(vs => vs.RegionName)
                     .Distinct()
                     .ToListAsync();
