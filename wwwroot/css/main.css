@@ -73,6 +73,8 @@ html, body {
 body {
 	display: flex;
 	flex-direction: column;
+    background-color: #5e5e5e;
+    background-image: linear-gradient(90deg, #bee3ff, #0f293c);
 }
 
 .main-content {

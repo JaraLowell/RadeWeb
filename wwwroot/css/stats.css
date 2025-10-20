@@ -1,7 +1,9 @@
 /* Stats Page Styles */
 .bg-dark {
     --bs-bg-opacity: 1;
-    background-color: rgb(74 115 169) !important;
+    background-color: rgb(53 53 53) !important;
+    border-bottom-right-radius: 9px;
+    border-bottom-left-radius: 9px;
 }
 
 .stats-card {
@@ -68,7 +70,11 @@ canvas {
     font-weight: 600;
     color: #495057;
     border-top: none;
-    background-color: #f8f9fa;
+    background-color: #d4dfe8;
+}
+
+.form-select {
+    background-color: #d4dfe8;
 }
 
 .table td {
