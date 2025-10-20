@@ -86,6 +86,10 @@ namespace RadegastWeb.Models
         /// When the dialog expires (if applicable)
         /// </summary>
         public DateTime? ExpiresAt { get; set; }
+        
+        // SLT formatted timestamps for display
+        public string? SLTReceivedAt { get; set; } // MMM dd, HH:mm:ss format
+        public string? SLTExpiresAt { get; set; } // MMM dd, HH:mm:ss format (if applicable)
     }
     
     /// <summary>

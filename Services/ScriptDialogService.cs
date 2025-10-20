@@ -71,6 +71,7 @@ namespace RadegastWeb.Services
     {
         private readonly ILogger<ScriptDialogService> _logger;
         private readonly IAccountService _accountService;
+        private readonly ISLTimeService _sltTimeService;
         private readonly ConcurrentDictionary<string, ScriptDialogDto> _activeDialogs = new();
         private readonly ConcurrentDictionary<string, ScriptPermissionDto> _activePermissions = new();
         private readonly System.Threading.Timer _cleanupTimer;
@@ -81,10 +82,11 @@ namespace RadegastWeb.Services
         public event EventHandler<string>? DialogClosed;
         public event EventHandler<string>? PermissionClosed;
         
-        public ScriptDialogService(ILogger<ScriptDialogService> logger, IAccountService accountService)
+        public ScriptDialogService(ILogger<ScriptDialogService> logger, IAccountService accountService, ISLTimeService sltTimeService)
         {
             _logger = logger;
             _accountService = accountService;
+            _sltTimeService = sltTimeService;
             
             // Setup cleanup timer to run every 5 minutes
             _cleanupTimer = new System.Threading.Timer(
@@ -118,7 +120,9 @@ namespace RadegastWeb.Services
                     ImageId = imageId != UUID.Zero ? imageId.ToString() : null,
                     IsTextInput = isTextInput,
                     ReceivedAt = DateTime.UtcNow,
-                    ExpiresAt = DateTime.UtcNow.AddMinutes(5) // Dialogs expire after 5 minutes
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(5), // Dialogs expire after 5 minutes
+                    SLTReceivedAt = _sltTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, HH:mm:ss"),
+                    SLTExpiresAt = _sltTimeService.FormatSLTWithDate(DateTime.UtcNow.AddMinutes(5), "MMM dd, HH:mm:ss")
                 };
                 
                 // Store the dialog

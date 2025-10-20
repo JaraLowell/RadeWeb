@@ -51,6 +51,10 @@ namespace RadegastWeb.Models
         /// When the request expires (teleport offers expire after a few minutes)
         /// </summary>
         public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddMinutes(5);
+        
+        // SLT formatted timestamps for display
+        public string? SLTReceivedAt { get; set; } // MMM dd, HH:mm:ss format
+        public string? SLTExpiresAt { get; set; } // MMM dd, HH:mm:ss format
     }
     
     /// <summary>

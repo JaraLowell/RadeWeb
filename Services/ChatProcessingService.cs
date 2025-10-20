@@ -14,16 +14,19 @@ namespace RadegastWeb.Services
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<ChatProcessingService> _logger;
         private readonly IHubContext<RadegastHub, IRadegastHubClient> _hubContext;
+        private readonly ISLTimeService _sltTimeService;
         private readonly ConcurrentDictionary<string, (IChatMessageProcessor processor, int priority)> _processors;
 
         public ChatProcessingService(
             IServiceProvider serviceProvider,
             ILogger<ChatProcessingService> logger,
-            IHubContext<RadegastHub, IRadegastHubClient> hubContext)
+            IHubContext<RadegastHub, IRadegastHubClient> hubContext,
+            ISLTimeService sltTimeService)
         {
             _serviceProvider = serviceProvider;
             _logger = logger;
             _hubContext = hubContext;
+            _sltTimeService = sltTimeService;
             _processors = new ConcurrentDictionary<string, (IChatMessageProcessor, int)>();
 
             // Register built-in processors
@@ -161,6 +164,7 @@ namespace RadegastWeb.Services
             {
                 using var scope = _serviceProvider.CreateScope();
                 var urlParser = scope.ServiceProvider.GetRequiredService<ISlUrlParser>();
+                var sltTimeService = scope.ServiceProvider.GetRequiredService<ISLTimeService>();
                 
                 var processedMessage = await urlParser.ProcessChatMessageAsync(message.Message, context.AccountId);
                 
@@ -178,7 +182,9 @@ namespace RadegastWeb.Services
                         SenderId = message.SenderId,
                         TargetId = message.TargetId,
                         SessionId = message.SessionId,
-                        SessionName = message.SessionName
+                        SessionName = message.SessionName,
+                        SLTTime = sltTimeService.FormatSLT(message.Timestamp, "HH:mm:ss"),
+                        SLTDateTime = sltTimeService.FormatSLTWithDate(message.Timestamp, "MMM dd, HH:mm:ss")
                     };
                     
                     return new ChatProcessingResult

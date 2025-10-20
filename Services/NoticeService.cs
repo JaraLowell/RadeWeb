@@ -214,7 +214,9 @@ namespace RadegastWeb.Services
                     AttachmentType = attachmentType,
                     AccountId = accountId,
                     RequiresAcknowledgment = hasAttachment, // Group notices with attachments require acknowledgment
-                    IsAcknowledged = !hasAttachment // Auto-acknowledge notices without attachments
+                    IsAcknowledged = !hasAttachment, // Auto-acknowledge notices without attachments
+                    SLTTime = _slTimeService.FormatSLT(DateTime.UtcNow, "HH:mm:ss"),
+                    SLTDateTime = _slTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, HH:mm:ss")
                 };
 
                 return notice;
@@ -283,7 +285,9 @@ namespace RadegastWeb.Services
                     AttachmentType = attachmentType,
                     AccountId = accountId,
                     RequiresAcknowledgment = true, // Always require acknowledgment for GroupNoticeRequested
-                    IsAcknowledged = false
+                    IsAcknowledged = false,
+                    SLTTime = _slTimeService.FormatSLT(DateTime.UtcNow, "HH:mm:ss"),
+                    SLTDateTime = _slTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, HH:mm:ss")
                 };
 
                 return notice;
@@ -310,7 +314,9 @@ namespace RadegastWeb.Services
                 HasAttachment = false,
                 AccountId = accountId,
                 RequiresAcknowledgment = false,
-                IsAcknowledged = true
+                IsAcknowledged = true,
+                SLTTime = _slTimeService.FormatSLT(DateTime.UtcNow, "HH:mm:ss"),
+                SLTDateTime = _slTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, HH:mm:ss")
             };
 
             return Task.FromResult<NoticeDto?>(notice);
@@ -332,7 +338,9 @@ namespace RadegastWeb.Services
                     HasAttachment = false,
                     AccountId = accountId,
                     RequiresAcknowledgment = false,
-                    IsAcknowledged = true
+                    IsAcknowledged = true,
+                    SLTTime = _slTimeService.FormatSLT(DateTime.UtcNow, "HH:mm:ss"),
+                    SLTDateTime = _slTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, HH:mm:ss")
                 };
 
                 // Save to database
@@ -520,7 +528,9 @@ namespace RadegastWeb.Services
                 AttachmentType = notice.AttachmentType,
                 RequiresAcknowledgment = notice.RequiresAcknowledgment,
                 IsAcknowledged = notice.IsAcknowledged,
-                IsRead = notice.IsRead
+                IsRead = notice.IsRead,
+                SLTTime = _slTimeService.FormatSLT(notice.Timestamp, "HH:mm:ss"),
+                SLTDateTime = _slTimeService.FormatSLTWithDate(notice.Timestamp, "MMM dd, HH:mm:ss")
             };
 
             // If GroupName is missing but GroupId is present, try to get it from group cache

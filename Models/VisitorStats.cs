@@ -56,6 +56,9 @@ namespace RadegastWeb.Models
         public int UniqueVisitors { get; set; }
         public int TrueUniqueVisitors { get; set; } // Visitors not seen in past 60 days
         public int TotalVisits { get; set; } // Total number of visit records (may be higher if same avatar visited multiple times)
+        
+        // SLT formatted date for display
+        public string? SLTDate { get; set; } // MMM dd, yyyy format
     }
     
     /// <summary>
@@ -70,6 +73,10 @@ namespace RadegastWeb.Models
         public int TotalVisits { get; set; }
         public DateTime StartDate { get; set; }
         public DateTime EndDate { get; set; }
+        
+        // SLT formatted dates for display
+        public string? SLTStartDate { get; set; } // MMM dd, yyyy format
+        public string? SLTEndDate { get; set; } // MMM dd, yyyy format
     }
     
     /// <summary>
@@ -86,6 +93,10 @@ namespace RadegastWeb.Models
         public List<string> RegionsVisited { get; set; } = new();
         public bool IsTrueUnique { get; set; } // True if visitor has never been seen before this period
         public VisitorType VisitorType { get; set; } // Classification of visitor type
+        
+        // SLT formatted timestamps for display
+        public string? SLTFirstSeen { get; set; } // MMM dd, yyyy HH:mm format
+        public string? SLTLastSeen { get; set; } // MMM dd, yyyy HH:mm format
     }
     
     /// <summary>
@@ -119,6 +130,10 @@ namespace RadegastWeb.Models
         
         // Visitor details
         public List<UniqueVisitorDto> VisitorDetails { get; set; } = new();
+        
+        // SLT formatted dates for display
+        public string? SLTStartDate { get; set; } // MMM dd, yyyy format
+        public string? SLTEndDate { get; set; } // MMM dd, yyyy format
     }
     
     /// <summary>
@@ -131,6 +146,9 @@ namespace RadegastWeb.Models
         public int ReturningVisitors { get; set; }
         public int RegularVisitors { get; set; }
         public int TotalUniqueVisitors { get; set; }
+        
+        // SLT formatted date for display
+        public string? SLTDate { get; set; } // MMM dd, yyyy format
     }
     
     /// <summary>
@@ -161,5 +179,9 @@ namespace RadegastWeb.Models
         public int QuietHour { get; set; } // Hour with least activity (0-23 SLT)  
         public string QuietHourLabel { get; set; } = string.Empty;
         public double QuietHourAverage { get; set; } // Average visitors during quiet hour
+        
+        // SLT formatted dates for display
+        public string? SLTStartDate { get; set; } // MMM dd, yyyy format
+        public string? SLTEndDate { get; set; } // MMM dd, yyyy format
     }
 }

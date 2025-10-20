@@ -82,6 +82,7 @@ namespace RadegastWeb.Services
         private readonly IDbContextFactory<RadegastDbContext> _dbContextFactory;
         private readonly ILogger<StatsService> _logger;
         private readonly IGlobalDisplayNameCache _globalDisplayNameCache;
+        private readonly ISLTimeService _sltTimeService;
         
         // Thread-safe dictionary to track which accounts are monitoring which regions
         // This prevents duplicate recording when multiple accounts are in the same region
@@ -91,11 +92,12 @@ namespace RadegastWeb.Services
         private readonly ConcurrentDictionary<string, DateTime> _recentRecordings = new();
         private readonly TimeSpan _recordingCooldown = TimeSpan.FromMinutes(5); // Don't record same avatar twice within 5 minutes
         
-        public StatsService(IDbContextFactory<RadegastDbContext> dbContextFactory, ILogger<StatsService> logger, IGlobalDisplayNameCache globalDisplayNameCache)
+        public StatsService(IDbContextFactory<RadegastDbContext> dbContextFactory, ILogger<StatsService> logger, IGlobalDisplayNameCache globalDisplayNameCache, ISLTimeService sltTimeService)
         {
             _dbContextFactory = dbContextFactory;
             _logger = logger;
             _globalDisplayNameCache = globalDisplayNameCache;
+            _sltTimeService = sltTimeService;
         }
         
         public void SetAccountRegion(Guid accountId, string regionName, ulong simHandle)
@@ -256,7 +258,8 @@ namespace RadegastWeb.Services
                             RegionName = regionName,
                             UniqueVisitors = dailyVisitors.Count, // Total unique visitors this day
                             TrueUniqueVisitors = trueUniqueToday, // New visitors never seen before
-                            TotalVisits = g.Count() // Total visit records (could be multiple per avatar if they teleported in/out)
+                            TotalVisits = g.Count(), // Total visit records (could be multiple per avatar if they teleported in/out)
+                            SLTDate = _sltTimeService.FormatSLTWithDate(g.Key, "MMM dd, yyyy")
                         };
                     })
                     .ToList();
@@ -274,7 +277,8 @@ namespace RadegastWeb.Services
                         RegionName = regionName, 
                         UniqueVisitors = 0,
                         TrueUniqueVisitors = 0,
-                        TotalVisits = 0 
+                        TotalVisits = 0,
+                        SLTDate = _sltTimeService.FormatSLTWithDate(date, "MMM dd, yyyy")
                     }).ToList();
                 
                 // Calculate totals in memory to avoid SQLite limitations
@@ -291,13 +295,21 @@ namespace RadegastWeb.Services
                     TrueUniqueVisitors = totalTrueUniqueVisitors,
                     TotalVisits = totalVisits,
                     StartDate = startDate,
-                    EndDate = endDate
+                    EndDate = endDate,
+                    SLTStartDate = _sltTimeService.FormatSLTWithDate(startDate, "MMM dd, yyyy"),
+                    SLTEndDate = _sltTimeService.FormatSLTWithDate(endDate, "MMM dd, yyyy")
                 };
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting stats for region {RegionName}", regionName);
-                return new VisitorStatsSummaryDto { RegionName = regionName, StartDate = startDate, EndDate = endDate };
+                return new VisitorStatsSummaryDto { 
+                    RegionName = regionName, 
+                    StartDate = startDate, 
+                    EndDate = endDate,
+                    SLTStartDate = _sltTimeService.FormatSLTWithDate(startDate, "MMM dd, yyyy"),
+                    SLTEndDate = _sltTimeService.FormatSLTWithDate(endDate, "MMM dd, yyyy")
+                };
             }
         }
         
@@ -400,7 +412,9 @@ namespace RadegastWeb.Services
                             VisitCount = g.Count(),
                             RegionsVisited = g.Select(vs => vs.RegionName).Distinct().ToList(),
                             IsTrueUnique = isTrueUnique,
-                            VisitorType = visitorType
+                            VisitorType = visitorType,
+                            SLTFirstSeen = _sltTimeService.FormatSLTWithDate(g.Min(vs => vs.FirstSeenAt), "MMM dd, yyyy HH:mm"),
+                            SLTLastSeen = _sltTimeService.FormatSLTWithDate(g.Max(vs => vs.LastSeenAt), "MMM dd, yyyy HH:mm")
                         };
                     })
                     .ToList();
@@ -660,7 +674,9 @@ namespace RadegastWeb.Services
                             VisitCount = g.Count(),
                             RegionsVisited = new List<string> { regionName },
                             IsTrueUnique = isNewVisitor,
-                            VisitorType = visitorType
+                            VisitorType = visitorType,
+                            SLTFirstSeen = _sltTimeService.FormatSLTWithDate(firstSeenInPeriod, "MMM dd, yyyy HH:mm"),
+                            SLTLastSeen = _sltTimeService.FormatSLTWithDate(g.Max(vs => vs.LastSeenAt), "MMM dd, yyyy HH:mm")
                         };
                     })
                     .ToList();
@@ -714,7 +730,8 @@ namespace RadegastWeb.Services
                             BrandNewVisitors = brandNew,
                             ReturningVisitors = returning,
                             RegularVisitors = regular,
-                            TotalUniqueVisitors = dailyVisitors.Count
+                            TotalUniqueVisitors = dailyVisitors.Count,
+                            SLTDate = _sltTimeService.FormatSLTWithDate(g.Key, "MMM dd, yyyy")
                         };
                     })
                     .ToList();
@@ -734,7 +751,9 @@ namespace RadegastWeb.Services
                     RegularVisitors = totalRegular,
                     TotalUniqueVisitors = uniqueVisitors.Count,
                     DailyBreakdown = dailyBreakdown,
-                    VisitorDetails = uniqueVisitors.OrderByDescending(v => v.LastSeen).ToList()
+                    VisitorDetails = uniqueVisitors.OrderByDescending(v => v.LastSeen).ToList(),
+                    SLTStartDate = _sltTimeService.FormatSLTWithDate(startDate, "MMM dd, yyyy"),
+                    SLTEndDate = _sltTimeService.FormatSLTWithDate(endDate, "MMM dd, yyyy")
                 };
             }
             catch (Exception ex)
@@ -744,7 +763,9 @@ namespace RadegastWeb.Services
                 { 
                     RegionName = regionName, 
                     StartDate = startDate, 
-                    EndDate = endDate 
+                    EndDate = endDate,
+                    SLTStartDate = _sltTimeService.FormatSLTWithDate(startDate, "MMM dd, yyyy"),
+                    SLTEndDate = _sltTimeService.FormatSLTWithDate(endDate, "MMM dd, yyyy")
                 };
             }
         }
@@ -906,7 +927,9 @@ namespace RadegastWeb.Services
                     PeakHourAverage = peakHour.AverageVisitors,
                     QuietHour = quietHour.Hour,
                     QuietHourLabel = quietHour.HourLabel,
-                    QuietHourAverage = quietHour.AverageVisitors
+                    QuietHourAverage = quietHour.AverageVisitors,
+                    SLTStartDate = _sltTimeService.FormatSLTWithDate(startDate, "MMM dd, yyyy"),
+                    SLTEndDate = _sltTimeService.FormatSLTWithDate(endDate, "MMM dd, yyyy")
                 };
                 
                 return summary;
@@ -918,7 +941,9 @@ namespace RadegastWeb.Services
                 { 
                     RegionName = regionName ?? "All Regions", 
                     StartDate = startDate, 
-                    EndDate = endDate 
+                    EndDate = endDate,
+                    SLTStartDate = _sltTimeService.FormatSLTWithDate(startDate, "MMM dd, yyyy"),
+                    SLTEndDate = _sltTimeService.FormatSLTWithDate(endDate, "MMM dd, yyyy")
                 };
             }
         }

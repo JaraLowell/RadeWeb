@@ -20,13 +20,15 @@ namespace RadegastWeb.Services
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger<ChatHistoryService> _logger;
         private readonly IChatLogService _chatLogService;
+        private readonly ISLTimeService _sltTimeService;
         private readonly string _connectionString;
 
-        public ChatHistoryService(IServiceProvider serviceProvider, ILogger<ChatHistoryService> logger, IChatLogService chatLogService, IConfiguration configuration)
+        public ChatHistoryService(IServiceProvider serviceProvider, ILogger<ChatHistoryService> logger, IChatLogService chatLogService, ISLTimeService sltTimeService, IConfiguration configuration)
         {
             _serviceProvider = serviceProvider;
             _logger = logger;
             _chatLogService = chatLogService;
+            _sltTimeService = sltTimeService;
             
             // Get the connection string from configuration or build it
             var contentRoot = configuration.GetValue<string>("ContentRoot") ?? Directory.GetCurrentDirectory();
@@ -111,7 +113,9 @@ namespace RadegastWeb.Services
                         SenderId = m.SenderId,
                         TargetId = m.TargetId,
                         SessionId = m.SessionId,
-                        SessionName = m.SessionName
+                        SessionName = m.SessionName,
+                        SLTTime = _sltTimeService.FormatSLT(m.Timestamp, "HH:mm:ss"),
+                        SLTDateTime = _sltTimeService.FormatSLTWithDate(m.Timestamp, "MMM dd, HH:mm:ss")
                     })
                     .ToListAsync();
 
@@ -152,7 +156,8 @@ namespace RadegastWeb.Services
                     LastActivity = s.LastActivity,
                     AccountId = accountId,
                     UnreadCount = 0,
-                    IsActive = false
+                    IsActive = false,
+                    SLTLastActivity = _sltTimeService.FormatSLTWithDate(s.LastActivity, "MMM dd, HH:mm:ss")
                 })
                 .OrderByDescending(s => s.LastActivity)
                 .Take(20) // Limit to most recent 20 sessions

@@ -14,6 +14,9 @@ namespace RadegastWeb.Models
         public string GridUrl { get; set; } = string.Empty;
         public bool HasAiBotActive { get; set; } = false;
         public bool HasCorradeActive { get; set; } = false;
+        
+        // SLT formatted time for display
+        public string? SLTLastLoginAt { get; set; } // MMM dd, HH:mm:ss format
     }
     
     public class LoginRequest
@@ -93,6 +96,9 @@ namespace RadegastWeb.Models
         public DateTime LastActivity { get; set; }
         public Guid AccountId { get; set; }
         public bool IsActive { get; set; }
+        
+        // SLT formatted time for display
+        public string? SLTLastActivity { get; set; } // MMM dd, HH:mm:ss format
     }
 
     public class SendIMRequest

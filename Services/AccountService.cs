@@ -43,12 +43,14 @@ namespace RadegastWeb.Services
         private readonly ConcurrentDictionary<Guid, Account> _accounts = new();
         private readonly ConcurrentDictionary<Guid, WebRadegastInstance> _instances = new();
         private readonly IPeriodicDisplayNameService _periodicDisplayNameService;
+        private readonly ISLTimeService _sltTimeService;
         private bool _disposed;
 
-        public AccountService(ILogger<AccountService> logger, IServiceProvider serviceProvider, IConfiguration configuration, IPeriodicDisplayNameService periodicDisplayNameService)
+        public AccountService(ILogger<AccountService> logger, IServiceProvider serviceProvider, IConfiguration configuration, IPeriodicDisplayNameService periodicDisplayNameService, ISLTimeService sltTimeService)
         {
             _logger = logger;
             _serviceProvider = serviceProvider;
+            _sltTimeService = sltTimeService;
             _periodicDisplayNameService = periodicDisplayNameService;
             
             // Get the connection string from configuration or build it
@@ -555,7 +557,9 @@ namespace RadegastWeb.Services
                     AvatarUuid = account.AvatarUuid,
                     GridUrl = account.GridUrl,
                     HasAiBotActive = hasAiBotActive,
-                    HasCorradeActive = hasCorradeActive
+                    HasCorradeActive = hasCorradeActive,
+                    SLTLastLoginAt = account.LastLoginAt.HasValue ? 
+                        _sltTimeService.FormatSLTWithDate(account.LastLoginAt.Value, "MMM dd, HH:mm:ss") : null
                 };
                 
                 accountStatuses.Add(accountStatus);

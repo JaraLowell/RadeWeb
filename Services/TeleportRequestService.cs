@@ -41,16 +41,18 @@ namespace RadegastWeb.Services
     {
         private readonly ILogger<TeleportRequestService> _logger;
         private readonly IAccountService _accountService;
+        private readonly ISLTimeService _sltTimeService;
         private readonly ConcurrentDictionary<string, TeleportRequestDto> _activeRequests = new();
         private readonly System.Threading.Timer _cleanupTimer;
         
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
         public event EventHandler<string>? TeleportRequestClosed;
         
-        public TeleportRequestService(ILogger<TeleportRequestService> logger, IAccountService accountService)
+        public TeleportRequestService(ILogger<TeleportRequestService> logger, IAccountService accountService, ISLTimeService sltTimeService)
         {
             _logger = logger;
             _accountService = accountService;
+            _sltTimeService = sltTimeService;
             
             // Setup cleanup timer to run every 2 minutes
             _cleanupTimer = new System.Threading.Timer(
@@ -76,7 +78,9 @@ namespace RadegastWeb.Services
                     Message = message,
                     SessionId = sessionId.ToString(),
                     ReceivedAt = DateTime.UtcNow,
-                    ExpiresAt = DateTime.UtcNow.AddMinutes(5) // Teleport offers expire after 5 minutes
+                    ExpiresAt = DateTime.UtcNow.AddMinutes(5), // Teleport offers expire after 5 minutes
+                    SLTReceivedAt = _sltTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, HH:mm:ss"),
+                    SLTExpiresAt = _sltTimeService.FormatSLTWithDate(DateTime.UtcNow.AddMinutes(5), "MMM dd, HH:mm:ss")
                 };
                 
                 // Store the request
