@@ -125,8 +125,9 @@ namespace RadegastWeb.Services
         {
             try
             {
-                // Check cooldown to prevent too frequent recordings
-                var cacheKey = $"{avatarId}:{regionName}:{DateTime.UtcNow:yyyy-MM-dd}"; // Per avatar per region per day
+                // Check cooldown to prevent too frequent recordings (use SLT date for consistency)
+                var currentSLT = _sltTimeService.GetCurrentSLT();
+                var cacheKey = $"{avatarId}:{regionName}:{currentSLT:yyyy-MM-dd}"; // Per avatar per region per SLT day
                 if (_recentRecordings.TryGetValue(cacheKey, out var lastRecording))
                 {
                     if (DateTime.UtcNow - lastRecording < _recordingCooldown)
@@ -135,7 +136,8 @@ namespace RadegastWeb.Services
                     }
                 }
                 
-                var today = DateTime.UtcNow.Date;
+                // Use SLT date for consistent date grouping (Pacific Time date, not UTC date)
+                var today = _sltTimeService.GetCurrentSLT().Date;
                 var now = DateTime.UtcNow;
                 
                 // Extract region coordinates from sim handle
