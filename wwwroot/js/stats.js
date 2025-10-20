@@ -147,19 +147,22 @@ class StatsManager {
             
             dailyStats.forEach(dayData => {
                 const date = (dayData.Date || dayData.date || '').split('T')[0]; // Get date part only
-                if (!date) return;
+                const sltDate = dayData.SLTDate || dayData.sltDate;
+                
+                // FIX: Use SLT date as the key for proper grouping, fallback to raw date if no SLT date
+                const mapKey = sltDate || date;
+                if (!mapKey) return;
                 
                 const uniqueVisitors = dayData.UniqueVisitors || dayData.uniqueVisitors || 0;
                 const trueUnique = dayData.TrueUniqueVisitors || dayData.trueUniqueVisitors || 0;
                 const totalVisits = dayData.TotalVisits || dayData.totalVisits || 0;
-                const sltDate = dayData.SLTDate || dayData.sltDate;
                 
-                console.log(`  Date: ${date} (SLT: ${sltDate}) - Unique: ${uniqueVisitors}, True Unique: ${trueUnique}, Visits: ${totalVisits}`);
+                console.log(`  Date: ${date} (SLT: ${sltDate}) -> Key: ${mapKey} - Unique: ${uniqueVisitors}, True Unique: ${trueUnique}, Visits: ${totalVisits}`);
                 
-                if (!dateMap.has(date)) {
-                    dateMap.set(date, { visitors: 0, trueUnique: 0, visits: 0, regions: new Set() });
+                if (!dateMap.has(mapKey)) {
+                    dateMap.set(mapKey, { visitors: 0, trueUnique: 0, visits: 0, regions: new Set(), sltDate: sltDate });
                 }
-                const existing = dateMap.get(date);
+                const existing = dateMap.get(mapKey);
                 existing.visitors += uniqueVisitors;
                 existing.trueUnique += trueUnique;
                 existing.visits += totalVisits;
@@ -169,25 +172,14 @@ class StatsManager {
         
         console.log('Final dateMap:', Array.from(dateMap.entries()));
 
-        // Sort by date and prepare chart data
+        // Sort by SLT date and prepare chart data
         const sortedDates = Array.from(dateMap.keys()).sort();
         
-        // Create labels using SLT dates from backend when available
-        const labels = sortedDates.map(date => {
-            // Try to find the SLT date from the original data
-            let sltLabel = null;
-            visitorStats.forEach(regionData => {
-                const dailyStats = regionData.DailyStats || regionData.dailyStats || [];
-                dailyStats.forEach(dayData => {
-                    const rawDate = (dayData.Date || dayData.date || '').split('T')[0];
-                    if (rawDate === date && (dayData.SLTDate || dayData.sltDate)) {
-                        sltLabel = dayData.SLTDate || dayData.sltDate;
-                    }
-                });
-            });
-            
-            // Use SLT date from backend if available, otherwise format the date in SLT
-            return sltLabel || this.formatDate(date);
+        // FIX: Use the SLT dates directly as labels since we're now using them as keys
+        const labels = sortedDates.map(sltDate => {
+            // If it's already a formatted SLT date (e.g., "Oct 20, 2025"), use it directly
+            // Otherwise, format the date
+            return sltDate.includes(',') ? sltDate : this.formatDate(sltDate);
         });
         
         // FIX: Correct the data mapping for chart datasets

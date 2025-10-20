@@ -1014,9 +1014,21 @@ namespace RadegastWeb.Services
         {
             var dateOnly = visitDate.Date;
             
+            _logger.LogDebug("Normalizing date {Date}: SLT range [{SLTStart} to {SLTEnd}], UTC range [{UTCStart} to {UTCEnd}]",
+                dateOnly, sltStartDate, sltEndDate, utcStartDate.Date, utcEndDate.Date);
+            
+            // PRIORITY FIX: Check for today's date specifically first to handle the most common case
+            var today = _sltTimeService.GetCurrentSLT().Date;
+            if (dateOnly == today)
+            {
+                _logger.LogDebug("Date {Date} matches today {Today}, treating as SLT", dateOnly, today);
+                return dateOnly; // Definitely SLT for today's data
+            }
+            
             // If the date falls within the SLT date range, treat it as SLT
             if (dateOnly >= sltStartDate && dateOnly <= sltEndDate)
             {
+                _logger.LogDebug("Date {Date} falls within SLT range, treating as SLT", dateOnly);
                 return dateOnly; // Already SLT
             }
             
@@ -1025,7 +1037,9 @@ namespace RadegastWeb.Services
             {
                 // Treat as UTC midnight and convert to SLT date
                 var utcDateTime = DateTime.SpecifyKind(dateOnly, DateTimeKind.Utc);
-                return TimeZoneInfo.ConvertTimeFromUtc(utcDateTime, sltTimeZone).Date;
+                var converted = TimeZoneInfo.ConvertTimeFromUtc(utcDateTime, sltTimeZone).Date;
+                _logger.LogDebug("Date {Date} falls within UTC range, converting to SLT: {Converted}", dateOnly, converted);
+                return converted;
             }
             
             // Fallback: if unsure, check if it looks like a recent date and assume it's SLT
@@ -1033,12 +1047,15 @@ namespace RadegastWeb.Services
             var daysDifference = Math.Abs((dateOnly - DateTime.Today).TotalDays);
             if (daysDifference <= 3) // Recent data within 3 days
             {
+                _logger.LogDebug("Date {Date} is recent ({Days} days), assuming SLT", dateOnly, daysDifference);
                 return dateOnly; // Assume SLT for recent data
             }
             
             // For older dates, assume UTC and convert
             var fallbackUtc = DateTime.SpecifyKind(dateOnly, DateTimeKind.Utc);
-            return TimeZoneInfo.ConvertTimeFromUtc(fallbackUtc, sltTimeZone).Date;
+            var fallbackConverted = TimeZoneInfo.ConvertTimeFromUtc(fallbackUtc, sltTimeZone).Date;
+            _logger.LogDebug("Date {Date} is old, assuming UTC and converting to SLT: {Converted}", dateOnly, fallbackConverted);
+            return fallbackConverted;
         }
     }
 }
