@@ -776,7 +776,37 @@ namespace RadegastWeb.Core
                 // If not in cache, use the avatar name and trigger async loading for next time
                 else
                 {
-                    // Fire and forget - load for next time
+                    // IMMEDIATELY request the display name (like Radegast does)
+                    if (_client.Network.Connected)
+                    {
+                        _client.Avatars.RequestAvatarNames(new List<UUID> { avatar.ID });
+                        
+                        // Request display names with callback
+                        _client.Avatars.GetDisplayNames(new List<UUID> { avatar.ID }, (success, names, badIDs) =>
+                        {
+                            if (success && names != null && names.Any())
+                            {
+                                _ = Task.Run(async () =>
+                                {
+                                    try
+                                    {
+                                        var nameDict = new Dictionary<UUID, AgentDisplayName>();
+                                        foreach (var name in names)
+                                        {
+                                            nameDict[name.ID] = name;
+                                        }
+                                        await _globalDisplayNameCache.UpdateDisplayNamesAsync(nameDict);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogDebug(ex, "Error updating display names from immediate request");
+                                    }
+                                });
+                            }
+                        });
+                    }
+                    
+                    // Also trigger background preload
                     _ = Task.Run(async () =>
                     {
                         try
@@ -861,18 +891,6 @@ namespace RadegastWeb.Core
             if (string.IsNullOrEmpty(avatarName) || avatarName == "Loading...")
             {
                 avatarName = "Unknown User";
-                // Request name lookup
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), coarseAvatar.ID.ToString(), NameDisplayMode.Smart, "");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogDebug(ex, "Error loading name for coarse avatar {AvatarId}", coarseAvatar.ID);
-                    }
-                });
             }
 
             // Try to get display name from global cache
@@ -883,6 +901,51 @@ namespace RadegastWeb.Core
                 if (!string.IsNullOrEmpty(cachedName) && cachedName != "Loading...")
                 {
                     displayName = cachedName;
+                }
+                else
+                {
+                    // IMMEDIATELY request the display name for coarse avatars too
+                    if (_client.Network.Connected)
+                    {
+                        _client.Avatars.RequestAvatarNames(new List<UUID> { coarseAvatar.ID });
+                        
+                        // Request display names with callback
+                        _client.Avatars.GetDisplayNames(new List<UUID> { coarseAvatar.ID }, (success, names, badIDs) =>
+                        {
+                            if (success && names != null && names.Any())
+                            {
+                                _ = Task.Run(async () =>
+                                {
+                                    try
+                                    {
+                                        var nameDict = new Dictionary<UUID, AgentDisplayName>();
+                                        foreach (var name in names)
+                                        {
+                                            nameDict[name.ID] = name;
+                                        }
+                                        await _globalDisplayNameCache.UpdateDisplayNamesAsync(nameDict);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogDebug(ex, "Error updating display names from immediate coarse request");
+                                    }
+                                });
+                            }
+                        });
+                    }
+                    
+                    // Also trigger background load for fallback
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), coarseAvatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Error loading name for coarse avatar {AvatarId}", coarseAvatar.ID);
+                        }
+                    });
                 }
             }
             catch (Exception ex)
@@ -1286,38 +1349,41 @@ namespace RadegastWeb.Core
             
             try
             {
-                displayName = await _globalDisplayNameCache.GetDisplayNameAsync(e.Avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
-                
-                // If we don't have a good display name, proactively request it
-                if (displayName == "Loading..." || string.IsNullOrEmpty(displayName) || 
-                    displayName == "???" || displayName == avatarName)
+                // IMMEDIATELY request name if not in cache (like Radegast does)
+                var cachedName = _globalDisplayNameCache.GetCachedDisplayName(e.Avatar.ID.ToString(), NameDisplayMode.Smart);
+                if (string.IsNullOrEmpty(cachedName) || cachedName == "Loading..." || 
+                    cachedName == "???" || cachedName == avatarName)
                 {
-                    _ = Task.Run(async () =>
+                    // Immediately request both legacy and display names (fire and forget like Radegast)
+                    if (_client.Network.Connected)
                     {
-                        try
+                        _client.Avatars.RequestAvatarNames(new List<UUID> { e.Avatar.ID });
+                        
+                        // Fire and forget display name request
+                        _ = Task.Run(async () => 
                         {
-                            // Request display name through global cache
-                            var success = await _globalDisplayNameCache.RequestDisplayNamesAsync(
-                                new List<string> { e.Avatar.ID.ToString() }, 
-                                Guid.Parse(_accountId));
-                            
-                            if (!success)
+                            try
                             {
-                                _logger.LogDebug("Failed to request display name for avatar {AvatarId}, trying legacy request", e.Avatar.ID);
-                                
-                                // Fallback to legacy name request if display names fail
-                                if (_client.Network.Connected)
-                                {
-                                    _client.Avatars.RequestAvatarNames(new List<UUID> { e.Avatar.ID });
-                                }
+                                await _globalDisplayNameCache.RequestDisplayNamesAsync(
+                                    new List<string> { e.Avatar.ID.ToString() }, 
+                                    Guid.Parse(_accountId));
                             }
-                        }
-                        catch (Exception refreshEx)
-                        {
-                            _logger.LogDebug(refreshEx, "Error requesting name refresh for avatar {AvatarId}", e.Avatar.ID);
-                        }
-                    });
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Error requesting display name for new avatar");
+                            }
+                        });
+                    }
+                    
+                    displayName = avatarName; // Use fallback for now
                 }
+                else
+                {
+                    displayName = cachedName;
+                }
+                
+                // Also try async request for future updates
+                displayName = await _globalDisplayNameCache.GetDisplayNameAsync(e.Avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
             }
             catch (Exception ex)
             {
@@ -1552,6 +1618,27 @@ namespace RadegastWeb.Core
                             IsDetailed = detailedAvatar != null
                         };
                         _coarseLocationAvatars.TryAdd(avatarPos.Key, coarseAvatar);
+                        
+                        // IMMEDIATELY request name for new coarse avatar (like Radegast does)
+                        if (_client.Network.Connected && avatarName == "Unknown User")
+                        {
+                            _client.Avatars.RequestAvatarNames(new List<UUID> { avatarPos.Key });
+                            
+                            // Fire and forget display name request
+                            _ = Task.Run(async () => 
+                            {
+                                try
+                                {
+                                    await _globalDisplayNameCache.RequestDisplayNamesAsync(
+                                        new List<string> { avatarPos.Key.ToString() }, 
+                                        Guid.Parse(_accountId));
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogDebug(ex, "Error requesting display name for new coarse avatar");
+                                }
+                            });
+                        }
                         
                         // Record visitor statistics for new coarse location avatars (fire and forget)
                         _ = Task.Run(async () =>
