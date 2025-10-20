@@ -276,10 +276,11 @@ namespace RadegastWeb.Services
                     AvatarId = vs.AvatarId,
                     RegionName = vs.RegionName,
                     OriginalDate = vs.VisitDate,
-                    // Convert any date to its corresponding SLT date for consistent grouping
-                    NormalizedSLTDate = vs.VisitDate.Kind == DateTimeKind.Utc 
-                        ? TimeZoneInfo.ConvertTimeFromUtc(vs.VisitDate, sltTimeZone).Date
-                        : vs.VisitDate.Date // Assume already SLT if not UTC
+                    // SMART DATE NORMALIZATION: 
+                    // - If date falls within the expected SLT range, treat as SLT
+                    // - If date falls within the expected UTC range, treat as UTC and convert
+                    // - This handles both old UTC-stored data and new SLT-stored data
+                    NormalizedSLTDate = GetNormalizedSLTDate(vs.VisitDate, rawSLTStartDate, rawSLTEndDate, startDate, endDate, sltTimeZone)
                 }).ToList();
                 
                 var stats = normalizedStats
@@ -1003,6 +1004,41 @@ namespace RadegastWeb.Services
                     SLTEndDate = _sltTimeService.FormatSLTWithDate(endDate, "MMM dd, yyyy")
                 };
             }
+        }
+
+        /// <summary>
+        /// Smart date normalization helper to handle mixed UTC/SLT data during transition period
+        /// </summary>
+        private DateTime GetNormalizedSLTDate(DateTime visitDate, DateTime sltStartDate, DateTime sltEndDate, 
+            DateTime utcStartDate, DateTime utcEndDate, TimeZoneInfo sltTimeZone)
+        {
+            var dateOnly = visitDate.Date;
+            
+            // If the date falls within the SLT date range, treat it as SLT
+            if (dateOnly >= sltStartDate && dateOnly <= sltEndDate)
+            {
+                return dateOnly; // Already SLT
+            }
+            
+            // If the date falls within the UTC date range, treat it as UTC and convert to SLT
+            if (dateOnly >= utcStartDate.Date && dateOnly <= utcEndDate.Date)
+            {
+                // Treat as UTC midnight and convert to SLT date
+                var utcDateTime = DateTime.SpecifyKind(dateOnly, DateTimeKind.Utc);
+                return TimeZoneInfo.ConvertTimeFromUtc(utcDateTime, sltTimeZone).Date;
+            }
+            
+            // Fallback: if unsure, check if it looks like a recent date and assume it's SLT
+            // (This handles edge cases during the transition period)
+            var daysDifference = Math.Abs((dateOnly - DateTime.Today).TotalDays);
+            if (daysDifference <= 3) // Recent data within 3 days
+            {
+                return dateOnly; // Assume SLT for recent data
+            }
+            
+            // For older dates, assume UTC and convert
+            var fallbackUtc = DateTime.SpecifyKind(dateOnly, DateTimeKind.Utc);
+            return TimeZoneInfo.ConvertTimeFromUtc(fallbackUtc, sltTimeZone).Date;
         }
     }
 }
