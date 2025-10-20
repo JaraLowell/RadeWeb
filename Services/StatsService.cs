@@ -269,22 +269,12 @@ namespace RadegastWeb.Services
                 // Track which visitors we've already seen in the current period to avoid double-counting
                 var seenInPeriod = new HashSet<string>();
                 
-                // TEMPORARY FIX: Normalize dates to SLT for proper grouping
-                // This handles the case where the same SLT day has data stored under both UTC and SLT dates
-                var normalizedStats = rawStats.Select(vs => new
-                {
-                    AvatarId = vs.AvatarId,
-                    RegionName = vs.RegionName,
-                    OriginalDate = vs.VisitDate,
-                    // SMART DATE NORMALIZATION: 
-                    // - If date falls within the expected SLT range, treat as SLT
-                    // - If date falls within the expected UTC range, treat as UTC and convert
-                    // - This handles both old UTC-stored data and new SLT-stored data
-                    NormalizedSLTDate = GetNormalizedSLTDate(vs.VisitDate, rawSLTStartDate, rawSLTEndDate, startDate, endDate, sltTimeZone)
-                }).ToList();
+                // SIMPLIFIED FIX: Don't use complex normalization - just expand the query range 
+                // and let the dates group naturally. The SLT date labeling in the API response 
+                // will handle the timezone display correctly.
                 
-                var stats = normalizedStats
-                    .GroupBy(vs => vs.NormalizedSLTDate)
+                var stats = rawStats
+                    .GroupBy(vs => vs.VisitDate.Date) // Group by the actual date in database
                     .OrderBy(g => g.Key) // Important: process dates in order
                     .Select(g => 
                     {
@@ -300,12 +290,12 @@ namespace RadegastWeb.Services
                         
                         return new DailyVisitorStatsDto
                         {
-                            Date = g.Key, // Use the normalized SLT date
+                            Date = g.Key, // Use the actual database date
                             RegionName = regionName,
                             UniqueVisitors = dailyVisitors.Count, // Total unique visitors this day
                             TrueUniqueVisitors = trueUniqueToday, // New visitors never seen before
                             TotalVisits = g.Count(), // Total visit records (could be multiple per avatar if they teleported in/out)
-                            SLTDate = _sltTimeService.FormatSLTWithDate(g.Key, "MMM dd, yyyy")
+                            SLTDate = _sltTimeService.FormatSLTWithDate(g.Key, "MMM dd, yyyy") // Convert to SLT for display
                         };
                     })
                     .ToList();
@@ -329,11 +319,11 @@ namespace RadegastWeb.Services
                         SLTDate = _sltTimeService.FormatSLTWithDate(date, "MMM dd, yyyy")
                     }).ToList();
                 
-                // Calculate totals in memory to avoid SQLite limitations using normalized data
-                var allVisitorsInPeriod = normalizedStats.Select(vs => vs.AvatarId).Distinct().ToList();
+                // Calculate totals in memory to avoid SQLite limitations using raw data
+                var allVisitorsInPeriod = rawStats.Select(vs => vs.AvatarId).Distinct().ToList();
                 var totalUniqueVisitors = allVisitorsInPeriod.Count;
                 var totalTrueUniqueVisitors = allVisitorsInPeriod.Count(avatarId => !historicalVisitorSet.Contains(avatarId));
-                var totalVisits = normalizedStats.Count;
+                var totalVisits = rawStats.Count;
                 
                 return new VisitorStatsSummaryDto
                 {
