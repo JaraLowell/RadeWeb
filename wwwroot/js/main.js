@@ -1919,7 +1919,8 @@ class RadegastWebClient {
         const messageDiv = document.createElement('div');
         messageDiv.className = `chat-message ${(chatMessage.chatType || 'normal').toLowerCase()} mb-2`;
         
-        const timestamp = chatMessage.sltTime || new Date(chatMessage.timestamp).toLocaleTimeString();
+        // Always use SLT time - prefer sltTime from server, fallback to converting timestamp to SLT
+        const timestamp = chatMessage.sltTime || this.convertToSLT(chatMessage.timestamp);
         
         // Check if this is a /me command (personal thought)
         const isPersonalThought = chatMessage.message.startsWith('/me ');
@@ -2187,6 +2188,51 @@ class RadegastWebClient {
         return div.innerHTML;
     }
 
+    // Convert UTC timestamp to Second Life Time (Pacific Time - PST/PDT)
+    convertToSLT(utcTimestamp) {
+        try {
+            const date = new Date(utcTimestamp);
+            
+            // Convert to Pacific Time (automatically handles PST/PDT)
+            const options = {
+                timeZone: 'America/Los_Angeles',
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            };
+            
+            return date.toLocaleTimeString('en-US', options);
+        } catch (error) {
+            console.error('Error converting timestamp to SLT:', error);
+            return new Date().toLocaleTimeString(); // Fallback to current time
+        }
+    }
+
+    // Convert UTC timestamp to SLT with date (for longer format displays)
+    convertToSLTDateTime(utcTimestamp) {
+        try {
+            const date = new Date(utcTimestamp);
+            
+            // Convert to Pacific Time with full date
+            const options = {
+                timeZone: 'America/Los_Angeles',
+                year: 'numeric',
+                month: 'short',
+                day: '2-digit',
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            };
+            
+            return date.toLocaleString('en-US', options);
+        } catch (error) {
+            console.error('Error converting timestamp to SLT DateTime:', error);
+            return new Date().toLocaleString(); // Fallback to current time
+        }
+    }
+
     // New method to safely render message content that may contain SLURL links
     renderMessageContent(message) {
         // If the message contains HTML-like content (our SLURL links), render it as HTML
@@ -2268,7 +2314,8 @@ class RadegastWebClient {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'chat-message mb-2';
         
-        const timestamp = message.sltTime || new Date(message.timestamp).toLocaleTimeString();
+        // Always use SLT time - prefer sltTime from server, fallback to converting timestamp to SLT
+        const timestamp = message.sltTime || this.convertToSLT(message.timestamp);
         const senderName = this.escapeHtml(message.senderName);
         
         // Check if this is a /me command (personal thought)
@@ -2815,7 +2862,8 @@ class RadegastWebClient {
         // Notice.Type enum: 0=Group, 1=Region, 2=System
         noticeDiv.style.backgroundColor = notice.type === 0 ? '#213c50' : '#563838';
         
-        const timestamp = notice.sltTime || new Date(notice.timestamp).toLocaleTimeString();
+        // Always use SLT time - prefer sltTime from server, fallback to converting timestamp to SLT
+        const timestamp = notice.sltTime || this.convertToSLT(notice.timestamp);
         const typeNames = { 0: 'Group', 1: 'Region', 2: 'System' };
         const typeName = typeNames[notice.type] || 'Unknown';
         
