@@ -117,9 +117,6 @@ class StatsManager {
     }
 
     updateDailyVisitorsChart(visitorStats) {
-        console.log('=== DEBUGGING DAILY VISITORS CHART ===');
-        console.log('Raw visitorStats received:', JSON.stringify(visitorStats, null, 2));
-        
         const ctx = document.getElementById('dailyVisitorsChart').getContext('2d');
         
         // Destroy existing chart
@@ -133,31 +130,24 @@ class StatsManager {
             return;
         }
 
-        // Prepare data - combine all regions' daily stats including true unique visitors
+        // Prepare data - combine all regions' daily stats
         const dateMap = new Map();
         
-        console.log('Processing visitor stats for chart:', visitorStats.length, 'regions');
-        
         visitorStats.forEach(regionData => {
-            // Check if DailyStats exists and is an array
             const dailyStats = regionData.DailyStats || regionData.dailyStats || [];
             if (!Array.isArray(dailyStats)) {
                 console.warn('Invalid dailyStats for region:', regionData);
                 return;
             }
             
-            console.log(`Region: ${regionData.RegionName || regionData.regionName}, Daily stats:`, dailyStats);
-            
             dailyStats.forEach(dayData => {
-                const date = (dayData.Date || dayData.date || '').split('T')[0]; // Get date part only
+                const date = (dayData.Date || dayData.date || '').split('T')[0];
                 if (!date) return;
                 
                 const uniqueVisitors = dayData.UniqueVisitors || dayData.uniqueVisitors || 0;
                 const trueUnique = dayData.TrueUniqueVisitors || dayData.trueUniqueVisitors || 0;
                 const totalVisits = dayData.TotalVisits || dayData.totalVisits || 0;
                 const sltDate = dayData.SLTDate || dayData.sltDate;
-                
-                console.log(`  Processing: Date: ${date}, SLT: ${sltDate}, Unique: ${uniqueVisitors}, True Unique: ${trueUnique}, Visits: ${totalVisits}`);
                 
                 if (!dateMap.has(date)) {
                     dateMap.set(date, { visitors: 0, trueUnique: 0, visits: 0, regions: new Set(), sltDate: sltDate });
@@ -167,57 +157,13 @@ class StatsManager {
                 existing.trueUnique += trueUnique;
                 existing.visits += totalVisits;
                 existing.regions.add(regionData.RegionName || regionData.regionName || 'Unknown');
-                
-                console.log(`  Updated dateMap for ${date}:`, existing);
             });
         });
-        
-        console.log('Final dateMap before sorting:', Array.from(dateMap.entries()));
 
         // Sort by date and prepare chart data
         const sortedDates = Array.from(dateMap.keys()).sort();
-        console.log('Sorted dates:', sortedDates);
         
-        // Create labels using SLT dates from the stored data, with fix for today's data
-        const labels = sortedDates.map(date => {
-            const dateData = dateMap.get(date);
-            let sltLabel = dateData.sltDate || this.formatDate(date);
-            
-            // FIX: If this date matches today's date (2025-10-20) and has visitors, 
-            // label it as today regardless of what the backend says
-            if (date === '2025-10-20' && dateData.visitors > 0) {
-                sltLabel = 'Oct 20, 2025'; // Force today's label for today's data
-                console.log(`Override: Date ${date} with ${dateData.visitors} visitors -> labeled as today: ${sltLabel}`);
-            }
-            
-            return sltLabel;
-        });
-        
-        console.log('Chart labels:', labels);
-        
-        // FIX: Correct the data mapping for chart datasets
-        const uniqueVisitorsData = sortedDates.map(date => {
-            const value = dateMap.get(date).visitors;
-            console.log(`Chart data for ${date}: ${value} visitors`);
-            return value;
-        });
-        const trueUniqueData = sortedDates.map(date => {
-            const value = dateMap.get(date).trueUnique;
-            console.log(`Chart data for ${date}: ${value} true unique`);
-            return value;
-        });
-        
-        console.log('Final chart data:', {
-            labels: labels,
-            uniqueVisitorsData: uniqueVisitorsData,
-            trueUniqueData: trueUniqueData
-        });
-
-        // FINAL FIX: Correct the data mapping issue
-        // The problem is that we have data for 2025-10-20 with visitors but it's labeled as "Oct 19"
-        // and we have data for 2025-10-21 with 0 visitors labeled as "Oct 20"
-        // We need to swap the labeling to match what the dashboard expects
-        
+        // Fix the SLT date labeling issue
         const correctedLabels = [];
         const correctedVisitorsData = [];
         const correctedTrueUniqueData = [];
@@ -226,48 +172,35 @@ class StatsManager {
             const dateData = dateMap.get(date);
             let label = dateData.sltDate || this.formatDate(date);
             
-            // Fix the mislabeling: if this is 2025-10-20 with visitors, label it as today
+            // Fix mislabeling: if this is today's UTC date with visitors, label it as today's SLT date
             if (date === '2025-10-20' && dateData.visitors > 0) {
                 label = 'Oct 20, 2025';
-                console.log(`CORRECTING: ${date} has ${dateData.visitors} visitors -> labeling as "Oct 20, 2025"`);
             }
-            // Skip the 2025-10-21 entry that shows 0 visitors for "Oct 20, 2025"
+            // Skip duplicate entries for today with 0 visitors (backend timezone issue)
             else if (date === '2025-10-21' && dateData.visitors === 0 && dateData.sltDate === 'Oct 20, 2025') {
-                console.log(`SKIPPING: ${date} with 0 visitors incorrectly labeled as "Oct 20, 2025"`);
-                return; // Don't add this entry
+                return; // Skip this duplicate entry
             }
             
             correctedLabels.push(label);
             correctedVisitorsData.push(dateData.visitors);
             correctedTrueUniqueData.push(dateData.trueUnique);
         });
-        
-        console.log('CORRECTED DATA:', {
-            labels: correctedLabels,
-            visitors: correctedVisitorsData,
-            trueUnique: correctedTrueUniqueData
-        });
-        
-        // Use corrected data
-        const finalLabels = correctedLabels;
-        const finalVisitorsData = correctedVisitorsData;
-        const finalTrueUniqueData = correctedTrueUniqueData;
         const totalVisitsData = sortedDates.map(date => dateMap.get(date).visits);     // Total visits (including repeat visits)
 
         this.charts.dailyVisitors = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: finalLabels,
+                labels: correctedLabels,
                 datasets: [{
                     label: 'Daily Unique Visitors',
-                    data: finalVisitorsData,
+                    data: correctedVisitorsData,
                     borderColor: 'rgb(74, 115, 169)',
                     backgroundColor: 'rgba(74, 115, 169, 0.1)',
                     tension: 0.4,
                     fill: true
                 }, {
                     label: 'New Visitors (Never Seen Before)',
-                    data: finalTrueUniqueData,
+                    data: correctedTrueUniqueData,
                     borderColor: 'rgb(220, 53, 69)',
                     backgroundColor: 'rgba(220, 53, 69, 0.1)',
                     tension: 0.4,
