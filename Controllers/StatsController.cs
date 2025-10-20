@@ -259,14 +259,14 @@ namespace RadegastWeb.Controllers
                 var endDate = currentSLT;
                 var startDate30 = endDate.AddDays(-Math.Max(1, days));
                 var startDate7 = endDate.AddDays(-7);
-                var startDate1 = endDate.AddDays(-1);
+                var startDateToday = endDate; // Today's stats should start from today, not yesterday
                 
                 // Convert SLT dates to UTC for database queries
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
                 var utcEndDate = TimeZoneInfo.ConvertTimeToUtc(endDate.AddDays(1), sltTimeZone); // Include full end date
                 var utcStartDate30 = TimeZoneInfo.ConvertTimeToUtc(startDate30, sltTimeZone);
                 var utcStartDate7 = TimeZoneInfo.ConvertTimeToUtc(startDate7, sltTimeZone);
-                var utcStartDate1 = TimeZoneInfo.ConvertTimeToUtc(startDate1, sltTimeZone);
+                var utcStartDateToday = TimeZoneInfo.ConvertTimeToUtc(startDateToday, sltTimeZone);
 
                 // Get stats for different time periods
                 List<VisitorStatsSummaryDto> stats30Days;
@@ -278,7 +278,7 @@ namespace RadegastWeb.Controllers
                     // Get stats for specific region
                     var regionStats30 = await _statsService.GetRegionStatsAsync(region, utcStartDate30, utcEndDate);
                     var regionStats7 = await _statsService.GetRegionStatsAsync(region, utcStartDate7, utcEndDate);
-                    var regionStatsToday = await _statsService.GetRegionStatsAsync(region, utcStartDate1, utcEndDate);
+                    var regionStatsToday = await _statsService.GetRegionStatsAsync(region, utcStartDateToday, utcEndDate);
                     
                     stats30Days = new List<VisitorStatsSummaryDto> { regionStats30 };
                     stats7Days = new List<VisitorStatsSummaryDto> { regionStats7 };
@@ -289,7 +289,7 @@ namespace RadegastWeb.Controllers
                     // Get stats for all regions
                     stats30Days = await _statsService.GetAllRegionStatsAsync(utcStartDate30, utcEndDate);
                     stats7Days = await _statsService.GetAllRegionStatsAsync(utcStartDate7, utcEndDate);
-                    statsToday = await _statsService.GetAllRegionStatsAsync(utcStartDate1, utcEndDate);
+                    statsToday = await _statsService.GetAllRegionStatsAsync(utcStartDateToday, utcEndDate);
                 }
 
                 var totalVisitors30Days = stats30Days.Sum(s => s.TotalUniqueVisitors);
@@ -328,10 +328,10 @@ namespace RadegastWeb.Controllers
                         })
                         .OrderBy(d => d.Date)
                         .ToList(),
-                    // Add SLT context information
+                    // Add SLT context information - show the range that was actually requested for today's stats
                     SLTDateRange = new
                     {
-                        StartDate = _sltTimeService.FormatSLTWithDate(TimeZoneInfo.ConvertTimeFromUtc(utcStartDate30, sltTimeZone), "MMM dd, yyyy"),
+                        StartDate = _sltTimeService.FormatSLTWithDate(currentSLT, "MMM dd, yyyy"),
                         EndDate = _sltTimeService.FormatSLTWithDate(currentSLT, "MMM dd, yyyy"),
                         CurrentSLT = _sltTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, yyyy HH:mm:ss")
                     }
