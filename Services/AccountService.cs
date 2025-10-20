@@ -269,8 +269,9 @@ namespace RadegastWeb.Services
                 var connectionTrackingService = scope.ServiceProvider.GetRequiredService<IConnectionTrackingService>();
                 var chatProcessingService = scope.ServiceProvider.GetRequiredService<IChatProcessingService>();
                 var slTimeService = scope.ServiceProvider.GetRequiredService<ISLTimeService>();
+                var presenceService = scope.ServiceProvider.GetRequiredService<IPresenceService>();
                 
-                var instance = new WebRadegastInstance(account, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService);
+                var instance = new WebRadegastInstance(account, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService);
                 
                 var loginResult = await instance.LoginAsync();
                 

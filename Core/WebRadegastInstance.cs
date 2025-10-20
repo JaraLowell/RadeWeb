@@ -24,6 +24,7 @@ namespace RadegastWeb.Core
         private readonly IConnectionTrackingService _connectionTrackingService;
         private readonly IChatProcessingService _chatProcessingService;
         private readonly ISLTimeService _slTimeService;
+        private readonly IPresenceService _presenceService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -65,7 +66,7 @@ namespace RadegastWeb.Core
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -83,6 +84,7 @@ namespace RadegastWeb.Core
             _connectionTrackingService = connectionTrackingService;
             _chatProcessingService = chatProcessingService;
             _slTimeService = slTimeService;
+            _presenceService = presenceService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -2237,6 +2239,9 @@ namespace RadegastWeb.Core
                 UpdateRegionInfo();
                 _nearbyAvatars.Clear(); // Clear avatars from previous location
                 
+                // Reset presence status on teleport completion to prevent state desync
+                ResetPresenceStatus();
+                
                 // Proactively start loading display names for the new location
                 _ = Task.Run(async () =>
                 {
@@ -2778,6 +2783,7 @@ namespace RadegastWeb.Core
         /// Stop all animations except for known system animations
         /// This is used when standing up to stop object animations that would otherwise continue
         /// Based on Radegast's implementation to handle animation persistence issues
+        /// Also resets away/busy status to prevent internal state desync
         /// </summary>
         public void StopAllAnimations()
         {
@@ -2810,10 +2816,46 @@ namespace RadegastWeb.Core
                 {
                     _logger.LogDebug("No non-system animations to stop for account {AccountId}", _accountId);
                 }
+                
+                // Reset away/busy status to prevent internal state desync
+                // This ensures that stopping animations also clears the internal tracking
+                ResetPresenceStatus();
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error stopping animations for account {AccountId}", _accountId);
+            }
+        }
+        
+        /// <summary>
+        /// Resets the presence status to Online, clearing any away/busy status
+        /// Used when animations are stopped (stand up, teleport) to keep internal state in sync
+        /// </summary>
+        private void ResetPresenceStatus()
+        {
+            try
+            {
+                if (Guid.TryParse(_accountId, out var accountGuid))
+                {
+                    // Reset both away and busy status to false/online
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _presenceService.SetAwayAsync(accountGuid, false);
+                            await _presenceService.SetBusyAsync(accountGuid, false);
+                            _logger.LogInformation("Reset presence status to Online for account {AccountId} after stopping animations", _accountId);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Error resetting presence status for account {AccountId}", _accountId);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error parsing account ID for presence reset: {AccountId}", _accountId);
             }
         }
         
