@@ -158,7 +158,24 @@ class StatsManager {
 
         // Sort by date and prepare chart data
         const sortedDates = Array.from(dateMap.keys()).sort();
-        const labels = sortedDates.map(date => this.formatDate(date));
+        
+        // Create labels using SLT dates from backend when available
+        const labels = sortedDates.map(date => {
+            // Try to find the SLT date from the original data
+            let sltLabel = null;
+            visitorStats.forEach(regionData => {
+                const dailyStats = regionData.DailyStats || regionData.dailyStats || [];
+                dailyStats.forEach(dayData => {
+                    const rawDate = (dayData.Date || dayData.date || '').split('T')[0];
+                    if (rawDate === date && (dayData.SLTDate || dayData.sltDate)) {
+                        sltLabel = dayData.SLTDate || dayData.sltDate;
+                    }
+                });
+            });
+            
+            // Use SLT date from backend if available, otherwise format the date in SLT
+            return sltLabel || this.formatDate(date);
+        });
         const visitorsData = sortedDates.map(date => dateMap.get(date).visitors);
         const trueUniqueData = sortedDates.map(date => dateMap.get(date).trueUnique);
         const visitsData = sortedDates.map(date => dateMap.get(date).visits);
