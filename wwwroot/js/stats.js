@@ -133,6 +133,8 @@ class StatsManager {
         // Prepare data - combine all regions' daily stats including true unique visitors
         const dateMap = new Map();
         
+        console.log('Processing visitor stats for chart:', visitorStats.length, 'regions');
+        
         visitorStats.forEach(regionData => {
             // Check if DailyStats exists and is an array
             const dailyStats = regionData.DailyStats || regionData.dailyStats || [];
@@ -141,20 +143,31 @@ class StatsManager {
                 return;
             }
             
+            console.log(`Region: ${regionData.RegionName || regionData.regionName}, Daily stats:`, dailyStats.length, 'days');
+            
             dailyStats.forEach(dayData => {
                 const date = (dayData.Date || dayData.date || '').split('T')[0]; // Get date part only
                 if (!date) return;
+                
+                const uniqueVisitors = dayData.UniqueVisitors || dayData.uniqueVisitors || 0;
+                const trueUnique = dayData.TrueUniqueVisitors || dayData.trueUniqueVisitors || 0;
+                const totalVisits = dayData.TotalVisits || dayData.totalVisits || 0;
+                const sltDate = dayData.SLTDate || dayData.sltDate;
+                
+                console.log(`  Date: ${date} (SLT: ${sltDate}) - Unique: ${uniqueVisitors}, True Unique: ${trueUnique}, Visits: ${totalVisits}`);
                 
                 if (!dateMap.has(date)) {
                     dateMap.set(date, { visitors: 0, trueUnique: 0, visits: 0, regions: new Set() });
                 }
                 const existing = dateMap.get(date);
-                existing.visitors += dayData.UniqueVisitors || dayData.uniqueVisitors || 0;
-                existing.trueUnique += dayData.TrueUniqueVisitors || dayData.trueUniqueVisitors || 0;
-                existing.visits += dayData.TotalVisits || dayData.totalVisits || 0;
+                existing.visitors += uniqueVisitors;
+                existing.trueUnique += trueUnique;
+                existing.visits += totalVisits;
                 existing.regions.add(regionData.RegionName || regionData.regionName || 'Unknown');
             });
         });
+        
+        console.log('Final dateMap:', Array.from(dateMap.entries()));
 
         // Sort by date and prepare chart data
         const sortedDates = Array.from(dateMap.keys()).sort();
@@ -176,28 +189,30 @@ class StatsManager {
             // Use SLT date from backend if available, otherwise format the date in SLT
             return sltLabel || this.formatDate(date);
         });
-        const visitorsData = sortedDates.map(date => dateMap.get(date).visitors);
-        const trueUniqueData = sortedDates.map(date => dateMap.get(date).trueUnique);
-        const visitsData = sortedDates.map(date => dateMap.get(date).visits);
+        
+        // FIX: Correct the data mapping for chart datasets
+        const uniqueVisitorsData = sortedDates.map(date => dateMap.get(date).visitors); // Total unique visitors per day
+        const trueUniqueData = sortedDates.map(date => dateMap.get(date).trueUnique);   // Truly new visitors per day
+        const totalVisitsData = sortedDates.map(date => dateMap.get(date).visits);     // Total visits (including repeat visits)
 
         this.charts.dailyVisitors = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'Total Visitors',
-                    data: visitsData,
+                    label: 'Daily Unique Visitors',
+                    data: uniqueVisitorsData,
                     borderColor: 'rgb(74, 115, 169)',
-                    backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                    backgroundColor: 'rgba(74, 115, 169, 0.1)',
                     tension: 0.4,
-                    fill: false
+                    fill: true
                 }, {
-                    label: 'Unique Visitors',
+                    label: 'New Visitors (Never Seen Before)',
                     data: trueUniqueData,
                     borderColor: 'rgb(220, 53, 69)',
                     backgroundColor: 'rgba(220, 53, 69, 0.1)',
                     tension: 0.4,
-                    fill: true
+                    fill: false
                 }]
             },
             options: {
