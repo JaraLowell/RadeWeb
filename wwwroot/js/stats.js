@@ -81,7 +81,10 @@ class StatsManager {
         console.log('Dashboard data received:', data);
         
         // Use the correct property names from the backend, with fallbacks for both naming conventions
-        this.animateNumber('visitorsToday', data.TotalVisitorsToday || data.totalVisitorsToday || 0);
+        const todayValue = data.TotalVisitorsToday || data.totalVisitorsToday || 0;
+        console.log('Dashboard Today value:', todayValue);
+        
+        this.animateNumber('visitorsToday', todayValue);
         this.animateNumber('visitors7Days', data.TotalUniqueVisitors7Days || data.totalUniqueVisitors7Days || 0);
         this.animateNumber('visitors30Days', data.TotalUniqueVisitors30Days || data.totalUniqueVisitors30Days || 0);
         this.animateNumber('monitoredRegions', data.MonitoredRegionsCount || data.monitoredRegionsCount || 0);
@@ -151,6 +154,16 @@ class StatsManager {
         const visitorsData = sortedDates.map(date => dateMap.get(date).visitors);
         const trueUniqueData = sortedDates.map(date => dateMap.get(date).trueUnique);
         const visitsData = sortedDates.map(date => dateMap.get(date).visits);
+
+        // Debug: Log today's chart value
+        const today = new Date().toISOString().split('T')[0];
+        const todayData = dateMap.get(today);
+        if (todayData) {
+            console.log('Chart Today value (visitors):', todayData.visitors);
+            console.log('Chart Today value (visits):', todayData.visits);
+        } else {
+            console.log('No chart data found for today:', today);
+        }
 
         this.charts.dailyVisitors = new Chart(ctx, {
             type: 'line',
