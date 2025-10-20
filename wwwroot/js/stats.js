@@ -77,13 +77,14 @@ class StatsManager {
     }
 
     updateDashboard(data) {
-        this.animateNumber('visitorsToday', data.totalVisitorsToday || 0);
-        this.animateNumber('visitors7Days', data.totalUniqueVisitors7Days || 0);
-        this.animateNumber('visitors30Days', data.totalUniqueVisitors30Days || 0);
-        this.animateNumber('monitoredRegions', data.monitoredRegionsCount || 0);
+        // Use the correct property names from the backend (with capital letters)
+        this.animateNumber('visitorsToday', data.TotalVisitorsToday || 0);
+        this.animateNumber('visitors7Days', data.TotalUniqueVisitors7Days || 0);
+        this.animateNumber('visitors30Days', data.TotalUniqueVisitors30Days || 0);
+        this.animateNumber('monitoredRegions', data.MonitoredRegionsCount || 0);
 
         // Update region stats table
-        this.updateRegionStats(data.regionStats || []);
+        this.updateRegionStats(data.RegionStats || []);
     }
 
     updateCharts(visitorStats) {
@@ -108,16 +109,16 @@ class StatsManager {
         const dateMap = new Map();
         
         visitorStats.forEach(regionData => {
-            regionData.dailyStats.forEach(dayData => {
-                const date = dayData.date.split('T')[0]; // Get date part only
+            regionData.DailyStats.forEach(dayData => {
+                const date = dayData.Date.split('T')[0]; // Get date part only
                 if (!dateMap.has(date)) {
                     dateMap.set(date, { visitors: 0, trueUnique: 0, visits: 0, regions: new Set() });
                 }
                 const existing = dateMap.get(date);
-                existing.visitors += dayData.uniqueVisitors;
-                existing.trueUnique += dayData.trueUniqueVisitors || 0;
-                existing.visits += dayData.totalVisits;
-                existing.regions.add(regionData.regionName);
+                existing.visitors += dayData.UniqueVisitors;
+                existing.trueUnique += dayData.TrueUniqueVisitors || 0;
+                existing.visits += dayData.TotalVisits;
+                existing.regions.add(regionData.RegionName);
             });
         });
 
@@ -133,26 +134,19 @@ class StatsManager {
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'All Visitors',
-                    data: visitorsData,
+                    label: 'Total Visitors',
+                    data: visitsData,
                     borderColor: 'rgb(74, 115, 169)',
                     backgroundColor: 'rgba(0, 123, 255, 0.1)',
                     tension: 0.4,
                     fill: false
                 }, {
-                    label: 'New Visitors (60 day)',
+                    label: 'Unique Visitors',
                     data: trueUniqueData,
                     borderColor: 'rgb(220, 53, 69)',
                     backgroundColor: 'rgba(220, 53, 69, 0.1)',
                     tension: 0.4,
                     fill: true
-                }, {
-                    label: 'Total Visits',
-                    data: visitsData,
-                    borderColor: 'rgb(30, 126, 52)',
-                    backgroundColor: 'rgba(40, 167, 69, 0.1)',
-                    tension: 0.4,
-                    fill: false
                 }]
             },
             options: {
@@ -197,8 +191,8 @@ class StatsManager {
         // Prepare data for top 10 regions
         const regionData = visitorStats
             .map(stat => ({
-                region: stat.regionName,
-                visitors: stat.totalUniqueVisitors
+                region: stat.RegionName,
+                visitors: stat.TotalUniqueVisitors
             }))
             .filter(item => item.visitors > 0)
             .sort((a, b) => b.visitors - a.visitors)
@@ -259,7 +253,7 @@ class StatsManager {
 
         // Sort by last seen (most recent first) and take top 20
         const recentVisitors = visitors
-            .sort((a, b) => new Date(b.lastSeen) - new Date(a.lastSeen))
+            .sort((a, b) => new Date(b.LastSeen) - new Date(a.LastSeen))
             .slice(0, 20);
 
         tbody.innerHTML = recentVisitors.map(visitor => {
@@ -267,28 +261,28 @@ class StatsManager {
             // Priority: displayName > avatarName > fallback to truncated avatar ID
             let displayName = this.getBestAvailableName(visitor);
             
-            const firstSeen = this.formatDateTime(visitor.firstSeen);
-            const lastSeen = this.formatDateTime(visitor.lastSeen);
+            const firstSeen = this.formatDateTime(visitor.FirstSeen);
+            const lastSeen = this.formatDateTime(visitor.LastSeen);
             
             // Add visual indicator for true unique visitors (new in 60 days)
-            const uniqueBadge = visitor.isTrueUnique ? 
+            const uniqueBadge = visitor.IsTrueUnique ? 
                 '<small class="badge bg-success ms-1" title="New visitor (not seen in past 60 days)">NEW</small>' : 
                 '<small class="badge bg-secondary ms-1" title="Returning visitor (seen in past 60 days)">RET</small>';
             
             return `
                 <tr>
                     <td>
-                        <div class="visitor-display-name" title="${visitor.avatarId}">
+                        <div class="visitor-display-name" title="${visitor.AvatarId}">
                             ${this.escapeHtml(displayName)}${uniqueBadge}
                         </div>
-                        ${visitor.regionsVisited.length > 1 ? 
-                            `<small class="text-muted">${visitor.regionsVisited.length} regions</small>` : 
-                            `<small class="text-muted">${visitor.regionsVisited[0] || ''}</small>`
+                        ${visitor.RegionsVisited.length > 1 ? 
+                            `<small class="text-muted">${visitor.RegionsVisited.length} regions</small>` : 
+                            `<small class="text-muted">${visitor.RegionsVisited[0] || ''}</small>`
                         }
                     </td>
                     <td><small>${firstSeen}</small></td>
                     <td><small>${lastSeen}</small></td>
-                    <td><span class="badge bg-primary">${visitor.visitCount}</span></td>
+                    <td><span class="badge bg-primary">${visitor.VisitCount}</span></td>
                 </tr>
             `;
         }).join('');
@@ -299,18 +293,18 @@ class StatsManager {
      */
     getBestAvailableName(visitor) {
         // Check for valid display name first
-        if (this.isValidName(visitor.displayName)) {
-            return visitor.displayName;
+        if (this.isValidName(visitor.DisplayName)) {
+            return visitor.DisplayName;
         }
         
         // Check for valid avatar/legacy name
-        if (this.isValidName(visitor.avatarName)) {
-            return visitor.avatarName;
+        if (this.isValidName(visitor.AvatarName)) {
+            return visitor.AvatarName;
         }
         
         // Fallback to truncated avatar ID if we have it
-        if (visitor.avatarId) {
-            return `Avatar ${visitor.avatarId.substring(0, 8)}...`;
+        if (visitor.AvatarId) {
+            return `Avatar ${visitor.AvatarId.substring(0, 8)}...`;
         }
         
         // Last resort
@@ -349,12 +343,12 @@ class StatsManager {
         tbody.innerHTML = regionStats.map(region => `
             <tr>
                 <td>
-                    <span class="region-name">${this.escapeHtml(region.regionName)}</span>
+                    <span class="region-name">${this.escapeHtml(region.RegionName)}</span>
                     <span class="status-indicator status-monitoring" title="Currently monitoring"></span>
                 </td>
-                <td><strong>${region.totalUniqueVisitors}</strong></td>
-                <td>${region.totalVisits}</td>
-                <td><small>${region.averageVisitorsPerDay.toFixed(1)}</small></td>
+                <td><strong>${region.TotalUniqueVisitors}</strong></td>
+                <td>${region.TotalVisits}</td>
+                <td><small>${region.AverageVisitorsPerDay.toFixed(1)}</small></td>
             </tr>
         `).join('');
     }
