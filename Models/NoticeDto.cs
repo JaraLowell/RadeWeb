@@ -20,6 +20,10 @@ namespace RadegastWeb.Models
         public bool RequiresAcknowledgment { get; set; }
         public bool IsAcknowledged { get; set; }
         public bool IsRead { get; set; } = false;
+        
+        // SLT formatted timestamps for display
+        public string? SLTTime { get; set; } // HH:mm:ss format
+        public string? SLTDateTime { get; set; } // MMM dd, HH:mm:ss format
     }
 
     public enum NoticeType

@@ -24,14 +24,16 @@ namespace RadegastWeb.Services
         private readonly ILogger<NoticeService> _logger;
         private readonly IDbContextFactory<RadegastDbContext> _dbContextFactory;
         private readonly IGroupService _groupService;
+        private readonly ISLTimeService _slTimeService;
 
         public event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
 
-        public NoticeService(ILogger<NoticeService> logger, IDbContextFactory<RadegastDbContext> dbContextFactory, IGroupService groupService)
+        public NoticeService(ILogger<NoticeService> logger, IDbContextFactory<RadegastDbContext> dbContextFactory, IGroupService groupService, ISLTimeService slTimeService)
         {
             _logger = logger;
             _dbContextFactory = dbContextFactory;
             _groupService = groupService;
+            _slTimeService = slTimeService;
         }
 
         public async Task<NoticeDto?> ProcessIncomingNoticeAsync(Guid accountId, InstantMessage im)

@@ -16,6 +16,7 @@ namespace RadegastWeb.Services
         private IRegionInfoService? _regionInfoService;
         private IGroupService? _groupService;
         private volatile bool _isShuttingDown = false;
+        private DateTime _lastDayCheck = DateTime.UtcNow.Date;
 
         public RadegastBackgroundService(
             IServiceProvider serviceProvider,
@@ -48,11 +49,25 @@ namespace RadegastWeb.Services
                 _groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
                 _groupService.GroupsUpdated += OnGroupsUpdated;
 
+                var lastPeriodicRecording = DateTime.UtcNow;
+
                 while (!stoppingToken.IsCancellationRequested && !_isShuttingDown)
                 {
                     try
                     {
                         await ProcessAccountEvents(stoppingToken);
+                        
+                        // Check for day boundary transitions
+                        await CheckDayBoundaryAsync(stoppingToken);
+                        
+                        // Periodic avatar recording (every 10 minutes) to ensure existing avatars get counted
+                        var now = DateTime.UtcNow;
+                        if (now - lastPeriodicRecording >= TimeSpan.FromMinutes(10))
+                        {
+                            await TriggerPeriodicAvatarRecordingAsync(stoppingToken);
+                            lastPeriodicRecording = now;
+                        }
+                        
                         await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
                     }
                     catch (OperationCanceledException)
@@ -499,6 +514,108 @@ namespace RadegastWeb.Services
         {
             var hasConnections = _connectionTrackingService.HasActiveConnections(accountId);
             return Task.FromResult(hasConnections);
+        }
+
+        /// <summary>
+        /// Checks for day boundary transitions and triggers bulk avatar recording when a new day starts
+        /// </summary>
+        private async Task CheckDayBoundaryAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                var currentDay = DateTime.UtcNow.Date;
+                
+                // Check if we've crossed into a new day
+                if (currentDay > _lastDayCheck)
+                {
+                    _logger.LogInformation("Day boundary detected: {PreviousDay} -> {CurrentDay}, triggering bulk avatar recording", 
+                        _lastDayCheck, currentDay);
+                    
+                    _lastDayCheck = currentDay;
+                    
+                    // Trigger bulk recording across all connected accounts
+                    await TriggerPeriodicAvatarRecordingAsync(cancellationToken);
+                    
+                    // Also trigger cleanup of old visitor records (keep last 90 days)
+                    using var scope = _serviceProvider.CreateScope();
+                    var statsService = scope.ServiceProvider.GetService<IStatsService>();
+                    if (statsService != null)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await statsService.CleanupOldRecordsAsync(90);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error during daily cleanup of old visitor records");
+                            }
+                        }, cancellationToken);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error checking day boundary");
+            }
+        }
+
+        /// <summary>
+        /// Triggers recording of all currently present avatars across all connected accounts
+        /// </summary>
+        private async Task TriggerPeriodicAvatarRecordingAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+                
+                var accounts = await accountService.GetAccountsAsync();
+                var recordingTasks = new List<Task>();
+                
+                foreach (var account in accounts)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
+
+                    var instance = accountService.GetInstance(account.Id);
+                    if (instance?.IsConnected == true)
+                    {
+                        // Add task to record all present avatars for this account
+                        recordingTasks.Add(Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await instance.RecordAllPresentAvatarsAsync();
+                                _logger.LogDebug("Triggered periodic avatar recording for account {AccountId}", account.Id);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error triggering periodic avatar recording for account {AccountId}", account.Id);
+                            }
+                        }, cancellationToken));
+                    }
+                }
+                
+                // Wait for all recording tasks to complete (with timeout)
+                if (recordingTasks.Count > 0)
+                {
+                    try
+                    {
+                        await Task.WhenAll(recordingTasks).WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+                        _logger.LogInformation("Completed periodic avatar recording for {Count} connected accounts", recordingTasks.Count);
+                    }
+                    catch (TimeoutException)
+                    {
+                        _logger.LogWarning("Periodic avatar recording timed out after 30 seconds");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error triggering periodic avatar recording");
+            }
         }
 
         private async void OnScriptDialogReceived(object? sender, Models.ScriptDialogEventArgs e)

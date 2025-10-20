@@ -37,6 +37,10 @@ namespace RadegastWeb.Models
         public string? TargetId { get; set; } // For IM/Group chats
         public string? SessionId { get; set; } // For organizing IM/Group sessions
         public string? SessionName { get; set; } // Display name for IM/Group
+        
+        // SLT formatted timestamps for display
+        public string? SLTTime { get; set; } // HH:mm:ss format
+        public string? SLTDateTime { get; set; } // MMM dd, HH:mm:ss format
     }
     
     public class SendChatRequest

@@ -56,6 +56,12 @@ namespace RadegastWeb.Services
         /// Check if any other account is already monitoring this region
         /// </summary>
         bool IsRegionAlreadyMonitored(string regionName, Guid excludeAccountId);
+        
+        /// <summary>
+        /// Trigger recording of all currently present avatars across all connected accounts
+        /// This is useful for day boundary transitions
+        /// </summary>
+        Task TriggerBulkRecordingAsync();
     }
     
     /// <summary>
@@ -198,12 +204,24 @@ namespace RadegastWeb.Services
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
-                // Get all data and process in memory to avoid SQLite limitations
+                // Get all data for the requested period
                 var rawStats = await context.VisitorStats
                     .Where(vs => vs.RegionName == regionName && 
                         vs.VisitDate >= startDate.Date && 
                         vs.VisitDate <= endDate.Date)
                     .ToListAsync();
+                
+                // Get historical data for the 60 days before the start date to determine true unique visitors
+                var historicalCutoff = startDate.Date.AddDays(-60);
+                var historicalVisitors = await context.VisitorStats
+                    .Where(vs => vs.RegionName == regionName && 
+                        vs.VisitDate >= historicalCutoff && 
+                        vs.VisitDate < startDate.Date)
+                    .Select(vs => vs.AvatarId)
+                    .Distinct()
+                    .ToListAsync();
+                
+                var historicalVisitorSet = new HashSet<string>(historicalVisitors);
                 
                 var stats = rawStats
                     .GroupBy(vs => vs.VisitDate)
@@ -212,6 +230,8 @@ namespace RadegastWeb.Services
                         Date = g.Key,
                         RegionName = regionName,
                         UniqueVisitors = g.Select(vs => vs.AvatarId).Distinct().Count(),
+                        TrueUniqueVisitors = g.Select(vs => vs.AvatarId).Distinct()
+                            .Count(avatarId => !historicalVisitorSet.Contains(avatarId)),
                         TotalVisits = g.Count()
                     })
                     .OrderBy(d => d.Date)
@@ -228,25 +248,23 @@ namespace RadegastWeb.Services
                     { 
                         Date = date, 
                         RegionName = regionName, 
-                        UniqueVisitors = 0, 
+                        UniqueVisitors = 0,
+                        TrueUniqueVisitors = 0,
                         TotalVisits = 0 
                     }).ToList();
                 
                 // Calculate totals in memory to avoid SQLite limitations
-                var allRecords = await context.VisitorStats
-                    .Where(vs => vs.RegionName == regionName && 
-                        vs.VisitDate >= startDate.Date && 
-                        vs.VisitDate <= endDate.Date)
-                    .ToListAsync();
-                
-                var totalUniqueVisitors = allRecords.Select(vs => vs.AvatarId).Distinct().Count();
-                var totalVisits = allRecords.Count;
+                var totalUniqueVisitors = rawStats.Select(vs => vs.AvatarId).Distinct().Count();
+                var totalTrueUniqueVisitors = rawStats.Select(vs => vs.AvatarId).Distinct()
+                    .Count(avatarId => !historicalVisitorSet.Contains(avatarId));
+                var totalVisits = rawStats.Count;
                 
                 return new VisitorStatsSummaryDto
                 {
                     RegionName = regionName,
                     DailyStats = completeStats,
                     TotalUniqueVisitors = totalUniqueVisitors,
+                    TrueUniqueVisitors = totalTrueUniqueVisitors,
                     TotalVisits = totalVisits,
                     StartDate = startDate,
                     EndDate = endDate
@@ -301,6 +319,18 @@ namespace RadegastWeb.Services
                     query = query.Where(vs => vs.RegionName == regionName);
                 }
                 
+                // Get historical data for the 60 days before the start date to determine true unique visitors
+                var historicalCutoff = startDate.Date.AddDays(-60);
+                var historicalVisitors = await context.VisitorStats
+                    .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
+                        vs.VisitDate >= historicalCutoff && 
+                        vs.VisitDate < startDate.Date)
+                    .Select(vs => vs.AvatarId)
+                    .Distinct()
+                    .ToListAsync();
+                
+                var historicalVisitorSet = new HashSet<string>(historicalVisitors);
+                
                 // Get all visitor stats and process in memory to avoid SQLite limitations
                 var allVisitorStats = await query.ToListAsync();
                 
@@ -310,6 +340,8 @@ namespace RadegastWeb.Services
                     .Select(g =>
                     {
                         var latestRecord = g.OrderByDescending(vs => vs.LastSeenAt).First();
+                        var isTrueUnique = !historicalVisitorSet.Contains(g.Key);
+                        
                         return new UniqueVisitorDto
                         {
                             AvatarId = g.Key,
@@ -318,7 +350,8 @@ namespace RadegastWeb.Services
                             FirstSeen = g.Min(vs => vs.FirstSeenAt),
                             LastSeen = g.Max(vs => vs.LastSeenAt),
                             VisitCount = g.Count(),
-                            RegionsVisited = g.Select(vs => vs.RegionName).Distinct().ToList()
+                            RegionsVisited = g.Select(vs => vs.RegionName).Distinct().ToList(),
+                            IsTrueUnique = isTrueUnique
                         };
                     })
                     .ToList();
@@ -496,6 +529,28 @@ namespace RadegastWeb.Services
                    lowerName == "???" ||
                    lowerName.StartsWith("loading") ||
                    lowerName.StartsWith("unknown");
+        }
+        
+        public async Task TriggerBulkRecordingAsync()
+        {
+            try
+            {
+                // This method will be called by background service to signal connected accounts
+                // to record all present avatars. The actual recording will be done by WebRadegastInstance
+                // when it receives the signal through a hub or other mechanism.
+                
+                // For now, we just log that bulk recording was triggered
+                // The actual implementation will depend on how we want to signal all connected accounts
+                _logger.LogInformation("Bulk recording triggered for day transition at {Time}", DateTime.UtcNow);
+                
+                // In a future implementation, this could send a SignalR message to all connected accounts
+                // or use another mechanism to trigger RecordAllPresentAvatarsAsync() on each account
+                await Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error triggering bulk recording");
+            }
         }
     }
 }

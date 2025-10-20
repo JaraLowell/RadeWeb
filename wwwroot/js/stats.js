@@ -104,17 +104,18 @@ class StatsManager {
             this.charts.dailyVisitors.destroy();
         }
 
-        // Prepare data - combine all regions' daily stats
+        // Prepare data - combine all regions' daily stats including true unique visitors
         const dateMap = new Map();
         
         visitorStats.forEach(regionData => {
             regionData.dailyStats.forEach(dayData => {
                 const date = dayData.date.split('T')[0]; // Get date part only
                 if (!dateMap.has(date)) {
-                    dateMap.set(date, { visitors: 0, visits: 0, regions: new Set() });
+                    dateMap.set(date, { visitors: 0, trueUnique: 0, visits: 0, regions: new Set() });
                 }
                 const existing = dateMap.get(date);
                 existing.visitors += dayData.uniqueVisitors;
+                existing.trueUnique += dayData.trueUniqueVisitors || 0;
                 existing.visits += dayData.totalVisits;
                 existing.regions.add(regionData.regionName);
             });
@@ -124,6 +125,7 @@ class StatsManager {
         const sortedDates = Array.from(dateMap.keys()).sort();
         const labels = sortedDates.map(date => this.formatDate(date));
         const visitorsData = sortedDates.map(date => dateMap.get(date).visitors);
+        const trueUniqueData = sortedDates.map(date => dateMap.get(date).trueUnique);
         const visitsData = sortedDates.map(date => dateMap.get(date).visits);
 
         this.charts.dailyVisitors = new Chart(ctx, {
@@ -131,10 +133,17 @@ class StatsManager {
             data: {
                 labels: labels,
                 datasets: [{
-                    label: 'Unique Visitors',
+                    label: 'All Visitors',
                     data: visitorsData,
                     borderColor: 'rgb(74, 115, 169)',
                     backgroundColor: 'rgba(0, 123, 255, 0.1)',
+                    tension: 0.4,
+                    fill: false
+                }, {
+                    label: 'New Visitors (60 day)',
+                    data: trueUniqueData,
+                    borderColor: 'rgb(220, 53, 69)',
+                    backgroundColor: 'rgba(220, 53, 69, 0.1)',
                     tension: 0.4,
                     fill: true
                 }, {
@@ -261,11 +270,16 @@ class StatsManager {
             const firstSeen = this.formatDateTime(visitor.firstSeen);
             const lastSeen = this.formatDateTime(visitor.lastSeen);
             
+            // Add visual indicator for true unique visitors (new in 60 days)
+            const uniqueBadge = visitor.isTrueUnique ? 
+                '<small class="badge bg-success ms-1" title="New visitor (not seen in past 60 days)">NEW</small>' : 
+                '<small class="badge bg-secondary ms-1" title="Returning visitor (seen in past 60 days)">RET</small>';
+            
             return `
                 <tr>
                     <td>
                         <div class="visitor-display-name" title="${visitor.avatarId}">
-                            ${this.escapeHtml(displayName)}
+                            ${this.escapeHtml(displayName)}${uniqueBadge}
                         </div>
                         ${visitor.regionsVisited.length > 1 ? 
                             `<small class="text-muted">${visitor.regionsVisited.length} regions</small>` : 

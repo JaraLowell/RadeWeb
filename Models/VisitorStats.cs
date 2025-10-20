@@ -54,6 +54,7 @@ namespace RadegastWeb.Models
         public DateTime Date { get; set; }
         public string RegionName { get; set; } = string.Empty;
         public int UniqueVisitors { get; set; }
+        public int TrueUniqueVisitors { get; set; } // Visitors not seen in past 60 days
         public int TotalVisits { get; set; } // Total number of visit records (may be higher if same avatar visited multiple times)
     }
     
@@ -65,6 +66,7 @@ namespace RadegastWeb.Models
         public string RegionName { get; set; } = string.Empty;
         public List<DailyVisitorStatsDto> DailyStats { get; set; } = new();
         public int TotalUniqueVisitors { get; set; }
+        public int TrueUniqueVisitors { get; set; } // Visitors not seen in past 60 days
         public int TotalVisits { get; set; }
         public DateTime StartDate { get; set; }
         public DateTime EndDate { get; set; }
@@ -82,5 +84,6 @@ namespace RadegastWeb.Models
         public DateTime LastSeen { get; set; }
         public int VisitCount { get; set; }
         public List<string> RegionsVisited { get; set; } = new();
+        public bool IsTrueUnique { get; set; } // True if visitor hasn't been seen in past 60 days
     }
 }

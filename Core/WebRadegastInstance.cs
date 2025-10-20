@@ -23,6 +23,7 @@ namespace RadegastWeb.Core
         private readonly ITeleportRequestService _teleportRequestService;
         private readonly IConnectionTrackingService _connectionTrackingService;
         private readonly IChatProcessingService _chatProcessingService;
+        private readonly ISLTimeService _slTimeService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -64,7 +65,7 @@ namespace RadegastWeb.Core
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -81,6 +82,7 @@ namespace RadegastWeb.Core
             _teleportRequestService = teleportRequestService;
             _connectionTrackingService = connectionTrackingService;
             _chatProcessingService = chatProcessingService;
+            _slTimeService = slTimeService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -376,20 +378,18 @@ namespace RadegastWeb.Core
                 _client.Self.Chat(message, channel, chatType);
                 
                 // Log our own message
-                var chatMessage = new ChatMessageDto
-                {
-                    AccountId = Guid.Parse(_accountId),
-                    SenderName = !string.IsNullOrEmpty(AccountInfo.DisplayName) && AccountInfo.DisplayName != $"{AccountInfo.FirstName} {AccountInfo.LastName}"
-                        ? AccountInfo.DisplayName 
-                        : $"{AccountInfo.FirstName} {AccountInfo.LastName}",
-                    Message = message,
-                    ChatType = chatType.ToString(),
-                    Channel = channel.ToString(),
-                    Timestamp = DateTime.UtcNow,
-                    RegionName = _client.Network.CurrentSim?.Name,
-                    SenderId = _client.Self.AgentID.ToString(),
-                    SessionId = "local-chat"
-                };
+                var senderName = !string.IsNullOrEmpty(AccountInfo.DisplayName) && AccountInfo.DisplayName != $"{AccountInfo.FirstName} {AccountInfo.LastName}"
+                    ? AccountInfo.DisplayName 
+                    : $"{AccountInfo.FirstName} {AccountInfo.LastName}";
+                    
+                var chatMessage = CreateChatMessage(
+                    senderName: senderName,
+                    message: message,
+                    chatType: chatType.ToString(),
+                    channel: channel.ToString(),
+                    senderId: _client.Self.AgentID.ToString(),
+                    sessionId: "local-chat"
+                );
                 
                 ChatReceived?.Invoke(this, chatMessage);
             }
@@ -2921,9 +2921,112 @@ namespace RadegastWeb.Core
             await _statsService.RecordVisitorAsync(avatarId, regionName, simHandle, avatarName, displayName);
         }
 
+        /// <summary>
+        /// Records all currently present avatars for visitor statistics
+        /// This is useful for day boundary transitions to ensure existing avatars are counted
+        /// </summary>
+        public async Task RecordAllPresentAvatarsAsync()
+        {
+            if (_client.Network.CurrentSim == null || string.IsNullOrEmpty(_client.Network.CurrentSim.Name))
+                return;
+
+            var currentAccountId = Guid.Parse(_accountId);
+            var regionName = _client.Network.CurrentSim.Name;
+            var simHandle = _client.Network.CurrentSim.Handle;
+            
+            // Check if another account is already monitoring this region to avoid duplicates
+            if (_statsService.IsRegionAlreadyMonitored(regionName, currentAccountId))
+            {
+                _logger.LogDebug("Region {RegionName} already being monitored by another account, skipping bulk visitor recording", regionName);
+                return;
+            }
+
+            var recordedCount = 0;
+
+            // Record all detailed avatars
+            foreach (var kvp in _nearbyAvatars)
+            {
+                try
+                {
+                    var avatarId = kvp.Key.ToString();
+                    var avatarName = kvp.Value.Name;
+                    var displayName = await _globalDisplayNameCache.GetCachedDisplayNameAsync(avatarId);
+                    var finalDisplayName = displayName?.DisplayNameValue ?? avatarName;
+
+                    await _statsService.RecordVisitorAsync(avatarId, regionName, simHandle, avatarName, finalDisplayName);
+                    recordedCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error recording present detailed avatar {AvatarId}", kvp.Key);
+                }
+            }
+
+            // Record all coarse location avatars that aren't already in detailed list
+            foreach (var kvp in _coarseLocationAvatars)
+            {
+                if (_nearbyAvatars.ContainsKey(kvp.Key))
+                    continue; // Already recorded above
+
+                try
+                {
+                    var avatarId = kvp.Key.ToString();
+                    var avatarName = $"Avatar {avatarId.Substring(0, 8)}..."; // Fallback name
+                    var displayName = await _globalDisplayNameCache.GetCachedDisplayNameAsync(avatarId);
+                    var finalDisplayName = displayName?.DisplayNameValue ?? avatarName;
+
+                    await _statsService.RecordVisitorAsync(avatarId, regionName, simHandle, avatarName, finalDisplayName);
+                    recordedCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error recording present coarse avatar {AvatarId}", kvp.Key);
+                }
+            }
+
+            if (recordedCount > 0)
+            {
+                _logger.LogDebug("Recorded {Count} present avatars for visitor statistics in {Region}", recordedCount, regionName);
+            }
+        }
+
         #endregion
 
         #region Helper Methods
+
+        /// <summary>
+        /// Creates a ChatMessageDto with properly formatted SLT timestamps
+        /// </summary>
+        private ChatMessageDto CreateChatMessage(
+            string senderName,
+            string message,
+            string chatType = "Normal",
+            string? channel = null,
+            string? regionName = null,
+            string? senderId = null,
+            string? targetId = null,
+            string? sessionId = null,
+            string? sessionName = null)
+        {
+            var timestamp = DateTime.UtcNow;
+            
+            return new ChatMessageDto
+            {
+                AccountId = Guid.Parse(_accountId),
+                SenderName = senderName,
+                Message = message,
+                ChatType = chatType,
+                Channel = channel,
+                Timestamp = timestamp,
+                RegionName = regionName ?? _client.Network.CurrentSim?.Name,
+                SenderId = senderId,
+                TargetId = targetId,
+                SessionId = sessionId,
+                SessionName = sessionName,
+                SLTTime = _slTimeService.FormatSLT(timestamp, "HH:mm:ss"),
+                SLTDateTime = _slTimeService.FormatSLTWithDate(timestamp, "MMM dd, HH:mm:ss")
+            };
+        }
 
         /// <summary>
         /// Checks if an instant message is a status or friendship related message that shouldn't be processed as a notice

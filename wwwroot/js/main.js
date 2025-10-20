@@ -1919,7 +1919,7 @@ class RadegastWebClient {
         const messageDiv = document.createElement('div');
         messageDiv.className = `chat-message ${(chatMessage.chatType || 'normal').toLowerCase()} mb-2`;
         
-        const timestamp = new Date(chatMessage.timestamp).toLocaleTimeString();
+        const timestamp = chatMessage.sltTime || new Date(chatMessage.timestamp).toLocaleTimeString();
         
         // Check if this is a /me command (personal thought)
         const isPersonalThought = chatMessage.message.startsWith('/me ');
@@ -1929,7 +1929,7 @@ class RadegastWebClient {
         messageDiv.innerHTML = `
             <div class="chat-message-layout d-flex">
                 <div class="chat-message-time">
-                    <span class="text-muted small">${timestamp}</span>
+                    <span class="text-muted small" title="Second Life Time (SLT)">${timestamp} SLT</span>
                 </div>
                 <div class="chat-message-right">
                     <div class="chat-message-header">
@@ -2268,7 +2268,7 @@ class RadegastWebClient {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'chat-message mb-2';
         
-        const timestamp = new Date(message.timestamp).toLocaleTimeString();
+        const timestamp = message.sltTime || new Date(message.timestamp).toLocaleTimeString();
         const senderName = this.escapeHtml(message.senderName);
         
         // Check if this is a /me command (personal thought)
@@ -2279,7 +2279,7 @@ class RadegastWebClient {
         messageDiv.innerHTML = `
             <div class="chat-message-layout d-flex">
                 <div class="chat-message-time">
-                    <span class="text-muted small">${timestamp}</span>
+                    <span class="text-muted small" title="Second Life Time (SLT)">${timestamp} SLT</span>
                 </div>
                 <div class="chat-message-right">
                     <div class="chat-message-header">
@@ -2815,7 +2815,7 @@ class RadegastWebClient {
         // Notice.Type enum: 0=Group, 1=Region, 2=System
         noticeDiv.style.backgroundColor = notice.type === 0 ? '#213c50' : '#563838';
         
-        const timestamp = new Date(notice.timestamp).toLocaleTimeString();
+        const timestamp = notice.sltTime || new Date(notice.timestamp).toLocaleTimeString();
         const typeNames = { 0: 'Group', 1: 'Region', 2: 'System' };
         const typeName = typeNames[notice.type] || 'Unknown';
         
@@ -2823,7 +2823,7 @@ class RadegastWebClient {
             <div class="d-flex justify-content-between align-items-start mb-2">
                 <div>
                     <strong class="notice-title">${this.escapeHtml(notice.title)}</strong>
-                    <small class="text-muted ms-2">${timestamp}</small>
+                    <small class="text-muted ms-2" title="Second Life Time (SLT)">${timestamp} SLT</small>
                 </div>
                 <span class="badge ${notice.type === 0 ? 'bg-primary' : 'bg-secondary'}">${typeName}</span>
             </div>

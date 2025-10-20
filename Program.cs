@@ -131,6 +131,7 @@ builder.Services.AddSingleton<IScriptDialogService, ScriptDialogService>();
 builder.Services.AddSingleton<ITeleportRequestService, TeleportRequestService>();
 builder.Services.AddSingleton<IConnectionTrackingService, ConnectionTrackingService>();
 builder.Services.AddSingleton<IChatProcessingService, ChatProcessingService>();
+builder.Services.AddSingleton<ISLTimeService, SLTimeService>();
 
 // Display name services - Use the simpler, working approach
 builder.Services.AddSingleton<IGlobalDisplayNameCache, GlobalDisplayNameCache>();

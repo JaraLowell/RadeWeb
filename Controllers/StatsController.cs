@@ -189,16 +189,21 @@ namespace RadegastWeb.Controllers
                 var dashboard = new
                 {
                     TotalUniqueVisitors30Days = totalVisitors30Days,
+                    TotalTrueUniqueVisitors30Days = stats30Days.Sum(s => s.TrueUniqueVisitors),
                     TotalUniqueVisitors7Days = totalVisitors7Days,
+                    TotalTrueUniqueVisitors7Days = stats7Days.Sum(s => s.TrueUniqueVisitors),
                     TotalVisitorsToday = totalVisitorsToday,
+                    TotalTrueUniqueVisitorsToday = statsToday.Sum(s => s.TrueUniqueVisitors),
                     MonitoredRegionsCount = monitoredRegions.Count,
                     MonitoredRegions = monitoredRegions,
                     RegionStats = stats30Days.Select(s => new
                     {
                         s.RegionName,
                         s.TotalUniqueVisitors,
+                        s.TrueUniqueVisitors,
                         s.TotalVisits,
-                        AverageVisitorsPerDay = s.DailyStats.Count > 0 ? s.DailyStats.Average(d => d.UniqueVisitors) : 0
+                        AverageVisitorsPerDay = s.DailyStats.Count > 0 ? s.DailyStats.Average(d => d.UniqueVisitors) : 0,
+                        AverageTrueUniquePerDay = s.DailyStats.Count > 0 ? s.DailyStats.Average(d => d.TrueUniqueVisitors) : 0
                     }).OrderByDescending(s => s.TotalUniqueVisitors).Take(10),
                     RecentActivity = stats7Days.SelectMany(s => s.DailyStats)
                         .GroupBy(d => d.Date)
@@ -206,6 +211,7 @@ namespace RadegastWeb.Controllers
                         {
                             Date = g.Key,
                             TotalVisitors = g.Sum(d => d.UniqueVisitors),
+                            TotalTrueUnique = g.Sum(d => d.TrueUniqueVisitors),
                             TotalVisits = g.Sum(d => d.TotalVisits)
                         })
                         .OrderBy(d => d.Date)
