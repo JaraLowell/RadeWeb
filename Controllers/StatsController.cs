@@ -165,6 +165,19 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
+        /// Test endpoint to verify hourly API is working
+        /// </summary>
+        [HttpGet("hourly/test")]
+        public ActionResult<object> TestHourlyEndpoint()
+        {
+            return Ok(new { 
+                message = "Hourly API endpoint is working", 
+                timestamp = DateTime.UtcNow,
+                sltTime = DateTime.UtcNow.AddHours(-8) // Simple SLT approximation
+            });
+        }
+
+        /// <summary>
         /// Get hourly visitor activity for the past X days (default 7) in SLT time
         /// </summary>
         [HttpGet("hourly")]
@@ -174,10 +187,16 @@ namespace RadegastWeb.Controllers
         {
             try
             {
+                _logger.LogInformation("Hourly activity requested: days={Days}, region={Region}", days, region);
+                
                 var endDate = DateTime.UtcNow.Date;
                 var startDate = endDate.AddDays(-Math.Max(1, days));
 
                 var hourlyStats = await _statsService.GetHourlyActivityAsync(startDate, endDate, region);
+                
+                _logger.LogInformation("Returning hourly stats with {HourCount} hours, peak at {PeakHour}", 
+                    hourlyStats.HourlyStats.Count, hourlyStats.PeakHourLabel);
+                
                 return Ok(hourlyStats);
             }
             catch (Exception ex)

@@ -502,22 +502,34 @@ class StatsManager {
             this.updateHourlyChart(hourlyData);
         } catch (error) {
             console.error('Error loading hourly activity:', error);
+            // Show empty chart on error
+            const ctx = document.getElementById('hourlyActivityChart').getContext('2d');
+            this.createEmptyHourlyChart(ctx);
         }
     }
 
     updateHourlyChart(hourlyData) {
-        const ctx = document.getElementById('hourlyActivityChart').getContext('2d');
+        const canvas = document.getElementById('hourlyActivityChart');
+        const ctx = canvas.getContext('2d');
         
         // Destroy existing chart
         if (this.charts.hourlyActivity) {
             this.charts.hourlyActivity.destroy();
         }
 
+        // Force canvas size to match container
+        const container = canvas.parentElement;
+        canvas.style.width = '100%';
+        canvas.style.height = container.style.height || '400px';
+
         // Handle both PascalCase and camelCase property names
         const hourlyStats = hourlyData.HourlyStats || hourlyData.hourlyStats || [];
         
         if (!hourlyData || hourlyStats.length === 0) {
             console.warn('No hourly activity data available', hourlyData);
+            
+            // Create empty chart with 24 hours of zero data to show the structure
+            this.createEmptyHourlyChart(ctx);
             return;
         }
 
@@ -566,6 +578,7 @@ class StatsManager {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                resizeDelay: 0,
                 plugins: {
                     title: {
                         display: false
@@ -625,6 +638,109 @@ class StatsManager {
                             drawOnChartArea: false,
                         },
                         beginAtZero: true
+                    }
+                }
+            }
+        });
+    }
+
+    createEmptyHourlyChart(ctx) {
+        // Force canvas size to match container
+        const canvas = ctx.canvas;
+        const container = canvas.parentElement;
+        canvas.style.width = '100%';
+        canvas.style.height = container.style.height || '400px';
+        
+        // Update summary info for empty state
+        document.getElementById('hourlyDaysLabel').textContent = this.currentHourlyPeriod;
+        document.getElementById('peakHourLabel').textContent = '-';
+        document.getElementById('peakHourAvg').textContent = '0';
+        document.getElementById('quietHourLabel').textContent = '-';
+        document.getElementById('quietHourAvg').textContent = '0';
+        document.getElementById('daysAnalyzed').textContent = '0';
+
+        // Create 24-hour labels
+        const labels = Array.from({length: 24}, (_, i) => {
+            const date = new Date();
+            date.setHours(i, 0, 0, 0);
+            return date.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true });
+        });
+
+        const emptyData = new Array(24).fill(0);
+
+        this.charts.hourlyActivity = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Average Visitors per Hour',
+                    data: emptyData,
+                    backgroundColor: 'rgba(74, 115, 169, 0.7)',
+                    borderColor: 'rgb(74, 115, 169)',
+                    borderWidth: 1,
+                    yAxisID: 'y'
+                }, {
+                    label: 'Total Unique Visitors',
+                    data: emptyData,
+                    type: 'line',
+                    borderColor: 'rgb(220, 53, 69)',
+                    backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                    borderWidth: 2,
+                    fill: false,
+                    tension: 0.4,
+                    yAxisID: 'y1'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                resizeDelay: 0,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'No visitor data available for the selected period'
+                    },
+                    legend: {
+                        position: 'top'
+                    }
+                },
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time (SLT)'
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: {
+                            display: true,
+                            text: 'Average Visitors'
+                        },
+                        grid: {
+                            color: 'rgba(0, 0, 0, 0.05)'
+                        },
+                        beginAtZero: true,
+                        max: 5
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Total Unique Visitors'
+                        },
+                        grid: {
+                            drawOnChartArea: false,
+                        },
+                        beginAtZero: true,
+                        max: 5
                     }
                 }
             }
