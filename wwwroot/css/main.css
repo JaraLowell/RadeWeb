@@ -146,6 +146,8 @@ a {
 .bg-primary,
 [data-theme="dark"] .bg-primary {
     background-color: var(--header-bg) !important;
+    border-bottom-right-radius: 5px;
+    border-bottom-left-radius: 5px;
 }
 
 [data-theme="dark"] .card {
