@@ -218,18 +218,48 @@ namespace RadegastWeb.Services
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
-                // Get all data for the requested period
+                // TEMPORARY FIX: Handle mixed UTC/SLT data in database
+                // During transition period, we need to query both:
+                // 1. The expected UTC-converted date range (for old UTC-stored data)
+                // 2. The raw SLT date range (for new SLT-stored data)
+                
+                var sltTimeZone = _sltTimeService.GetSLTTimeZone();
+                var currentSLT = _sltTimeService.GetCurrentSLT().Date;
+                
+                // Calculate the raw SLT date range (for new data stored with SLT dates)
+                var rawSLTStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
+                var rawSLTEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
+                
+                // Expand query range to include both possible date ranges
+                var expandedStartDate = new DateTime[] { startDate.Date, rawSLTStartDate }.Min();
+                var expandedEndDate = new DateTime[] { endDate.Date, rawSLTEndDate }.Max();
+                
+                _logger.LogDebug("Querying visitor stats for region {RegionName}: " +
+                    "Original range: {OriginalStart} to {OriginalEnd}, " +
+                    "SLT range: {SLTStart} to {SLTEnd}, " +
+                    "Expanded range: {ExpandedStart} to {ExpandedEnd}",
+                    regionName, startDate.Date, endDate.Date, rawSLTStartDate, rawSLTEndDate, expandedStartDate, expandedEndDate);
+                
+                // Get all data for the expanded period to catch both UTC and SLT stored data
                 var rawStats = await context.VisitorStats
                     .Where(vs => vs.RegionName == regionName && 
-                        vs.VisitDate >= startDate.Date && 
-                        vs.VisitDate <= endDate.Date)
+                        vs.VisitDate >= expandedStartDate && 
+                        vs.VisitDate <= expandedEndDate)
                     .ToListAsync();
+                
+                // Filter the results to only include data that falls within either:
+                // 1. The original UTC date range (for old UTC-stored data)
+                // 2. The SLT date range (for new SLT-stored data)
+                rawStats = rawStats.Where(vs => 
+                    (vs.VisitDate >= startDate.Date && vs.VisitDate <= endDate.Date) || // Original UTC range
+                    (vs.VisitDate >= rawSLTStartDate && vs.VisitDate <= rawSLTEndDate)   // SLT range
+                ).ToList();
                 
                 // Get ALL historical data before the start date to determine truly new vs returning visitors
                 // This ensures we properly identify visitors who have EVER been seen before
                 var allHistoricalVisitors = await context.VisitorStats
                     .Where(vs => vs.RegionName == regionName && 
-                        vs.VisitDate < startDate.Date)
+                        vs.VisitDate < expandedStartDate) // Use expanded start to catch all historical data
                     .Select(vs => vs.AvatarId)
                     .Distinct()
                     .ToListAsync();
@@ -239,8 +269,21 @@ namespace RadegastWeb.Services
                 // Track which visitors we've already seen in the current period to avoid double-counting
                 var seenInPeriod = new HashSet<string>();
                 
-                var stats = rawStats
-                    .GroupBy(vs => vs.VisitDate)
+                // TEMPORARY FIX: Normalize dates to SLT for proper grouping
+                // This handles the case where the same SLT day has data stored under both UTC and SLT dates
+                var normalizedStats = rawStats.Select(vs => new
+                {
+                    AvatarId = vs.AvatarId,
+                    RegionName = vs.RegionName,
+                    OriginalDate = vs.VisitDate,
+                    // Convert any date to its corresponding SLT date for consistent grouping
+                    NormalizedSLTDate = vs.VisitDate.Kind == DateTimeKind.Utc 
+                        ? TimeZoneInfo.ConvertTimeFromUtc(vs.VisitDate, sltTimeZone).Date
+                        : vs.VisitDate.Date // Assume already SLT if not UTC
+                }).ToList();
+                
+                var stats = normalizedStats
+                    .GroupBy(vs => vs.NormalizedSLTDate)
                     .OrderBy(g => g.Key) // Important: process dates in order
                     .Select(g => 
                     {
@@ -256,7 +299,7 @@ namespace RadegastWeb.Services
                         
                         return new DailyVisitorStatsDto
                         {
-                            Date = g.Key,
+                            Date = g.Key, // Use the normalized SLT date
                             RegionName = regionName,
                             UniqueVisitors = dailyVisitors.Count, // Total unique visitors this day
                             TrueUniqueVisitors = trueUniqueToday, // New visitors never seen before
@@ -266,9 +309,11 @@ namespace RadegastWeb.Services
                     })
                     .ToList();
                 
-                // Fill in missing dates with zero counts
-                var allDates = Enumerable.Range(0, (int)(endDate.Date - startDate.Date).TotalDays + 1)
-                    .Select(offset => startDate.Date.AddDays(offset))
+                // Fill in missing dates with zero counts using the SLT date range
+                var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
+                var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
+                var allDates = Enumerable.Range(0, (int)(sltEndDate - sltStartDate).TotalDays + 1)
+                    .Select(offset => sltStartDate.AddDays(offset))
                     .ToList();
                 
                 var completeStats = allDates.Select(date => 
@@ -283,11 +328,11 @@ namespace RadegastWeb.Services
                         SLTDate = _sltTimeService.FormatSLTWithDate(date, "MMM dd, yyyy")
                     }).ToList();
                 
-                // Calculate totals in memory to avoid SQLite limitations
-                var allVisitorsInPeriod = rawStats.Select(vs => vs.AvatarId).Distinct().ToList();
+                // Calculate totals in memory to avoid SQLite limitations using normalized data
+                var allVisitorsInPeriod = normalizedStats.Select(vs => vs.AvatarId).Distinct().ToList();
                 var totalUniqueVisitors = allVisitorsInPeriod.Count;
                 var totalTrueUniqueVisitors = allVisitorsInPeriod.Count(avatarId => !historicalVisitorSet.Contains(avatarId));
-                var totalVisits = rawStats.Count;
+                var totalVisits = normalizedStats.Count;
                 
                 return new VisitorStatsSummaryDto
                 {
@@ -296,21 +341,24 @@ namespace RadegastWeb.Services
                     TotalUniqueVisitors = totalUniqueVisitors,
                     TrueUniqueVisitors = totalTrueUniqueVisitors,
                     TotalVisits = totalVisits,
-                    StartDate = startDate,
-                    EndDate = endDate,
-                    SLTStartDate = _sltTimeService.FormatSLTWithDate(startDate, "MMM dd, yyyy"),
-                    SLTEndDate = _sltTimeService.FormatSLTWithDate(endDate, "MMM dd, yyyy")
+                    StartDate = sltStartDate, // Use SLT dates for consistency
+                    EndDate = sltEndDate,
+                    SLTStartDate = _sltTimeService.FormatSLTWithDate(sltStartDate, "MMM dd, yyyy"),
+                    SLTEndDate = _sltTimeService.FormatSLTWithDate(sltEndDate, "MMM dd, yyyy")
                 };
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting stats for region {RegionName}", regionName);
+                var sltTimeZone = _sltTimeService.GetSLTTimeZone();
+                var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
+                var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
                 return new VisitorStatsSummaryDto { 
                     RegionName = regionName, 
-                    StartDate = startDate, 
-                    EndDate = endDate,
-                    SLTStartDate = _sltTimeService.FormatSLTWithDate(startDate, "MMM dd, yyyy"),
-                    SLTEndDate = _sltTimeService.FormatSLTWithDate(endDate, "MMM dd, yyyy")
+                    StartDate = sltStartDate, 
+                    EndDate = sltEndDate,
+                    SLTStartDate = _sltTimeService.FormatSLTWithDate(sltStartDate, "MMM dd, yyyy"),
+                    SLTEndDate = _sltTimeService.FormatSLTWithDate(sltEndDate, "MMM dd, yyyy")
                 };
             }
         }
