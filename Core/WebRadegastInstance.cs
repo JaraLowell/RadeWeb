@@ -102,7 +102,7 @@ namespace RadegastWeb.Core
             InitializeClient();
             RegisterClientEvents();
             
-            // Start display name refresh timer (similar to Radegast's approach)
+            // Start periodic timer for display name refresh + self-presence recording (similar to Radegast's approach)
             _displayNameRefreshTimer = new System.Threading.Timer(
                 RefreshNearbyDisplayNames, 
                 null, 
@@ -1177,9 +1177,9 @@ namespace RadegastWeb.Core
                 // Request current groups after successful login
                 _client.Groups.RequestCurrentGroups();
                 
-                // Start periodic display name refresh timer (every 5 minutes)
+                // Start periodic maintenance timer (display names refresh + self-presence recording every 5 minutes)
                 _displayNameRefreshTimer?.Dispose();
-                _displayNameRefreshTimer = new System.Threading.Timer(PeriodicDisplayNameRefresh, null, 
+                _displayNameRefreshTimer = new System.Threading.Timer(PeriodicMaintenanceRefresh, null, 
                     TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
                 
                 // Start proactive display name loading after successful login
@@ -1198,6 +1198,9 @@ namespace RadegastWeb.Core
                                 Guid.Parse(_accountId));
                         }
                         
+                        // FIXED: Record our own avatar as a visitor to the region after login
+                        await RecordOwnAvatarAsync();
+                        
                         // Preload any avatars that appeared during login
                         if (_nearbyAvatars.Count > 0)
                         {
@@ -1214,24 +1217,34 @@ namespace RadegastWeb.Core
             }
         }
 
-        private async void PeriodicDisplayNameRefresh(object? state)
+        private async void PeriodicMaintenanceRefresh(object? state)
         {
             try
             {
-                if (!_client.Network.Connected || _nearbyAvatars.Count == 0)
+                if (!_client.Network.Connected)
                     return;
 
-                var avatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
-                
-                // Refresh display names for all nearby avatars
-                // This ensures we pick up any display name changes
-                await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), avatarIds);
-                
-                _logger.LogDebug("Periodic refresh of {Count} nearby avatar display names completed", avatarIds.Count);
+                // FIXED: Always record our own avatar periodically to maintain presence stats
+                await RecordOwnAvatarAsync();
+
+                if (_nearbyAvatars.Count > 0)
+                {
+                    var avatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
+                    
+                    // Refresh display names for all nearby avatars
+                    // This ensures we pick up any display name changes
+                    await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), avatarIds);
+                    
+                    _logger.LogDebug("Periodic maintenance refresh completed: display names for {Count} avatars + self-presence recording", avatarIds.Count);
+                }
+                else
+                {
+                    _logger.LogDebug("Periodic maintenance refresh completed: self-presence recording only");
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error in periodic display name refresh for account {AccountId}", _accountId);
+                _logger.LogWarning(ex, "Error in periodic maintenance refresh for account {AccountId}", _accountId);
             }
         }
 
@@ -1283,6 +1296,9 @@ namespace RadegastWeb.Core
                 {
                     // Wait for avatars to start appearing in the new sim
                     await Task.Delay(3000);
+                    
+                    // FIXED: Record our own avatar as a visitor to the new region after teleport/sim change
+                    await RecordOwnAvatarAsync();
                     
                     // Preload any avatars that have appeared in the new region
                     var totalAvatars = _nearbyAvatars.Count + _coarseLocationAvatars.Count;
@@ -2601,13 +2617,20 @@ namespace RadegastWeb.Core
             
             try
             {
+                // FIXED: Record our own avatar presence every 30 seconds to maintain visitor stats
+                await RecordOwnAvatarAsync();
+
                 var nearbyAvatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
                 if (nearbyAvatarIds.Count > 0)
                 {
                     // Batch request display names for all nearby avatars
                     await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), nearbyAvatarIds);
                     
-                    _logger.LogDebug("Refreshed display names for {Count} nearby avatars", nearbyAvatarIds.Count);
+                    _logger.LogDebug("Refreshed display names for {Count} nearby avatars + recorded self-presence", nearbyAvatarIds.Count);
+                }
+                else
+                {
+                    _logger.LogDebug("Recorded self-presence (no nearby avatars)");
                 }
             }
             catch (Exception ex)
@@ -2960,6 +2983,41 @@ namespace RadegastWeb.Core
         }
 
         /// <summary>
+        /// Records our own avatar as a visitor to the current region
+        /// This ensures the reporting account is also included in visitor statistics
+        /// </summary>
+        private async Task RecordOwnAvatarAsync()
+        {
+            if (_client.Network.CurrentSim == null || string.IsNullOrEmpty(_client.Network.CurrentSim.Name) || !_client.Network.Connected)
+                return;
+
+            try
+            {
+                var ownAvatarId = _client.Self.AgentID.ToString();
+                var legacyName = $"{AccountInfo.FirstName} {AccountInfo.LastName}";
+                
+                // Get our own display name - use the account's stored display name if available
+                var displayName = !string.IsNullOrEmpty(AccountInfo.DisplayName) && AccountInfo.DisplayName != legacyName
+                    ? AccountInfo.DisplayName
+                    : await _globalDisplayNameCache.GetDisplayNameAsync(ownAvatarId, NameDisplayMode.Smart, legacyName);
+
+                // If still no good display name, fall back to legacy name
+                if (string.IsNullOrEmpty(displayName) || displayName == "Loading..." || displayName == "???")
+                {
+                    displayName = legacyName;
+                }
+
+                await RecordVisitorStatAsync(ownAvatarId, legacyName, displayName);
+                _logger.LogDebug("Recorded own avatar {AvatarId} ({DisplayName}) in region {RegionName}", 
+                    ownAvatarId, displayName, _client.Network.CurrentSim.Name);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error recording own avatar as visitor for account {AccountId}", _accountId);
+            }
+        }
+
+        /// <summary>
         /// Records all currently present avatars for visitor statistics
         /// This is useful for day boundary transitions to ensure existing avatars are counted
         /// </summary>
@@ -2977,6 +3035,18 @@ namespace RadegastWeb.Core
             // Multiple accounts in the same region should all contribute to ensure complete coverage
             
             var recordedCount = 0;
+
+            // FIXED: First, record our own avatar as present
+            try
+            {
+                await RecordOwnAvatarAsync();
+                recordedCount++;
+                _logger.LogDebug("Recorded own avatar in bulk recording for region {Region}", regionName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error recording own avatar in bulk recording");
+            }
 
             // Record all detailed avatars
             foreach (var kvp in _nearbyAvatars)
