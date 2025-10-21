@@ -130,15 +130,16 @@ namespace RadegastWeb.Services
                 var today = sltNow.Date;
                 var now = DateTime.UtcNow; // Keep UTC for storage, but we'll use SLT for display
                 
-                // Check cooldown to prevent too frequent recordings (use SLT date for consistency)
+                // Check cooldown to prevent too frequent recordings, but still update LastSeenAt for existing records
                 var cacheKey = $"{avatarId}:{regionName}:{sltNow:yyyy-MM-dd}"; // Per avatar per region per SLT day
+                bool isWithinCooldown = false;
                 if (_recentRecordings.TryGetValue(cacheKey, out var lastRecording))
                 {
                     if (DateTime.UtcNow - lastRecording < _recordingCooldown)
                     {
-                        _logger.LogDebug("Skipping visitor recording for {AvatarId} in {RegionName} - too recent (last: {LastRecording})", 
+                        isWithinCooldown = true;
+                        _logger.LogDebug("Within cooldown period for {AvatarId} in {RegionName} - will only update LastSeenAt (last: {LastRecording})", 
                             avatarId, regionName, lastRecording.ToString("HH:mm:ss"));
-                        return; // Skip recording, too recent
                     }
                 }
                 
@@ -156,9 +157,19 @@ namespace RadegastWeb.Services
                 
                 if (existingRecord != null)
                 {
-                    // Update last seen time and names if provided and better than existing
+                    // Always update last seen time to keep it current
                     existingRecord.LastSeenAt = now;
                     
+                    // During cooldown period, only update LastSeenAt and skip name updates and cache management
+                    if (isWithinCooldown)
+                    {
+                        await context.SaveChangesAsync();
+                        _logger.LogDebug("Updated LastSeenAt for {AvatarId} ({AvatarName}) in {RegionName} during cooldown", 
+                            avatarId, avatarName ?? "Unknown", regionName);
+                        return; // Exit early during cooldown - we've updated LastSeenAt which was the main goal
+                    }
+                    
+                    // Outside cooldown period - also update names if we have better ones
                     // Update avatar name if we have a better one (not null/empty and not generic)
                     if (!string.IsNullOrEmpty(avatarName) && 
                         avatarName != "Unknown User" && 
@@ -183,6 +194,14 @@ namespace RadegastWeb.Services
                 }
                 else
                 {
+                    // During cooldown, don't create new records (this shouldn't happen for existing avatars but safety check)
+                    if (isWithinCooldown)
+                    {
+                        _logger.LogWarning("Attempted to create new visitor record during cooldown for {AvatarId} in {RegionName} - skipping", 
+                            avatarId, regionName);
+                        return;
+                    }
+                    
                     // Create new record
                     var visitorStats = new VisitorStats
                     {
@@ -203,23 +222,31 @@ namespace RadegastWeb.Services
                 
                 await context.SaveChangesAsync();
                 
-                // Update cache and clean up old entries periodically
-                _recentRecordings.AddOrUpdate(cacheKey, now, (key, oldValue) => now);
-                
-                // Clean up cache entries older than 24 hours to prevent memory bloat (run occasionally)
-                if (_recentRecordings.Count > 1000 && new Random().Next(100) == 0) // 1% chance on each call
+                // Update cache and clean up old entries periodically (only outside cooldown period)
+                if (!isWithinCooldown)
                 {
-                    var cutoff = DateTime.UtcNow.AddHours(-24);
-                    var keysToRemove = _recentRecordings.Where(kvp => kvp.Value < cutoff).Select(kvp => kvp.Key).ToList();
-                    foreach (var key in keysToRemove)
+                    _recentRecordings.AddOrUpdate(cacheKey, now, (key, oldValue) => now);
+                    
+                    // Clean up cache entries older than 24 hours to prevent memory bloat (run occasionally)
+                    if (_recentRecordings.Count > 1000 && new Random().Next(100) == 0) // 1% chance on each call
                     {
-                        _recentRecordings.TryRemove(key, out _);
+                        var cutoff = DateTime.UtcNow.AddHours(-24);
+                        var keysToRemove = _recentRecordings.Where(kvp => kvp.Value < cutoff).Select(kvp => kvp.Key).ToList();
+                        foreach (var key in keysToRemove)
+                        {
+                            _recentRecordings.TryRemove(key, out _);
+                        }
+                        _logger.LogDebug("Cleaned up {Count} old cache entries", keysToRemove.Count);
                     }
-                    _logger.LogDebug("Cleaned up {Count} old cache entries", keysToRemove.Count);
+                    
+                    _logger.LogInformation("Recorded visitor {AvatarId} ({AvatarName}) in {RegionName} at {SLTTime}", 
+                        avatarId, avatarName ?? "Unknown", regionName, sltNow.ToString("yyyy-MM-dd HH:mm:ss"));
                 }
-                
-                _logger.LogInformation("Recorded visitor {AvatarId} ({AvatarName}) in {RegionName} at {SLTTime}", 
-                    avatarId, avatarName ?? "Unknown", regionName, sltNow.ToString("yyyy-MM-dd HH:mm:ss"));
+                else
+                {
+                    _logger.LogDebug("Updated LastSeenAt for existing visitor {AvatarId} ({AvatarName}) in {RegionName} at {SLTTime}", 
+                        avatarId, avatarName ?? "Unknown", regionName, sltNow.ToString("yyyy-MM-dd HH:mm:ss"));
+                }
             }
             catch (Exception ex)
             {
