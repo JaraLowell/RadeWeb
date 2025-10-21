@@ -417,7 +417,7 @@
     <footer style="background-color: #4a73a9; color: white; text-align: right; padding: 5px; margin-top: auto;">
         <div class="d-flex justify-content-between align-items-center">
             <div>
-                <small><i class="fas fa-clock me-1"></i>SL Time: <span id="slTime">--:--</span></small>
+                <small>&nbsp;&nbsp;<i class="fas fa-clock me-1"></i>SL Time: <span id="slTime">--:--</span></small>
             </div>
             <div>
                 <p class="mb-0">Created by <a target="_blank" rel="noopener noreferrer" href="https://github.com/JaraLowell/RadeWeb">Jara Lowell</a> and <a target="_blank" rel="noopener noreferrer" href="https://github.com/cinderblocks/radegast">Radegast Metaverse Client</a>&nbsp;&nbsp;</p>
@@ -515,7 +515,7 @@
                 const slTime = new Intl.DateTimeFormat('en-US', {
                     timeZone: 'America/Los_Angeles',
                     timeZoneName: "short",
-                    hour: 'numeric',
+                    hour: '2-digit',
                     minute: '2-digit',
                     hour12: true
                 }).format(now);
