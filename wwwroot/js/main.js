@@ -2326,7 +2326,7 @@ class RadegastWebClient {
         messageDiv.innerHTML = `
             <div class="chat-message-layout d-flex">
                 <div class="chat-message-time">
-                    <span class="text-muted small" title="Second Life Time (SLT)">${timestamp} SLT</span>
+                    <span class="text-muted small" title="Second Life Time (SLT)">${timestamp}</span>
                 </div>
                 <div class="chat-message-right">
                     <div class="chat-message-header">
@@ -2871,7 +2871,7 @@ class RadegastWebClient {
             <div class="d-flex justify-content-between align-items-start mb-2">
                 <div>
                     <strong class="notice-title">${this.escapeHtml(notice.title)}</strong>
-                    <small class="text-muted ms-2" title="Second Life Time (SLT)">${timestamp} SLT</small>
+                    <small class="text-muted ms-2" title="Second Life Time (SLT)">${timestamp}</small>
                 </div>
                 <span class="badge ${notice.type === 0 ? 'bg-primary' : 'bg-secondary'}">${typeName}</span>
             </div>
