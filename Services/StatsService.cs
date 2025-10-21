@@ -90,7 +90,7 @@ namespace RadegastWeb.Services
         
         // Cache for recent visitor recordings to prevent too frequent database writes
         private readonly ConcurrentDictionary<string, DateTime> _recentRecordings = new();
-        private readonly TimeSpan _recordingCooldown = TimeSpan.FromMinutes(5); // Don't record same avatar twice within 5 minutes
+        private readonly TimeSpan _recordingCooldown = TimeSpan.FromMinutes(2); // Don't record same avatar twice within 2 minutes (reduced for more frequent updates)
         
         public StatsService(IDbContextFactory<RadegastDbContext> dbContextFactory, ILogger<StatsService> logger, IGlobalDisplayNameCache globalDisplayNameCache, ISLTimeService sltTimeService)
         {
@@ -125,20 +125,22 @@ namespace RadegastWeb.Services
         {
             try
             {
+                // Use SLT date for consistent date grouping (Pacific Time date, not UTC date)
+                var sltNow = _sltTimeService.GetCurrentSLT();
+                var today = sltNow.Date;
+                var now = DateTime.UtcNow; // Keep UTC for storage, but we'll use SLT for display
+                
                 // Check cooldown to prevent too frequent recordings (use SLT date for consistency)
-                var currentSLT = _sltTimeService.GetCurrentSLT();
-                var cacheKey = $"{avatarId}:{regionName}:{currentSLT:yyyy-MM-dd}"; // Per avatar per region per SLT day
+                var cacheKey = $"{avatarId}:{regionName}:{sltNow:yyyy-MM-dd}"; // Per avatar per region per SLT day
                 if (_recentRecordings.TryGetValue(cacheKey, out var lastRecording))
                 {
                     if (DateTime.UtcNow - lastRecording < _recordingCooldown)
                     {
+                        _logger.LogDebug("Skipping visitor recording for {AvatarId} in {RegionName} - too recent (last: {LastRecording})", 
+                            avatarId, regionName, lastRecording.ToString("HH:mm:ss"));
                         return; // Skip recording, too recent
                     }
                 }
-                
-                // Use SLT date for consistent date grouping (Pacific Time date, not UTC date)
-                var today = _sltTimeService.GetCurrentSLT().Date;
-                var now = DateTime.UtcNow;
                 
                 // Extract region coordinates from sim handle
                 var regionX = (uint)(simHandle >> 32);
@@ -204,7 +206,8 @@ namespace RadegastWeb.Services
                 // Update cache
                 _recentRecordings.AddOrUpdate(cacheKey, now, (key, oldValue) => now);
                 
-                _logger.LogDebug("Recorded visitor {AvatarId} in {RegionName}", avatarId, regionName);
+                _logger.LogInformation("Recorded visitor {AvatarId} ({AvatarName}) in {RegionName} at {SLTTime}", 
+                    avatarId, avatarName ?? "Unknown", regionName, sltNow.ToString("yyyy-MM-dd HH:mm:ss"));
             }
             catch (Exception ex)
             {
