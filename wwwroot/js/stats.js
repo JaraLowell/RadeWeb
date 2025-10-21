@@ -163,7 +163,7 @@ class StatsManager {
         // Sort by date and prepare chart data
         const sortedDates = Array.from(dateMap.keys()).sort();
         
-        // Fix the SLT date labeling issue
+        // Use the SLT date labels provided by the backend (which should now be correct)
         const correctedLabels = [];
         const correctedVisitorsData = [];
         const correctedTrueUniqueData = [];
@@ -171,15 +171,6 @@ class StatsManager {
         sortedDates.forEach(date => {
             const dateData = dateMap.get(date);
             let label = dateData.sltDate || this.formatDate(date);
-            
-            // Fix mislabeling: if this is today's UTC date with visitors, label it as today's SLT date
-            if (date === '2025-10-20' && dateData.visitors > 0) {
-                label = 'Oct 20, 2025';
-            }
-            // Skip duplicate entries for today with 0 visitors (backend timezone issue)
-            else if (date === '2025-10-21' && dateData.visitors === 0 && dateData.sltDate === 'Oct 20, 2025') {
-                return; // Skip this duplicate entry
-            }
             
             correctedLabels.push(label);
             correctedVisitorsData.push(dateData.visitors);

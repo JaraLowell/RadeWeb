@@ -218,48 +218,25 @@ namespace RadegastWeb.Services
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
-                // TEMPORARY FIX: Handle mixed UTC/SLT data in database
-                // During transition period, we need to query both:
-                // 1. The expected UTC-converted date range (for old UTC-stored data)
-                // 2. The raw SLT date range (for new SLT-stored data)
-                
+                // Since we now store dates in SLT format, convert input UTC dates to SLT for querying
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
-                var currentSLT = _sltTimeService.GetCurrentSLT().Date;
+                var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
+                var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
                 
-                // Calculate the raw SLT date range (for new data stored with SLT dates)
-                var rawSLTStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
-                var rawSLTEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
+                _logger.LogDebug("Querying visitor stats for region {RegionName}: SLT range {SLTStart} to {SLTEnd}",
+                    regionName, sltStartDate, sltEndDate);
                 
-                // Expand query range to include both possible date ranges
-                var expandedStartDate = new DateTime[] { startDate.Date, rawSLTStartDate }.Min();
-                var expandedEndDate = new DateTime[] { endDate.Date, rawSLTEndDate }.Max();
-                
-                _logger.LogDebug("Querying visitor stats for region {RegionName}: " +
-                    "Original range: {OriginalStart} to {OriginalEnd}, " +
-                    "SLT range: {SLTStart} to {SLTEnd}, " +
-                    "Expanded range: {ExpandedStart} to {ExpandedEnd}",
-                    regionName, startDate.Date, endDate.Date, rawSLTStartDate, rawSLTEndDate, expandedStartDate, expandedEndDate);
-                
-                // Get all data for the expanded period to catch both UTC and SLT stored data
+                // Query using SLT dates (since we store data in SLT format now)
                 var rawStats = await context.VisitorStats
                     .Where(vs => vs.RegionName == regionName && 
-                        vs.VisitDate >= expandedStartDate && 
-                        vs.VisitDate <= expandedEndDate)
+                        vs.VisitDate >= sltStartDate && 
+                        vs.VisitDate <= sltEndDate)
                     .ToListAsync();
                 
-                // Filter the results to only include data that falls within either:
-                // 1. The original UTC date range (for old UTC-stored data)
-                // 2. The SLT date range (for new SLT-stored data)
-                rawStats = rawStats.Where(vs => 
-                    (vs.VisitDate >= startDate.Date && vs.VisitDate <= endDate.Date) || // Original UTC range
-                    (vs.VisitDate >= rawSLTStartDate && vs.VisitDate <= rawSLTEndDate)   // SLT range
-                ).ToList();
-                
                 // Get ALL historical data before the start date to determine truly new vs returning visitors
-                // This ensures we properly identify visitors who have EVER been seen before
                 var allHistoricalVisitors = await context.VisitorStats
                     .Where(vs => vs.RegionName == regionName && 
-                        vs.VisitDate < expandedStartDate) // Use expanded start to catch all historical data
+                        vs.VisitDate < sltStartDate)
                     .Select(vs => vs.AvatarId)
                     .Distinct()
                     .ToListAsync();
@@ -269,12 +246,9 @@ namespace RadegastWeb.Services
                 // Track which visitors we've already seen in the current period to avoid double-counting
                 var seenInPeriod = new HashSet<string>();
                 
-                // SIMPLIFIED FIX: Don't use complex normalization - just expand the query range 
-                // and let the dates group naturally. The SLT date labeling in the API response 
-                // will handle the timezone display correctly.
-                
+                // Process the stats grouped by date
                 var stats = rawStats
-                    .GroupBy(vs => vs.VisitDate.Date) // Group by the actual date in database
+                    .GroupBy(vs => vs.VisitDate.Date) // Group by the actual date in database (already SLT)
                     .OrderBy(g => g.Key) // Important: process dates in order
                     .Select(g => 
                     {
@@ -290,19 +264,17 @@ namespace RadegastWeb.Services
                         
                         return new DailyVisitorStatsDto
                         {
-                            Date = g.Key, // Use the actual database date
+                            Date = g.Key, // Use the actual database date (already SLT)
                             RegionName = regionName,
                             UniqueVisitors = dailyVisitors.Count, // Total unique visitors this day
                             TrueUniqueVisitors = trueUniqueToday, // New visitors never seen before
                             TotalVisits = g.Count(), // Total visit records (could be multiple per avatar if they teleported in/out)
-                            SLTDate = _sltTimeService.FormatSLTWithDate(g.Key, "MMM dd, yyyy") // Convert to SLT for display
+                            SLTDate = _sltTimeService.FormatSLTWithDate(g.Key, "MMM dd, yyyy") // Format SLT date for display
                         };
                     })
                     .ToList();
                 
                 // Fill in missing dates with zero counts using the SLT date range
-                var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
-                var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
                 var allDates = Enumerable.Range(0, (int)(sltEndDate - sltStartDate).TotalDays + 1)
                     .Select(offset => sltStartDate.AddDays(offset))
                     .ToList();
@@ -360,15 +332,13 @@ namespace RadegastWeb.Services
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
-                // TEMPORARY FIX: Use expanded date range to find all regions with data
+                // Convert UTC input dates to SLT for database querying
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
-                var rawSLTStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
-                var rawSLTEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
-                var expandedStartDate = new DateTime[] { startDate.Date, rawSLTStartDate }.Min();
-                var expandedEndDate = new DateTime[] { endDate.Date, rawSLTEndDate }.Max();
+                var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
+                var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
                 
                 var regions = await context.VisitorStats
-                    .Where(vs => vs.VisitDate >= expandedStartDate && vs.VisitDate <= expandedEndDate)
+                    .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate)
                     .Select(vs => vs.RegionName)
                     .Distinct()
                     .ToListAsync();
@@ -395,8 +365,13 @@ namespace RadegastWeb.Services
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
+                // Convert UTC input dates to SLT for database querying
+                var sltTimeZone = _sltTimeService.GetSLTTimeZone();
+                var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
+                var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
+                
                 var query = context.VisitorStats
-                    .Where(vs => vs.VisitDate >= startDate.Date && vs.VisitDate <= endDate.Date);
+                    .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate);
                 
                 if (!string.IsNullOrEmpty(regionName))
                 {
@@ -405,7 +380,7 @@ namespace RadegastWeb.Services
                 
                 // Get ALL historical data before the start date to determine truly new vs returning visitors
                 // For "true unique" determination, we look back 60 days from the start date
-                var trueUniqueThresholdDate = startDate.Date.AddDays(-60);
+                var trueUniqueThresholdDate = sltStartDate.AddDays(-60);
                 var historicalVisitors = await context.VisitorStats
                     .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
                         vs.VisitDate < trueUniqueThresholdDate)
@@ -421,7 +396,7 @@ namespace RadegastWeb.Services
                 // Get historical data to determine visitor types (look back from start date for visitor classification)
                 var historicalData = await context.VisitorStats
                     .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
-                        vs.VisitDate < startDate.Date)
+                        vs.VisitDate < sltStartDate)
                     .ToListAsync();
                 
                 var lastVisitDates = historicalData
@@ -444,7 +419,7 @@ namespace RadegastWeb.Services
                         }
                         else if (lastVisitDates.ContainsKey(g.Key))
                         {
-                            var daysSinceLastVisit = (startDate.Date - lastVisitDates[g.Key]).TotalDays;
+                            var daysSinceLastVisit = (sltStartDate - lastVisitDates[g.Key]).TotalDays;
                             visitorType = daysSinceLastVisit > 30 ? VisitorType.Returning : VisitorType.Regular;
                         }
                         else
@@ -826,8 +801,13 @@ namespace RadegastWeb.Services
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
+                // Convert UTC input dates to SLT for database querying
+                var sltTimeZone = _sltTimeService.GetSLTTimeZone();
+                var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
+                var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
+                
                 var query = context.VisitorStats
-                    .Where(vs => vs.VisitDate >= startDate.Date && vs.VisitDate <= endDate.Date);
+                    .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate);
                 
                 if (!string.IsNullOrEmpty(regionName))
                 {
@@ -838,7 +818,7 @@ namespace RadegastWeb.Services
                 var visitorRecords = await query.ToListAsync();
                 
                 _logger.LogDebug("Found {Count} visitor records for hourly analysis from {StartDate} to {EndDate} for region {RegionName}", 
-                    visitorRecords.Count, startDate, endDate, regionName ?? "All");
+                    visitorRecords.Count, sltStartDate, sltEndDate, regionName ?? "All");
                 
                 // Convert UTC timestamps to SLT (Pacific Time) and group by hour
                 TimeZoneInfo timeZone;

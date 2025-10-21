@@ -66,10 +66,20 @@ namespace RadegastWeb.Services
             return sltTime.ToString(format);
         }
         
-        public string FormatSLTWithDate(DateTime utcTime, string format = "MMM dd, HH:mm:ss")
+        public string FormatSLTWithDate(DateTime dateTime, string format = "MMM dd, HH:mm:ss")
         {
-            var sltTime = ConvertToSLT(utcTime);
-            return sltTime.ToString(format);
+            // Check if the input is already a date-only value (likely already in SLT)
+            if (dateTime.TimeOfDay == TimeSpan.Zero)
+            {
+                // This is likely already an SLT date, don't convert
+                return dateTime.ToString(format);
+            }
+            else
+            {
+                // This has a time component, treat as UTC and convert
+                var sltTime = ConvertToSLT(dateTime);
+                return sltTime.ToString(format);
+            }
         }
         
         public TimeZoneInfo GetSLTTimeZone()

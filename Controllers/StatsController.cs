@@ -224,8 +224,9 @@ namespace RadegastWeb.Controllers
         {
             try
             {
-                var currentSLT = _sltTimeService.GetCurrentSLT().Date;
-                var endDate = currentSLT;
+                var currentSLT = _sltTimeService.GetCurrentSLT();
+                var currentSLTDate = currentSLT.Date;
+                var endDate = currentSLTDate;
                 var startDateToday = endDate;
                 
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
@@ -234,15 +235,20 @@ namespace RadegastWeb.Controllers
                 
                 return Ok(new {
                     CurrentUTC = DateTime.UtcNow,
-                    CurrentSLT = _sltTimeService.GetCurrentSLT(),
-                    CurrentSLTDate = currentSLT,
+                    CurrentSLT = currentSLT,
+                    CurrentSLTDate = currentSLTDate,
                     StartDateToday = startDateToday,
                     EndDate = endDate,
                     UTCStartDateToday = utcStartDateToday,
                     UTCEndDate = utcEndDate,
                     SLTTimeZone = sltTimeZone.Id,
                     SLTFormattedStart = _sltTimeService.FormatSLTWithDate(utcStartDateToday, "MMM dd, yyyy HH:mm:ss"),
-                    SLTFormattedEnd = _sltTimeService.FormatSLTWithDate(utcEndDate, "MMM dd, yyyy HH:mm:ss")
+                    SLTFormattedEnd = _sltTimeService.FormatSLTWithDate(utcEndDate, "MMM dd, yyyy HH:mm:ss"),
+                    
+                    // Show what dates we would store vs query for
+                    WhatWeStoreForToday = _sltTimeService.GetCurrentSLT().Date,
+                    WhatWeQueryForToday = TimeZoneInfo.ConvertTimeFromUtc(utcStartDateToday, sltTimeZone).Date,
+                    DoTheyMatch = _sltTimeService.GetCurrentSLT().Date == TimeZoneInfo.ConvertTimeFromUtc(utcStartDateToday, sltTimeZone).Date
                 });
             }
             catch (Exception ex)
