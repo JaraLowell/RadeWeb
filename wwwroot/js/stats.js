@@ -163,12 +163,16 @@ class StatsManager {
         // Sort by date and prepare chart data
         const sortedDates = Array.from(dateMap.keys()).sort();
         
+        // Filter out future dates (shouldn't happen with backend fix, but extra safety)
+        const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' }); // SLT date in YYYY-MM-DD format
+        const validDates = sortedDates.filter(date => date <= today);
+        
         // Use the SLT date labels provided by the backend (which should now be correct)
         const correctedLabels = [];
         const correctedVisitorsData = [];
         const correctedTrueUniqueData = [];
         
-        sortedDates.forEach(date => {
+        validDates.forEach(date => {
             const dateData = dateMap.get(date);
             let label = dateData.sltDate || this.formatDate(date);
             
@@ -176,7 +180,7 @@ class StatsManager {
             correctedVisitorsData.push(dateData.visitors);
             correctedTrueUniqueData.push(dateData.trueUnique);
         });
-        const totalVisitsData = sortedDates.map(date => dateMap.get(date).visits);     // Total visits (including repeat visits)
+        const totalVisitsData = validDates.map(date => dateMap.get(date).visits);     // Total visits (including repeat visits)
 
         this.charts.dailyVisitors = new Chart(ctx, {
             type: 'line',

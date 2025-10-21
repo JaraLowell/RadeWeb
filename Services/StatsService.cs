@@ -275,7 +275,10 @@ namespace RadegastWeb.Services
                     .ToList();
                 
                 // Fill in missing dates with zero counts using the SLT date range
-                var allDates = Enumerable.Range(0, (int)(sltEndDate - sltStartDate).TotalDays + 1)
+                // But don't include future dates - only go up to today's SLT date
+                var todaySLT = _sltTimeService.GetCurrentSLT().Date;
+                var actualEndDate = sltEndDate > todaySLT ? todaySLT : sltEndDate;
+                var allDates = Enumerable.Range(0, (int)(actualEndDate - sltStartDate).TotalDays + 1)
                     .Select(offset => sltStartDate.AddDays(offset))
                     .ToList();
                 
