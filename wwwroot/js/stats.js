@@ -329,17 +329,16 @@ class StatsManager {
             const firstSeen = this.formatDateTime(visitor.FirstSeen || visitor.firstSeen);
             const lastSeen = this.formatDateTime(visitor.LastSeen || visitor.lastSeen);
             
-            // Add visual indicator for true unique visitors (new in 60 days)
-            // Check if this visitor is truly new (not seen in past 60 days)
-            const isTrueUnique = visitor.isTrueUnique === true || visitor.IsTrueUnique === true;
+            // Add visual indicator for new visitors only
+            const visitCount = visitor.VisitCount || visitor.visitCount || 0;
             
-            const uniqueBadge = isTrueUnique ? 
-                '<small class="badge bg-success ms-1" title="New visitor (not seen in past 60 days)">NEW</small>' : 
-                '<small class="badge bg-secondary ms-1" title="Returning visitor (seen in past 60 days)">RET</small>';
+            // Show NEW badge only for first-time visitors (visit count 1 or less)
+            const uniqueBadge = visitCount <= 1 ? 
+                '<small class="badge bg-success ms-1" title="New visitor (first visit)">NEW</small>' : 
+                '';
             
             const avatarId = visitor.AvatarId || visitor.avatarId || 'unknown';
             const regionsVisited = visitor.RegionsVisited || visitor.regionsVisited || [];
-            const visitCount = visitor.VisitCount || visitor.visitCount || 0;
             
             return `
                 <tr>
