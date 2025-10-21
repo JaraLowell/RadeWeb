@@ -325,8 +325,9 @@ class StatsManager {
             // Priority: displayName > avatarName > fallback to truncated avatar ID
             const displayName = this.getBestAvailableName(visitor);
             
-            const firstSeen = this.formatDateTime(visitor.FirstSeen || visitor.firstSeen);
-            const lastSeen = this.formatDateTime(visitor.LastSeen || visitor.lastSeen);
+            // Use pre-formatted SLT timestamps if available, otherwise format the raw UTC timestamps
+            const firstSeen = visitor.SLTFirstSeen || visitor.sltFirstSeen || this.formatDateTime(visitor.FirstSeen || visitor.firstSeen);
+            const lastSeen = visitor.SLTLastSeen || visitor.sltLastSeen || this.formatDateTime(visitor.LastSeen || visitor.lastSeen);
             
             // Add visual indicator for new visitors only
             const visitCount = visitor.VisitCount || visitor.visitCount || 0;
