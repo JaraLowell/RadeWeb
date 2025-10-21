@@ -418,7 +418,14 @@
 
     <!-- Footer -->
     <footer style="background-color: #4a73a9; color: white; text-align: right; padding: 5px; margin-top: auto;">
-        <p class="mb-0">Created by <a target="_blank" rel="noopener noreferrer" href="https://github.com/JaraLowell/RadeWeb">Jara Lowell</a> and <a target="_blank" rel="noopener noreferrer" href="https://github.com/cinderblocks/radegast">Radegast Metaverse Client</a>&nbsp;&nbsp;</p>
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <small><i class="fas fa-clock me-1"></i>SL Time: <span id="slTime">--:--</span></small>
+            </div>
+            <div>
+                <p class="mb-0">Created by <a target="_blank" rel="noopener noreferrer" href="https://github.com/JaraLowell/RadeWeb">Jara Lowell</a> and <a target="_blank" rel="noopener noreferrer" href="https://github.com/cinderblocks/radegast">Radegast Metaverse Client</a>&nbsp;&nbsp;</p>
+            </div>
+        </div>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
@@ -501,6 +508,37 @@
             if (chatInterface) {
                 observer.observe(chatInterface, { attributes: true });
             }
+        });
+
+        // SL Time Display (Pacific Time)
+        function updateSLTime() {
+            try {
+                const now = new Date();
+                // Convert to Pacific Time using proper timezone handling
+                const slTime = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/Los_Angeles',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                }).format(now);
+                
+                const slTimeElement = document.getElementById('slTime');
+                if (slTimeElement) {
+                    slTimeElement.textContent = slTime;
+                }
+            } catch (error) {
+                console.error('Error updating SL time:', error);
+                const slTimeElement = document.getElementById('slTime');
+                if (slTimeElement) {
+                    slTimeElement.textContent = '--:--';
+                }
+            }
+        }
+
+        // Update SL time immediately and then every minute
+        document.addEventListener('DOMContentLoaded', function() {
+            updateSLTime();
+            setInterval(updateSLTime, 60000); // Update every minute
         });
     </script>
     <script src="/js/auth.js"></script>
