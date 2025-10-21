@@ -39,6 +39,11 @@ RadegastWeb is a modern, web-based Second Life client inspired by the original R
 ### Prerequisites
 
 - .NET 8.0 SDK
+  For linux
+  ```powershell
+  apt-get install -y dotnet-sdk-8.0
+  ```
+  see https://learn.microsoft.com/en-us/dotnet/core/install/linux-ubuntu-install
 - Visual Studio Code (recommended)
 
 ### Running the Application

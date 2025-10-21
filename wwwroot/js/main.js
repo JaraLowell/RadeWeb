@@ -1930,7 +1930,7 @@ class RadegastWebClient {
         messageDiv.innerHTML = `
             <div class="chat-message-layout d-flex">
                 <div class="chat-message-time">
-                    <span class="text-muted small" title="Second Life Time (SLT)">${timestamp} SLT</span>
+                    <span class="text-muted small" title="Second Life Time (SLT)">${timestamp}</span>
                 </div>
                 <div class="chat-message-right">
                     <div class="chat-message-header">
