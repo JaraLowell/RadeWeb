@@ -25,12 +25,17 @@
                     <span class="navbar-toggler-icon"></span>
                 </button>
                 <div class="collapse navbar-collapse" id="navbarNav">
-                    <div class="navbar-nav">
-                        <div class="nav-item">
+                    <div class="navbar-nav ms-auto">
+                        <div class="nav-item me-3">
                             <span class="navbar-text" id="refreshStatus">
                                 <span class="text-muted">Last Updated: </span>
                                 <span id="lastUpdated">Never</span>
                             </span>
+                        </div>
+                        <div class="nav-item">
+                            <button class="btn btn-outline-light btn-sm" onclick="loadStatistics()" title="Refresh statistics">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
                         </div>
                     </div>
                 </div>

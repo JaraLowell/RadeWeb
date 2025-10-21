@@ -344,6 +344,9 @@ namespace RadegastWeb.Controllers
                     statsToday = await _statsService.GetAllRegionStatsAsync(utcStartDateToday, utcEndDate);
                 }
 
+                // Get recent visitors for the past 7 days (for Recent Visitors section)
+                var recentVisitors = await _statsService.GetUniqueVisitorsAsync(utcStartDate7, utcEndDate, region);
+
                 var totalVisitors30Days = stats30Days.Sum(s => s.TotalUniqueVisitors);
                 var totalVisitors7Days = stats7Days.Sum(s => s.TotalUniqueVisitors);
                 var totalVisitorsToday = statsToday.Sum(s => s.TotalUniqueVisitors);
@@ -380,6 +383,8 @@ namespace RadegastWeb.Controllers
                         })
                         .OrderBy(d => d.Date)
                         .ToList(),
+                    // Include recent visitors data for the Recent Visitors table
+                    RecentVisitors = recentVisitors,
                     // Add SLT context information - show the range that was actually requested for today's stats
                     SLTDateRange = new
                     {

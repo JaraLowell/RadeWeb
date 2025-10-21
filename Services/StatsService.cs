@@ -90,7 +90,7 @@ namespace RadegastWeb.Services
         
         // Cache for recent visitor recordings to prevent too frequent database writes
         private readonly ConcurrentDictionary<string, DateTime> _recentRecordings = new();
-        private readonly TimeSpan _recordingCooldown = TimeSpan.FromMinutes(2); // Don't record same avatar twice within 2 minutes (reduced for more frequent updates)
+        private readonly TimeSpan _recordingCooldown = TimeSpan.FromSeconds(30); // Don't record same avatar twice within 30 seconds (much more responsive)
         
         public StatsService(IDbContextFactory<RadegastDbContext> dbContextFactory, ILogger<StatsService> logger, IGlobalDisplayNameCache globalDisplayNameCache, ISLTimeService sltTimeService)
         {
@@ -203,8 +203,20 @@ namespace RadegastWeb.Services
                 
                 await context.SaveChangesAsync();
                 
-                // Update cache
+                // Update cache and clean up old entries periodically
                 _recentRecordings.AddOrUpdate(cacheKey, now, (key, oldValue) => now);
+                
+                // Clean up cache entries older than 24 hours to prevent memory bloat (run occasionally)
+                if (_recentRecordings.Count > 1000 && new Random().Next(100) == 0) // 1% chance on each call
+                {
+                    var cutoff = DateTime.UtcNow.AddHours(-24);
+                    var keysToRemove = _recentRecordings.Where(kvp => kvp.Value < cutoff).Select(kvp => kvp.Key).ToList();
+                    foreach (var key in keysToRemove)
+                    {
+                        _recentRecordings.TryRemove(key, out _);
+                    }
+                    _logger.LogDebug("Cleaned up {Count} old cache entries", keysToRemove.Count);
+                }
                 
                 _logger.LogInformation("Recorded visitor {AvatarId} ({AvatarName}) in {RegionName} at {SLTTime}", 
                     avatarId, avatarName ?? "Unknown", regionName, sltNow.ToString("yyyy-MM-dd HH:mm:ss"));

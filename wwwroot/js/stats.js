@@ -13,8 +13,8 @@ class StatsManager {
         this.initializeEventListeners();
         this.loadStatistics();
         
-        // Auto-refresh every 5 minutes
-        setInterval(() => this.loadStatistics(), 5 * 60 * 1000);
+        // Auto-refresh every 2 minutes for more responsive updates
+        setInterval(() => this.loadStatistics(), 2 * 60 * 1000);
     }
 
     initializeEventListeners() {
@@ -61,9 +61,8 @@ class StatsManager {
             const visitorStats = await this.fetchAPI(`/api/stats/visitors?${params}`);
             this.updateCharts(visitorStats);
 
-            // Load unique visitors
-            const uniqueVisitors = await this.fetchAPI(`/api/stats/visitors/unique?${params}`);
-            this.updateRecentVisitors(uniqueVisitors);
+            // Update recent visitors from dashboard data (more efficient and consistent)
+            this.updateRecentVisitors(dashboardData.RecentVisitors || dashboardData.recentVisitors || []);
 
             // Load monitored regions for filter
             const regions = await this.fetchAPI('/api/stats/regions/monitored');
