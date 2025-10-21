@@ -16,7 +16,7 @@ namespace RadegastWeb.Services
         private IRegionInfoService? _regionInfoService;
         private IGroupService? _groupService;
         private volatile bool _isShuttingDown = false;
-        private DateTime _lastDayCheck = DateTime.UtcNow.Date;
+        private DateTime _lastDayCheck = DateTime.MinValue; // Will be initialized properly in ExecuteAsync
 
         public RadegastBackgroundService(
             IServiceProvider serviceProvider,
@@ -49,6 +49,10 @@ namespace RadegastWeb.Services
                 _groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
                 _groupService.GroupsUpdated += OnGroupsUpdated;
 
+                // Initialize _lastDayCheck with current SLT date
+                var sltTimeService = scope.ServiceProvider.GetRequiredService<ISLTimeService>();
+                _lastDayCheck = sltTimeService.GetCurrentSLT().Date;
+                
                 var lastPeriodicRecording = DateTime.UtcNow;
 
                 while (!stoppingToken.IsCancellationRequested && !_isShuttingDown)
@@ -523,15 +527,18 @@ namespace RadegastWeb.Services
         {
             try
             {
-                var currentDay = DateTime.UtcNow.Date;
+                // Use SLT date for day boundary detection to match how stats are stored
+                using var timeScope = _serviceProvider.CreateScope();
+                var sltTimeService = timeScope.ServiceProvider.GetRequiredService<ISLTimeService>();
+                var currentSLTDay = sltTimeService.GetCurrentSLT().Date;
                 
-                // Check if we've crossed into a new day
-                if (currentDay > _lastDayCheck)
+                // Check if we've crossed into a new SLT day
+                if (currentSLTDay > _lastDayCheck)
                 {
-                    _logger.LogInformation("Day boundary detected: {PreviousDay} -> {CurrentDay}, triggering bulk avatar recording", 
-                        _lastDayCheck, currentDay);
+                    _logger.LogInformation("SLT day boundary detected: {PreviousDay} -> {CurrentDay} (SLT), triggering bulk avatar recording", 
+                        _lastDayCheck, currentSLTDay);
                     
-                    _lastDayCheck = currentDay;
+                    _lastDayCheck = currentSLTDay;
                     
                     // Trigger bulk recording across all connected accounts
                     await TriggerPeriodicAvatarRecordingAsync(cancellationToken);
