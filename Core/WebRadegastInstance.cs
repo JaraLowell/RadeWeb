@@ -2949,17 +2949,13 @@ namespace RadegastWeb.Core
             var regionName = _client.Network.CurrentSim.Name;
             var simHandle = _client.Network.CurrentSim.Handle;
             
-            // Update the account's current region for deduplication
+            // Update the account's current region for tracking purposes
             _statsService.SetAccountRegion(currentAccountId, regionName, simHandle);
             
-            // Check if another account is already monitoring this region to avoid duplicates
-            if (_statsService.IsRegionAlreadyMonitored(regionName, currentAccountId))
-            {
-                _logger.LogDebug("Region {RegionName} already being monitored by another account, skipping visitor recording", regionName);
-                return;
-            }
-
-            // Record the visitor
+            // FIXED: Always record visitor stats regardless of other accounts in the same region
+            // The StatsService already handles deduplication through its cooldown mechanism
+            // and database-level uniqueness constraints. Multiple accounts in the same region
+            // should all contribute to visitor tracking to ensure comprehensive coverage.
             await _statsService.RecordVisitorAsync(avatarId, regionName, simHandle, avatarName, displayName);
         }
 
@@ -2976,13 +2972,10 @@ namespace RadegastWeb.Core
             var regionName = _client.Network.CurrentSim.Name;
             var simHandle = _client.Network.CurrentSim.Handle;
             
-            // Check if another account is already monitoring this region to avoid duplicates
-            if (_statsService.IsRegionAlreadyMonitored(regionName, currentAccountId))
-            {
-                _logger.LogDebug("Region {RegionName} already being monitored by another account, skipping bulk visitor recording", regionName);
-                return;
-            }
-
+            // FIXED: Always record present avatars regardless of other accounts in the same region
+            // The StatsService already handles deduplication through its cooldown mechanism
+            // Multiple accounts in the same region should all contribute to ensure complete coverage
+            
             var recordedCount = 0;
 
             // Record all detailed avatars

@@ -53,7 +53,9 @@ namespace RadegastWeb.Services
         void RemoveAccountRegion(Guid accountId);
         
         /// <summary>
-        /// Check if any other account is already monitoring this region
+        /// Check if any other account is already monitoring this region (for informational purposes)
+        /// Note: This should not be used to skip visitor recording as multiple accounts in the same
+        /// region should all contribute to visitor statistics for comprehensive coverage.
         /// </summary>
         bool IsRegionAlreadyMonitored(string regionName, Guid excludeAccountId);
         
@@ -116,6 +118,9 @@ namespace RadegastWeb.Services
         
         public bool IsRegionAlreadyMonitored(string regionName, Guid excludeAccountId)
         {
+            // NOTE: This method is for informational purposes only and should NOT be used to skip
+            // visitor recording. Multiple accounts in the same region should all record visitor stats
+            // to ensure comprehensive coverage. The deduplication is handled at the database level.
             return _accountRegions.Any(kvp => kvp.Key != excludeAccountId && 
                 kvp.Value.RegionName.Equals(regionName, StringComparison.OrdinalIgnoreCase));
         }
