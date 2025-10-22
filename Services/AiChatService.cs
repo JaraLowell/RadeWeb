@@ -277,9 +277,6 @@ namespace RadegastWeb.Services
                     _configLoadFailed = false;
                     _configFileNotFound = false;
                 }
-
-                _logger.LogInformation("AI bot configuration loaded successfully. Enabled: {Enabled}, Avatar: {AvatarName}", 
-                    config?.Enabled, config?.AvatarName);
             }
             catch (Exception ex)
             {

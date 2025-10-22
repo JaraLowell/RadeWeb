@@ -570,12 +570,6 @@ namespace RadegastWeb.Services
                         _ => "Online"
                     };
                     
-                    if (newStatus != status)
-                    {
-                        _logger.LogInformation("Account {AccountId}: status updated from '{OldStatus}' to '{NewStatus}' based on presence", 
-                            account.Id, status, newStatus);
-                    }
-                    
                     status = newStatus;
                 }
 
