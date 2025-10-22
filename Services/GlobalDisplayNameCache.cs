@@ -375,10 +375,12 @@ namespace RadegastWeb.Services
                 
                 // Only update with legacy name if:
                 // 1. We don't have an existing name, OR
-                // 2. The existing name is invalid/placeholder (Loading..., ???, etc.)
+                // 2. The existing name is invalid/placeholder (Loading..., ???, etc.), OR
+                // 3. The existing display name equals the legacy name (no custom display name)
                 // 
-                // NEVER overwrite a valid display name with a legacy name
-                if (existingName != null && isExistingNameValid)
+                // NEVER overwrite a valid custom display name with a legacy name
+                if (existingName != null && isExistingNameValid && 
+                    !existingName.DisplayNameValue.Equals(fullName, StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogDebug("PROTECTED: Skipping legacy name update for {AvatarId}: existing valid display name '{ExistingName}' (custom={IsCustom}), not overwriting with legacy name '{LegacyName}'", 
                         avatarId, existingName.DisplayNameValue, !existingName.IsDefaultDisplayName, fullName);
@@ -624,10 +626,12 @@ namespace RadegastWeb.Services
                         
                         // Only update if:
                         // 1. New name is valid and existing is invalid, OR
-                        // 2. Both names are valid but different (actual update)
+                        // 2. Both names are valid but different (actual update), AND
+                        // 3. Don't overwrite a custom display name with a default/legacy name unless the existing is invalid
                         bool shouldUpdate = (isNewNameValid && !isExistingNameValid) ||
                                           (isNewNameValid && isExistingNameValid && 
-                                           !existing.DisplayNameValue.Equals(name.DisplayNameValue, StringComparison.Ordinal));
+                                           !existing.DisplayNameValue.Equals(name.DisplayNameValue, StringComparison.Ordinal) &&
+                                           !(name.IsDefaultDisplayName && !existing.IsDefaultDisplayName)); // Don't overwrite custom with default
                         
                         if (shouldUpdate)
                         {
@@ -646,6 +650,10 @@ namespace RadegastWeb.Services
                             // Skip this update but still update LastUpdated to track processing
                             existing.LastUpdated = name.LastUpdated;
                             existing.CachedAt = DateTime.UtcNow;
+                            
+                            _logger.LogDebug("PROTECTED: Skipping database save for {AvatarId}: new='{NewName}' (valid={NewValid}, default={NewDefault}), existing='{ExistingName}' (valid={ExistingValid}, default={ExistingDefault})", 
+                                name.AvatarId, name.DisplayNameValue, isNewNameValid, name.IsDefaultDisplayName,
+                                existing.DisplayNameValue, isExistingNameValid, existing.IsDefaultDisplayName);
                         }
                     }
                     else

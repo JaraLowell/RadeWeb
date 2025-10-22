@@ -42,9 +42,10 @@ namespace RadegastWeb.Services
             return true;
         }
 
-        public Task<bool> UpdateLegacyNamesAsync(Guid accountId, Dictionary<UUID, string> legacyNames)
+        public async Task<bool> UpdateLegacyNamesAsync(Guid accountId, Dictionary<UUID, string> legacyNames)
         {
-            return Task.FromResult(true); // Unified service handles this directly
+            await _unifiedService.UpdateLegacyNamesAsync(legacyNames);
+            return true;
         }
 
         public Task CleanExpiredCacheAsync(Guid accountId)

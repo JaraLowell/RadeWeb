@@ -366,16 +366,35 @@ namespace RadegastWeb.Services
             if (existing == null)
                 return true;
 
-            // Don't overwrite valid display names with invalid ones
-            if (!string.IsNullOrEmpty(existing.DisplayNameValue) && 
-                existing.DisplayNameValue != FallbackDisplayName &&
-                (string.IsNullOrEmpty(newName.DisplayNameValue) || newName.DisplayNameValue == FallbackDisplayName))
+            // Check if the new display name is valid (not blank, null, or "Loading...")
+            var isNewNameValid = !IsInvalidNameValue(newName.DisplayNameValue);
+            var isExistingNameValid = !IsInvalidNameValue(existing.DisplayNameValue);
+
+            // Only update if:
+            // 1. The new name is valid and the existing name is invalid, OR  
+            // 2. Both names are valid but the new one is different (an actual update), AND
+            // 3. Don't overwrite a custom display name with a default/legacy name unless the existing is invalid
+            bool shouldUpdate = (isNewNameValid && !isExistingNameValid) ||
+                               (isNewNameValid && isExistingNameValid && 
+                                !existing.DisplayNameValue.Equals(newName.DisplayNameValue, StringComparison.Ordinal) &&
+                                !(newName.IsDefaultDisplayName && !existing.IsDefaultDisplayName)); // Don't overwrite custom with default
+            
+            if (!shouldUpdate)
             {
-                return false;
+                _logger.LogDebug("PROTECTED: Skipping display name update for {AvatarId}: new='{NewName}' (valid={NewValid}, default={NewDefault}), existing='{ExistingName}' (valid={ExistingValid}, default={ExistingDefault})", 
+                    newName.AvatarId, newName.DisplayNameValue, isNewNameValid, newName.IsDefaultDisplayName,
+                    existing.DisplayNameValue, isExistingNameValid, existing.IsDefaultDisplayName);
             }
 
-            // Accept if new data is newer or more complete
-            return newName.LastUpdated >= existing.LastUpdated;
+            return shouldUpdate;
+        }
+
+        private static bool IsInvalidNameValue(string? nameValue)
+        {
+            return string.IsNullOrWhiteSpace(nameValue) || 
+                   nameValue.Equals("Loading...", StringComparison.OrdinalIgnoreCase) ||
+                   nameValue.Equals("???", StringComparison.OrdinalIgnoreCase) ||
+                   nameValue.Equals("Unknown User", StringComparison.OrdinalIgnoreCase);
         }
 
         public Task UpdateDisplayNamesAsync(Dictionary<UUID, AgentDisplayName> displayNames)
@@ -403,15 +422,53 @@ namespace RadegastWeb.Services
             {
                 var avatarId = kvp.Key.ToString();
                 var legacyName = kvp.Value;
+                
+                // Skip invalid legacy names
+                if (IsInvalidNameValue(legacyName))
+                {
+                    continue;
+                }
+                
                 var parts = legacyName.Split(' ', 2);
-                var firstName = parts.Length > 0 ? parts[0] : "";
-                var lastName = parts.Length > 1 ? parts[1] : "";
+                if (parts.Length < 2)
+                {
+                    continue;
+                }
+                
+                var firstName = parts[0];
+                var lastName = parts[1];
+                var userName = lastName == "Resident" ? firstName.ToLower() : $"{firstName}.{lastName}".ToLower();
 
                 if (_globalNameCache.TryGetValue(avatarId, out var existing))
                 {
+                    // Check if we already have a valid display name for this avatar
+                    var isExistingNameValid = !IsInvalidNameValue(existing.DisplayNameValue);
+                    
+                    // Only update with legacy name if:
+                    // 1. The existing name is invalid/placeholder (Loading..., ???, etc.), OR
+                    // 2. The existing display name equals the legacy name (no custom display name)
+                    //
+                    // NEVER overwrite a valid custom display name with a legacy name
+                    if (isExistingNameValid && !existing.DisplayNameValue.Equals(legacyName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogDebug("PROTECTED: Skipping legacy name update for {AvatarId}: existing valid display name '{ExistingName}' (custom={IsCustom}), not overwriting with legacy name '{LegacyName}'", 
+                            avatarId, existing.DisplayNameValue, !existing.IsDefaultDisplayName, legacyName);
+                        continue;
+                    }
+                    
+                    // Update legacy name fields but preserve display name if it's custom
                     existing.LegacyFirstName = firstName;
                     existing.LegacyLastName = lastName;
                     existing.LastUpdated = DateTime.UtcNow;
+                    
+                    // Only update the display name value if it's currently invalid or equals the legacy name
+                    if (!isExistingNameValid || existing.DisplayNameValue.Equals(legacyName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        existing.DisplayNameValue = legacyName;
+                        existing.UserName = userName;
+                        existing.IsDefaultDisplayName = true;
+                    }
+                    
                     UpdateDisplayName(existing);
                 }
                 else
@@ -419,8 +476,11 @@ namespace RadegastWeb.Services
                     var displayName = new DisplayName
                     {
                         AvatarId = avatarId,
+                        DisplayNameValue = legacyName,
+                        UserName = userName,
                         LegacyFirstName = firstName,
                         LegacyLastName = lastName,
+                        IsDefaultDisplayName = true,
                         LastUpdated = DateTime.UtcNow
                     };
                     UpdateDisplayName(displayName);
