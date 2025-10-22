@@ -1294,7 +1294,7 @@ namespace RadegastWeb.Core
 
         private void Network_SimChanged(object? sender, SimChangedEventArgs e)
         {
-            AccountInfo.CurrentRegion = e.PreviousSimulator?.Name;
+            AccountInfo.CurrentRegion = _client.Network.CurrentSim?.Name;
             UpdateRegionInfo();
             _nearbyAvatars.Clear(); // Clear avatars from previous sim
             _proximityAlertedAvatars.Clear(); // Clear proximity tracking for new sim
