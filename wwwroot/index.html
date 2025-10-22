@@ -500,6 +500,7 @@
             const chatHeader = chatCard ? chatCard.querySelector('.card-header') : null;
             const chatTabs = document.getElementById('chatTabs');
             const chatInputArea = document.querySelector('.chat-input-area');
+            const chatMonitoring = document.getElementById('chatMonitoringIndicator');
             
             if (!chatInterface || chatInterface.classList.contains('d-none')) {
                 return; // Don't calculate if chat interface is hidden
@@ -514,18 +515,21 @@
             const chatHeaderHeight = chatHeader ? chatHeader.offsetHeight : 0;
             const chatTabsHeight = chatTabs ? chatTabs.offsetHeight : 0;
             const chatInputHeight = chatInputArea ? chatInputArea.offsetHeight : 0;
+            const chatMonitoringHeight = chatMonitoring ? chatMonitoring.offsetHeight : 0;
             
             // Add some padding/margin space (approximation)
-            const spacing = 95; // Account for margins, paddings, borders
+            const spacing = 60; // Account for margins, paddings, borders
             
-            // Calculate available height for chat messages
-            const availableHeight = viewportHeight - headerHeight - footerHeight - chatHeaderHeight - chatTabsHeight - chatInputHeight - spacing;
+            // Calculate available height for chat messages within the constrained layout
+            const maxContentHeight = viewportHeight - headerHeight - footerHeight - 40; // 40px for general spacing
+            const availableHeight = maxContentHeight - chatHeaderHeight - chatTabsHeight - chatInputHeight - chatMonitoringHeight - spacing;
             
             // Set the height for all chat message containers
             const chatMessages = document.querySelectorAll('.chat-messages');
             chatMessages.forEach(container => {
-                container.style.height = Math.max(200, availableHeight) + 'px';
-                container.style.maxHeight = Math.max(200, availableHeight) + 'px';
+                const finalHeight = Math.max(200, Math.min(availableHeight, 500)); // Min 200px, max 500px
+                container.style.height = finalHeight + 'px';
+                container.style.maxHeight = finalHeight + 'px';
             });
             
             console.log('Chat height calculated:', {
@@ -535,9 +539,11 @@
                 chatHeader: chatHeaderHeight,
                 chatTabs: chatTabsHeight,
                 chatInput: chatInputHeight,
+                monitoring: chatMonitoringHeight,
                 spacing: spacing,
+                maxContent: maxContentHeight,
                 available: availableHeight,
-                final: Math.max(200, availableHeight)
+                final: Math.max(200, Math.min(availableHeight, 500))
             });
         }
         

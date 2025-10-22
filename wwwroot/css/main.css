@@ -68,6 +68,7 @@
 
 html, body {
 	height: 100%;
+	overflow: hidden; /* Prevent body scroll */
 }
 
 body {
@@ -81,43 +82,78 @@ body {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
+	height: 100vh; /* Full viewport height */
+	overflow: hidden;
 }
+
 .content-row {
 	flex: 1;
 	display: flex;
+	min-height: 0; /* Allow flex items to shrink below their content size */
+	overflow: hidden;
 }
+
+/* Left sidebar - scrollable */
+.content-row .col-md-3:first-child {
+	display: flex;
+	flex-direction: column;
+	max-height: calc(100vh - 140px); /* Adjust for header and footer space */
+	overflow-y: auto;
+	overflow-x: hidden;
+}
+
+/* Middle column - chat area with fixed height */
 .chat-column {
 	display: flex;
 	flex-direction: column;
+	max-height: calc(100vh - 140px); /* Adjust for header and footer space */
+	overflow: hidden;
 }
+
+/* Right sidebar - scrollable */
+.content-row .col-md-3:last-child {
+	display: flex;
+	flex-direction: column;
+	max-height: calc(100vh - 140px); /* Adjust for header and footer space */
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding-bottom: 2rem; /* Extra space at bottom */
+}
+
 #chatInterface {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
+	min-height: 0;
 }
 #chatInterface .card {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
+	min-height: 0;
 }
 #chatInterface .card-body {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
+	min-height: 0;
 }
 #chatTabContent {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
+	min-height: 0;
 }
 .tab-pane {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
+	min-height: 0;
 }
 .chat-messages {
 	overflow-y: auto;
 	min-height: 200px;
+	flex: 1;
 }
 .chat-input-area {
 	flex-shrink: 0;
@@ -754,6 +790,54 @@ a {
     60% { transform: translateY(-3px); }
 }
 
+/* Footer positioning */
+footer {
+    flex-shrink: 0; /* Prevent footer from shrinking */
+    margin-top: auto;
+    position: relative;
+    z-index: 10;
+}
+
+/* Sidebar panel spacing */
+.content-row .col-md-3 .card {
+    margin-bottom: 1rem;
+}
+
+.content-row .col-md-3 .card:last-child {
+    margin-bottom: 0;
+}
+
+/* Ensure proper spacing in sidebar content */
+.content-row .col-md-3 {
+    padding-right: 15px;
+    padding-left: 15px;
+}
+
+/* Sidebar content padding adjustment */
+.content-row .col-md-3:first-child,
+.content-row .col-md-3:last-child {
+    padding-top: 0;
+    padding-bottom: 1rem;
+}
+
+/* Ensure sidebar cards don't exceed parent height */
+.content-row .col-md-3 .card {
+    max-width: 100%;
+    overflow: hidden;
+}
+
+/* Handle long content in sidebar cards */
+.content-row .col-md-3 .card .card-body {
+    overflow-y: auto;
+    word-wrap: break-word;
+}
+
+/* Prevent horizontal overflow in narrow sidebars */
+.content-row .col-md-3 * {
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .chat-messages {
@@ -772,9 +856,20 @@ a {
         margin-top: 1rem;
     }
     
-    /* Stack people panel below chat on mobile */
-    .col-md-3:last-child {
-        margin-top: 1rem;
+    /* Stack panels vertically on mobile and remove height constraints */
+    .content-row {
+        flex-direction: column;
+    }
+    
+    .content-row .col-md-3:first-child,
+    .content-row .col-md-3:last-child {
+        max-height: none;
+        overflow: visible;
+        margin-bottom: 1rem;
+    }
+    
+    .chat-column {
+        max-height: none;
     }
     
     .nav-tabs .nav-link {
@@ -783,26 +878,30 @@ a {
     }
 }
 
-/* Custom scrollbar for chat and people list */
+/* Custom scrollbar for chat, people list, and sidebar panels */
 .chat-messages::-webkit-scrollbar,
-.people-list::-webkit-scrollbar {
+.people-list::-webkit-scrollbar,
+.content-row .col-md-3::-webkit-scrollbar {
     width: 8px;
 }
 
 .chat-messages::-webkit-scrollbar-track,
-.people-list::-webkit-scrollbar-track {
+.people-list::-webkit-scrollbar-track,
+.content-row .col-md-3::-webkit-scrollbar-track {
     background: var(--scrollbar-track);
     border-radius: 4px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb,
-.people-list::-webkit-scrollbar-thumb {
+.people-list::-webkit-scrollbar-thumb,
+.content-row .col-md-3::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
     border-radius: 4px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb:hover,
-.people-list::-webkit-scrollbar-thumb:hover {
+.people-list::-webkit-scrollbar-thumb:hover,
+.content-row .col-md-3::-webkit-scrollbar-thumb:hover {
     background: var(--scrollbar-thumb-hover);
 }
 
