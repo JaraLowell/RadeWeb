@@ -1,3 +1,4 @@
+#if DEBUG
 using Microsoft.AspNetCore.Mvc;
 using OpenMetaverse;
 
@@ -205,3 +206,4 @@ namespace RadegastWeb.Controllers
         }
     }
 }
+#endif

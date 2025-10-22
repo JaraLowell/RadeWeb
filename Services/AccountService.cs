@@ -391,6 +391,15 @@ namespace RadegastWeb.Services
                             _logger.LogError(dbEx, "Failed to update account {AccountId} display name in database to '{DisplayName}'", id, newDisplayName);
                         }
                     };
+
+                    // Subscribe to region changes to persist them to the database
+                    instance.RegionChanged += async (sender, regionInfo) =>
+                    {
+                        if (regionInfo.AccountId == id)
+                        {
+                            await UpdateAccountRegionAsync(id, regionInfo.Name);
+                        }
+                    };
                     
                     // Update the database
                     try
@@ -913,6 +922,34 @@ namespace RadegastWeb.Services
 
             _instances.Clear();
             _disposed = true;
+        }
+
+        public async Task UpdateAccountRegionAsync(Guid accountId, string? regionName)
+        {
+            try
+            {
+                // Treat empty strings as null
+                var normalizedRegionName = string.IsNullOrEmpty(regionName) ? null : regionName;
+                
+                if (_accounts.TryGetValue(accountId, out var account))
+                {
+                    account.CurrentRegion = normalizedRegionName;
+                    
+                    // Also persist to database
+                    using var context = CreateDbContext();
+                    var dbAccount = await context.Accounts.FindAsync(accountId);
+                    if (dbAccount != null)
+                    {
+                        dbAccount.CurrentRegion = normalizedRegionName;
+                        await context.SaveChangesAsync();
+                        _logger.LogDebug("Updated account region in database: {AccountId} -> {RegionName}", accountId, normalizedRegionName ?? "null");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update account region in database for account {AccountId}", accountId);
+            }
         }
     }
 }

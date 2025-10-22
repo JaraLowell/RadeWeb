@@ -1258,8 +1258,20 @@ namespace RadegastWeb.Core
         private void Network_Disconnected(object? sender, DisconnectedEventArgs e)
         {
             AccountInfo.IsConnected = false;
+            AccountInfo.CurrentRegion = null; // Clear region info on disconnect
             UpdateStatus($"Disconnected: {e.Reason}");
             ConnectionChanged?.Invoke(this, false);
+            
+            // Trigger region change event with empty region to clear it in the database
+            var regionInfo = new RegionInfoDto
+            {
+                Name = string.Empty,
+                AvatarCount = 0,
+                AccountId = Guid.Parse(_accountId),
+                RegionX = 0,
+                RegionY = 0
+            };
+            RegionChanged?.Invoke(this, regionInfo);
             
             // Unregister from global display name cache
             _globalDisplayNameCache.UnregisterGridClient(Guid.Parse(_accountId));
@@ -1338,6 +1350,9 @@ namespace RadegastWeb.Core
         {
             if (_client.Network.CurrentSim != null)
             {
+                // Update the AccountInfo.CurrentRegion immediately for in-memory access
+                AccountInfo.CurrentRegion = _client.Network.CurrentSim.Name;
+                
                 // Use the total avatar count from the sim, which includes all avatars
                 // regardless of draw distance, similar to how Radegast's radar works
                 var totalAvatarCount = _client.Network.CurrentSim.AvatarPositions.Count;
@@ -1352,6 +1367,11 @@ namespace RadegastWeb.Core
                 };
 
                 RegionChanged?.Invoke(this, regionInfo);
+            }
+            else
+            {
+                // Clear region info when not connected to any sim
+                AccountInfo.CurrentRegion = null;
             }
         }
 

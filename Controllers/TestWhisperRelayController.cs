@@ -1,3 +1,4 @@
+#if DEBUG
 using Microsoft.AspNetCore.Mvc;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
@@ -311,3 +312,4 @@ namespace RadegastWeb.Controllers
         public string? AvatarId { get; set; }
     }
 }
+#endif
