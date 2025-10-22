@@ -31,6 +31,7 @@ namespace RadegastWeb.Data
                 entity.Property(e => e.Status).HasMaxLength(50);
                 entity.Property(e => e.CurrentRegion).HasMaxLength(200);
                 entity.Property(e => e.AvatarUuid).HasMaxLength(36);
+                entity.Property(e => e.AvatarRelayUuid).HasMaxLength(36);
             });
 
             // Configure ChatMessage entity

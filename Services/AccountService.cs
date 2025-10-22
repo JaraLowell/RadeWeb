@@ -194,7 +194,11 @@ namespace RadegastWeb.Services
                 existingAccount.Password = account.Password;
                 existingAccount.DisplayName = account.DisplayName;
                 existingAccount.AvatarUuid = account.AvatarUuid;
+                existingAccount.AvatarRelayUuid = account.AvatarRelayUuid;
                 // Note: FirstName, LastName, and GridUrl are not updatable as per requirements
+
+                _logger.LogDebug("Updating account {AccountId}: AvatarUuid='{AvatarUuid}', AvatarRelayUuid='{AvatarRelayUuid}'", 
+                    account.Id, account.AvatarUuid ?? "null", account.AvatarRelayUuid ?? "null");
 
                 await context.SaveChangesAsync();
 
@@ -308,15 +312,40 @@ namespace RadegastWeb.Services
                 var slTimeService = scope.ServiceProvider.GetRequiredService<ISLTimeService>();
                 var presenceService = scope.ServiceProvider.GetRequiredService<IPresenceService>();
                 
-                var instance = new WebRadegastInstance(account, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService);
+                // Create a copy of the account object to avoid modifying the original in-memory account
+                var accountCopy = new Account
+                {
+                    Id = account.Id,
+                    FirstName = account.FirstName,
+                    LastName = account.LastName,
+                    Password = account.Password,
+                    DisplayName = account.DisplayName,
+                    GridUrl = account.GridUrl,
+                    IsConnected = account.IsConnected,
+                    CreatedAt = account.CreatedAt,
+                    LastLoginAt = account.LastLoginAt,
+                    AvatarUuid = account.AvatarUuid,
+                    AvatarRelayUuid = account.AvatarRelayUuid,
+                    CurrentRegion = account.CurrentRegion,
+                    Status = account.Status
+                };
+                
+                _logger.LogDebug("Creating WebRadegastInstance for account {AccountId} with AvatarRelayUuid: {AvatarRelayUuid}", 
+                    id, account.AvatarRelayUuid ?? "null");
+                
+                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService);
                 
                 var loginResult = await instance.LoginAsync();
                 
                 if (loginResult)
                 {
                     _instances.TryAdd(id, instance);
+                    // Update the in-memory account object, but preserve AvatarRelayUuid
+                    var originalAvatarRelayUuid = account.AvatarRelayUuid;
                     account.IsConnected = true;
                     account.LastLoginAt = DateTime.UtcNow;
+                    account.AvatarUuid = instance.AccountInfo.AvatarUuid; // Update with logged-in avatar UUID
+                    account.AvatarRelayUuid = originalAvatarRelayUuid; // Preserve the relay UUID
                     
                     // Subscribe to display name changes for this account to update the database
                     instance.StatusChanged += async (sender, status) =>
@@ -372,6 +401,8 @@ namespace RadegastWeb.Services
                         {
                             dbAccount.IsConnected = true;
                             dbAccount.LastLoginAt = DateTime.UtcNow;
+                            dbAccount.AvatarUuid = instance.AccountInfo.AvatarUuid; // Store the logged-in avatar UUID
+                            // Important: Do NOT update AvatarRelayUuid here - it should only be updated via UpdateAccountAsync
                             await context.SaveChangesAsync();
                         }
                     }
@@ -590,6 +621,7 @@ namespace RadegastWeb.Services
                     CurrentRegion = account.CurrentRegion,
                     LastLoginAt = account.LastLoginAt,
                     AvatarUuid = account.AvatarUuid,
+                    AvatarRelayUuid = account.AvatarRelayUuid,
                     GridUrl = account.GridUrl,
                     HasAiBotActive = hasAiBotActive,
                     HasCorradeActive = hasCorradeActive,

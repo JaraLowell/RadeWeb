@@ -67,12 +67,21 @@ RadegastWeb is a modern, web-based Second Life client inspired by the original R
    dotnet build RadeWeb.sln
    ```
 
-4. **Run the Application**
+4. **Update Database** (if upgrading from older version)
+   ```powershell
+   ./update-database.ps1
+   ```
+   Or manually:
+   ```powershell
+   dotnet ef database update --project RadegastWeb.csproj
+   ```
+
+5. **Run the Application**
    ```powershell
    dotnet run
    ```
 
-5. **Open in Browser**
+6. **Open in Browser**
    - Main application: `http://localhost:15269`
    - Login page: `http://localhost:15269/login.html`
    - Statistics dashboard: `http://localhost:15269/stats.html`
@@ -418,6 +427,12 @@ dotnet ef migrations add MigrationName
 #### Update Database
 ```powershell
 dotnet ef database update
+```
+
+#### Apply Database Migrations (for updates)
+When updating to a new version, apply any pending migrations:
+```powershell
+./update-database.ps1
 ```
 
 #### Reset Database

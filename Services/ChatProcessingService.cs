@@ -38,6 +38,7 @@ namespace RadegastWeb.Services
             // Register processors in priority order (lower numbers first)
             RegisterProcessor(new GroupIgnoreFilterProcessor(_serviceProvider, _logger), 5); // First to filter out ignored groups
             RegisterProcessor(new UrlProcessingProcessor(_serviceProvider, _logger), 10);
+            RegisterProcessor(new IMRelayProcessor(_serviceProvider, _logger), 15); // Process IM relays before database save
             RegisterProcessor(new DatabaseSaveProcessor(_serviceProvider, _logger), 20);
             RegisterProcessor(new SignalRBroadcastProcessor(_hubContext, _logger), 30);
             RegisterProcessor(new CorradeCommandProcessor(_serviceProvider, _logger), 40);
@@ -300,8 +301,8 @@ namespace RadegastWeb.Services
 
         public async Task<ChatProcessingResult> ProcessAsync(ChatMessageDto message, ChatProcessingContext context)
         {
-            // Only process whisper messages for Corrade commands
-            if (message.ChatType != "Whisper" || string.IsNullOrEmpty(message.SenderId))
+            // Only process IM messages for Corrade commands
+            if (message.ChatType != "IM" || string.IsNullOrEmpty(message.SenderId))
                 return ChatProcessingResult.CreateSuccess();
 
             try
@@ -383,6 +384,108 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error processing AI chat response for message from {SenderName}", message.SenderName);
                 return ChatProcessingResult.CreateSuccess(); // Continue processing even if AI fails
+            }
+        }
+    }
+
+    /// <summary>
+    /// Processor for relaying incoming IMs to specified relay avatar
+    /// </summary>
+    internal class IMRelayProcessor : IChatMessageProcessor
+    {
+        private readonly IServiceProvider _serviceProvider;
+        private readonly ILogger _logger;
+        
+        // Second Life NULL_KEY constant
+        private const string NULL_KEY = "00000000-0000-0000-0000-000000000000";
+
+        public IMRelayProcessor(IServiceProvider serviceProvider, ILogger logger)
+        {
+            _serviceProvider = serviceProvider;
+            _logger = logger;
+        }
+
+        public string Name => "IM Relay";
+        public int Priority => 15;
+
+        public async Task<ChatProcessingResult> ProcessAsync(ChatMessageDto message, ChatProcessingContext context)
+        {
+            // Only process incoming IM messages (not our own outgoing IMs)
+            if (message.ChatType != "IM" || string.IsNullOrEmpty(message.SenderId))
+                return ChatProcessingResult.CreateSuccess();
+
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+                
+                // Get the account to check for AvatarRelayUuid
+                var account = await accountService.GetAccountAsync(context.AccountId);
+                if (account == null)
+                {
+                    _logger.LogWarning("Account {AccountId} not found for IM relay", context.AccountId);
+                    return ChatProcessingResult.CreateSuccess();
+                }
+
+                // Check if AvatarRelayUuid is valid (not null, empty, or NULL_KEY)
+                if (string.IsNullOrEmpty(account.AvatarRelayUuid) || account.AvatarRelayUuid == NULL_KEY)
+                {
+                    _logger.LogDebug("Account {AccountId} has no valid relay avatar configured", context.AccountId);
+                    return ChatProcessingResult.CreateSuccess();
+                }
+
+                // Prevent sending IM to oneself
+                if (context.AccountInstance != null && 
+                    account.AvatarRelayUuid.Equals(context.AccountInstance.Client.Self.AgentID.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning("Account {AccountId} has AvatarRelayUuid set to own avatar ID {OwnId} - cannot send IM to self", 
+                        context.AccountId, context.AccountInstance.Client.Self.AgentID);
+                    return ChatProcessingResult.CreateSuccess();
+                }
+
+                // Skip relaying if this IM is from our own account (avoid loops)
+                if (context.AccountInstance != null && 
+                    message.SenderId == context.AccountInstance.Client.Self.AgentID.ToString())
+                {
+                    _logger.LogDebug("Skipping IM relay for own message on account {AccountId}", context.AccountId);
+                    return ChatProcessingResult.CreateSuccess();
+                }
+
+                // Skip relaying if this IM is from the relay avatar itself (avoid loops)
+                if (message.SenderId.Equals(account.AvatarRelayUuid, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogDebug("Skipping IM relay from relay avatar itself on account {AccountId}", context.AccountId);
+                    return ChatProcessingResult.CreateSuccess();
+                }
+
+                // Truncate message to 800 characters max
+                var relayMessage = message.Message;
+                if (relayMessage.Length > 803)
+                {
+                    relayMessage = relayMessage.Substring(0, 800) + "...";
+                }
+
+                // Format the relay message
+                var formattedMessage = $"[IM RELAY] secondlife:///app/agent/{message.SenderId}/about containing: {relayMessage}";
+
+                // Send the IM to the relay avatar
+                if (context.AccountInstance != null && context.AccountInstance.IsConnected)
+                {
+                    context.AccountInstance.SendIM(account.AvatarRelayUuid!, formattedMessage);
+                    _logger.LogInformation("Relayed IM from {SenderName} to relay avatar {RelayUuid} for account {AccountId}", 
+                        message.SenderName, account.AvatarRelayUuid, context.AccountId);
+                }
+                else
+                {
+                    _logger.LogWarning("Cannot relay IM - account {AccountId} instance is not connected", context.AccountId);
+                }
+
+                return ChatProcessingResult.CreateSuccess();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing IM relay for account {AccountId}", context.AccountId);
+                return ChatProcessingResult.CreateSuccess(); // Continue processing even if relay fails
             }
         }
     }

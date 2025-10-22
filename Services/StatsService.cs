@@ -243,9 +243,6 @@ namespace RadegastWeb.Services
                         }
                         _logger.LogDebug("Cleaned up {Count} old cache entries", keysToRemove.Count);
                     }
-                    
-                    _logger.LogInformation("Recorded visitor {AvatarId} ({AvatarName}) in {RegionName} at {SLTTime}", 
-                        avatarId, avatarName ?? "Unknown", regionName, sltNow.ToString("yyyy-MM-dd HH:mm:ss"));
                 }
                 else
                 {

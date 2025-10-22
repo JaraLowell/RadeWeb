@@ -30,6 +30,8 @@ namespace RadegastWeb.Models
         
         public string? AvatarUuid { get; set; }
         
+        public string? AvatarRelayUuid { get; set; }
+        
         public string? CurrentRegion { get; set; }
         
         public string Status { get; set; } = "Offline";

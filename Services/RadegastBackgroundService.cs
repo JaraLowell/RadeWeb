@@ -201,6 +201,7 @@ namespace RadegastWeb.Services
                     CurrentRegion = instance.AccountInfo.CurrentRegion,
                     LastLoginAt = instance.AccountInfo.LastLoginAt,
                     AvatarUuid = instance.AccountInfo.AvatarUuid,
+                    AvatarRelayUuid = instance.AccountInfo.AvatarRelayUuid,
                     GridUrl = instance.AccountInfo.GridUrl,
                     HasAiBotActive = hasAiBotActive,
                     HasCorradeActive = hasCorradeActive
@@ -237,6 +238,7 @@ namespace RadegastWeb.Services
                     CurrentRegion = instance.AccountInfo.CurrentRegion,
                     LastLoginAt = instance.AccountInfo.LastLoginAt,
                     AvatarUuid = instance.AccountInfo.AvatarUuid,
+                    AvatarRelayUuid = instance.AccountInfo.AvatarRelayUuid,
                     GridUrl = instance.AccountInfo.GridUrl,
                     HasAiBotActive = hasAiBotActive,
                     HasCorradeActive = hasCorradeActive

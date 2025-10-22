@@ -160,7 +160,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<RadegastDbContext>();
-    context.Database.EnsureCreated();
+    context.Database.Migrate(); // This applies pending migrations automatically
     
     // Reset all accounts to offline status on startup (safeguard for crashes)
     var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();

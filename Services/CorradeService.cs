@@ -66,7 +66,7 @@ namespace RadegastWeb.Services
         public bool IsEnabled => _isEnabled;
 
         /// <summary>
-        /// Check if this account should process Corrade whisper commands
+        /// Check if this account should process Corrade commands
         /// </summary>
         /// <param name="accountId">The account ID to check</param>
         /// <returns>True if this account should process Corrade commands</returns>
@@ -90,7 +90,7 @@ namespace RadegastWeb.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error checking if account {AccountId} should process Corrade whispers", accountId);
+                _logger.LogError(ex, "Error checking if account {AccountId} should process Corrade commands", accountId);
                 return false;
             }
         }
@@ -138,7 +138,7 @@ namespace RadegastWeb.Services
                     };
                 }
 
-                _logger.LogInformation("Processing Corrade whisper command from {SenderName} ({SenderId}) for account {AccountId}: {Message}", 
+                _logger.LogInformation("Processing Corrade command from {SenderName} ({SenderId}) for account {AccountId}: {Message}", 
                     senderName, senderId, accountId, message);
 
                 // Parse the command first to get the group UUID for security check
@@ -205,7 +205,7 @@ namespace RadegastWeb.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing Corrade whisper command from {SenderName}", senderName);
+                _logger.LogError(ex, "Error processing Corrade command from {SenderName}", senderName);
                 return new CorradeCommandResult
                 {
                     Success = false,

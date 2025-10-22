@@ -13,7 +13,7 @@ namespace RadegastWeb.Services
         bool IsEnabled { get; }
 
         /// <summary>
-        /// Check if this account should process Corrade whisper commands
+        /// Check if this account should process Corrade commands
         /// </summary>
         /// <param name="accountId">The account ID to check</param>
         /// <returns>True if this account should process Corrade commands</returns>

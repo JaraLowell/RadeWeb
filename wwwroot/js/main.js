@@ -1588,7 +1588,7 @@ class RadegastWebClient {
             lastName: document.getElementById('lastName').value,
             password: document.getElementById('password').value,
             displayName: document.getElementById('displayName').value,
-            avatarUuid: document.getElementById('relayUuid').value,
+            avatarRelayUuid: document.getElementById('relayUuid').value,
             gridUrl: gridUrl
         };
 
@@ -1670,7 +1670,7 @@ class RadegastWebClient {
                 document.getElementById('editLastName').value = account.lastName;
                 document.getElementById('editPassword').value = account.password;
                 document.getElementById('editDisplayName').value = account.displayName || '';
-                document.getElementById('editRelayUuid').value = account.avatarUuid || '';
+                document.getElementById('editRelayUuid').value = account.avatarRelayUuid || '';
                 
                 // Handle grid URL selection
                 const editGridUrl = document.getElementById('editGridUrl');
@@ -1710,7 +1710,7 @@ class RadegastWebClient {
             lastName: document.getElementById('editLastName').value,
             password: document.getElementById('editPassword').value,
             displayName: document.getElementById('editDisplayName').value,
-            avatarUuid: document.getElementById('editRelayUuid').value,
+            avatarRelayUuid: document.getElementById('editRelayUuid').value,
             gridUrl: document.getElementById('editGridUrl').value === 'custom' 
                 ? document.getElementById('editCustomGridUrl').value 
                 : document.getElementById('editGridUrl').value

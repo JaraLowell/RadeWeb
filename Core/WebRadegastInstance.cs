@@ -40,6 +40,12 @@ namespace RadegastWeb.Core
         private readonly ConcurrentDictionary<UUID, CoarseLocationAvatar> _coarseLocationAvatars = new();
         private readonly ConcurrentDictionary<UUID, ulong> _avatarSimHandles = new();
         
+        // Track which avatars we've already sent proximity alerts for to prevent spam
+        private readonly ConcurrentDictionary<UUID, DateTime> _proximityAlertedAvatars = new();
+        
+        // Track previous avatar positions to detect movement into proximity range
+        private readonly ConcurrentDictionary<UUID, Vector3> _previousAvatarPositions = new();
+        
         private readonly ConcurrentDictionary<string, ChatSessionDto> _chatSessions = new();
         private readonly ConcurrentDictionary<UUID, Group> _groups = new();
         private System.Threading.Timer? _displayNameRefreshTimer;
@@ -349,6 +355,8 @@ namespace RadegastWeb.Core
                 UpdateStatus("Disconnected");
                 ConnectionChanged?.Invoke(this, false);
                 _nearbyAvatars.Clear();
+                _proximityAlertedAvatars.Clear(); // Clear proximity tracking on disconnect
+                _previousAvatarPositions.Clear(); // Clear position tracking on disconnect
                 _chatSessions.Clear();
                 _groups.Clear();
                 
@@ -632,7 +640,7 @@ namespace RadegastWeb.Core
             foreach (var avatar in _nearbyAvatars.Values)
             {
                 var actualPosition = GetAvatarActualPosition(avatar);
-                avatarData.Add((avatar.ID.ToString(), avatar.Name ?? "Unknown", actualPosition));
+                avatarData.Add((avatar.ID.ToString(), GetBestAvatarName(avatar.ID, avatar.Name), actualPosition));
             }
             
             // Add coarse location avatars that aren't already detailed
@@ -641,7 +649,7 @@ namespace RadegastWeb.Core
             {
                 if (!detailedIds.Contains(coarseAvatar.ID.ToString()))
                 {
-                    avatarData.Add((coarseAvatar.ID.ToString(), coarseAvatar.Name ?? "Unknown", coarseAvatar.Position));
+                    avatarData.Add((coarseAvatar.ID.ToString(), GetBestAvatarName(coarseAvatar.ID, coarseAvatar.Name), coarseAvatar.Position));
                 }
             }
             
@@ -722,7 +730,7 @@ namespace RadegastWeb.Core
 
         private async Task<AvatarDto> CreateAvatarDtoAsync(Avatar avatar)
         {
-            var avatarName = avatar.Name ?? "Unknown";
+            var avatarName = GetBestAvatarName(avatar.ID, avatar.Name);
             var displayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), avatar.ID.ToString(), NameDisplayMode.Smart, avatarName);
             var legacyName = await _displayNameService.GetLegacyNameAsync(Guid.Parse(_accountId), avatar.ID.ToString(), avatarName);
             
@@ -760,7 +768,7 @@ namespace RadegastWeb.Core
 
         private AvatarDto CreateAvatarDto(Avatar avatar)
         {
-            var avatarName = avatar.Name ?? "Unknown";
+            var avatarName = GetBestAvatarName(avatar.ID, avatar.Name);
             string displayName = avatarName;
             
             // Try to get display name from global cache synchronously
@@ -852,7 +860,7 @@ namespace RadegastWeb.Core
             var avatarName = coarseAvatar.Name;
             if (string.IsNullOrEmpty(avatarName) || avatarName == "Loading...")
             {
-                avatarName = "Unknown User";
+                avatarName = GetBestAvatarName(coarseAvatar.ID, coarseAvatar.Name);
                 // Try to get the name asynchronously
                 _ = Task.Run(async () =>
                 {
@@ -892,7 +900,7 @@ namespace RadegastWeb.Core
             var avatarName = coarseAvatar.Name;
             if (string.IsNullOrEmpty(avatarName) || avatarName == "Loading...")
             {
-                avatarName = "Unknown User";
+                avatarName = GetBestAvatarName(coarseAvatar.ID, coarseAvatar.Name);
             }
 
             // Try to get display name from global cache
@@ -1259,6 +1267,8 @@ namespace RadegastWeb.Core
             _logger.LogDebug("Unregistered grid client {AccountId} from global display name cache", _accountId);
             
             _nearbyAvatars.Clear();
+            _proximityAlertedAvatars.Clear(); // Clear proximity tracking on client cleanup
+            _previousAvatarPositions.Clear(); // Clear position tracking on client cleanup
             _chatSessions.Clear();
             _groups.Clear();
             
@@ -1277,6 +1287,8 @@ namespace RadegastWeb.Core
             _logger.LogDebug("Unregistered grid client {AccountId} from global display name cache (logout)", _accountId);
             
             _nearbyAvatars.Clear();
+            _proximityAlertedAvatars.Clear(); // Clear proximity tracking on logout
+            _previousAvatarPositions.Clear(); // Clear position tracking on logout
             _chatSessions.Clear();
             _groups.Clear();
         }
@@ -1286,6 +1298,8 @@ namespace RadegastWeb.Core
             AccountInfo.CurrentRegion = e.PreviousSimulator?.Name;
             UpdateRegionInfo();
             _nearbyAvatars.Clear(); // Clear avatars from previous sim
+            _proximityAlertedAvatars.Clear(); // Clear proximity tracking for new sim
+            _previousAvatarPositions.Clear(); // Clear position tracking for new sim
             _coarseLocationAvatars.Clear(); // Clear coarse location avatars from previous sim
             _avatarSimHandles.Clear(); // Clear sim handles
             
@@ -1362,7 +1376,7 @@ namespace RadegastWeb.Core
             }
 
             // Get display name for the avatar through global cache
-            var avatarName = e.Avatar.Name ?? "Unknown";
+            var avatarName = GetBestAvatarName(e.Avatar.ID, e.Avatar.Name);
             var displayName = avatarName;
             
             try
@@ -1411,13 +1425,14 @@ namespace RadegastWeb.Core
 
             // Calculate actual avatar position accounting for seating
             var actualPosition = GetAvatarActualPosition(e.Avatar);
+            var distance = Calculate3DDistance(GetOurActualPosition(), actualPosition);
 
             var avatarDto = new AvatarDto
             {
                 Id = e.Avatar.ID.ToString(),
                 Name = avatarName,
                 DisplayName = displayName,
-                Distance = Calculate3DDistance(GetOurActualPosition(), actualPosition),
+                Distance = distance,
                 Status = "Online",
                 AccountId = Guid.Parse(_accountId),
                 Position = new PositionDto
@@ -1427,6 +1442,31 @@ namespace RadegastWeb.Core
                     Z = actualPosition.Z
                 }
             };
+
+            // Check for proximity-based IM relay (0.25m threshold)
+            // Now checks both new avatars AND existing avatars that move closer
+            var previousDistance = float.MaxValue;
+            if (_previousAvatarPositions.TryGetValue(e.Avatar.ID, out var previousPosition))
+            {
+                var ourPosition = GetOurActualPosition();
+                previousDistance = Calculate3DDistance(ourPosition, previousPosition);
+            }
+            
+            // Store current position for next time
+            _previousAvatarPositions.AddOrUpdate(e.Avatar.ID, actualPosition, (key, old) => actualPosition);
+            
+            // Trigger proximity alert if:
+            // 1. New avatar within 1.5m, OR
+            // 2. Existing avatar that moved from >1.5m to <=1.5m
+            if (distance <= 1.5f && (isNewAvatar || previousDistance > 1.5f))
+            {
+                _ = Task.Run(async () => await HandleProximityWarning(e.Avatar.ID.ToString()));
+            }
+            else if (distance > 4.0f)
+            {
+                // If avatar has moved more than 4m away, clear proximity alert so we can alert again if they return
+                _proximityAlertedAvatars.TryRemove(e.Avatar.ID, out _);
+            }
 
             AvatarAdded?.Invoke(this, avatarDto);
             UpdateRegionInfo();
@@ -1516,6 +1556,12 @@ namespace RadegastWeb.Core
                 _coarseLocationAvatars.TryRemove(avatarToRemove.ID, out _);
                 _avatarSimHandles.TryRemove(avatarToRemove.ID, out _);
                 
+                // Clear proximity alert tracking so we can alert again if they return
+                _proximityAlertedAvatars.TryRemove(avatarToRemove.ID, out _);
+                
+                // Clear previous position tracking
+                _previousAvatarPositions.TryRemove(avatarToRemove.ID, out _);
+                
                 AvatarRemoved?.Invoke(this, removedAvatar.ID.ToString());
                 UpdateRegionInfo();
             }
@@ -1573,6 +1619,8 @@ namespace RadegastWeb.Core
                     if (_coarseLocationAvatars.TryRemove(removedId, out var removed))
                     {
                         _avatarSimHandles.TryRemove(removedId, out _);
+                        _proximityAlertedAvatars.TryRemove(removedId, out _);
+                        _previousAvatarPositions.TryRemove(removedId, out _);
                         removedAvatars.Add(removedId);
                     }
                 }
@@ -1617,7 +1665,8 @@ namespace RadegastWeb.Core
                     //    continue;
 
                     // Update or create coarse location avatar
-                    var avatarName = detailedAvatar?.Name ?? "Unknown User";
+                    var avatarName = GetBestAvatarName(avatarPos.Key, detailedAvatar?.Name);
+                    var isNewCoarseAvatar = !_coarseLocationAvatars.ContainsKey(avatarPos.Key);
                     
                     if (_coarseLocationAvatars.TryGetValue(avatarPos.Key, out var existing))
                     {
@@ -1638,7 +1687,7 @@ namespace RadegastWeb.Core
                         _coarseLocationAvatars.TryAdd(avatarPos.Key, coarseAvatar);
                         
                         // IMMEDIATELY request name for new coarse avatar (like Radegast does)
-                        if (_client.Network.Connected && avatarName == "Unknown User")
+                        if (_client.Network.Connected && (avatarName.StartsWith("Resolving...") || avatarName == "Loading..." || avatarName == "???"))
                         {
                             _client.Avatars.RequestAvatarNames(new List<UUID> { avatarPos.Key });
                             
@@ -1657,20 +1706,48 @@ namespace RadegastWeb.Core
                                 }
                             });
                         }
-                        
-                        // Record visitor statistics for new coarse location avatars (fire and forget)
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                await RecordVisitorStatAsync(avatarPos.Key.ToString(), avatarName, null);
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogDebug(ex, "Error recording visitor stat for coarse avatar {AvatarId}", avatarPos.Key);
-                            }
-                        });
                     }
+
+                    // Check for proximity-based IM relay (0.25m threshold)
+                    // Only check if this avatar is not already detailed (to avoid duplicate alerts)
+                    if (!_nearbyAvatars.ContainsKey(avatarPos.Key))
+                    {
+                        var previousCoarseDistance = float.MaxValue;
+                        if (_previousAvatarPositions.TryGetValue(avatarPos.Key, out var previousCoarsePosition))
+                        {
+                            var currentOurPosition = GetOurActualPosition();
+                            previousCoarseDistance = Calculate3DDistance(currentOurPosition, previousCoarsePosition);
+                        }
+                        
+                        // Store current position for next time
+                        _previousAvatarPositions.AddOrUpdate(avatarPos.Key, pos, (key, old) => pos);
+                        
+                        // Trigger proximity alert for coarse avatars that move into range
+                        if (distance <= 1.5 && (isNewCoarseAvatar || previousCoarseDistance > 1.5))
+                        {
+                            _ = Task.Run(async () => await HandleProximityWarning(avatarPos.Key.ToString()));
+                        }
+                        else if (distance > 4.0)
+                        {
+                            // If avatar has moved more than 1m away, clear proximity alert so we can alert again if they return
+                            _proximityAlertedAvatars.TryRemove(avatarPos.Key, out _);
+                            _logger.LogDebug("Coarse avatar {AvatarName} ({AvatarId}) moved away (distance={Distance:F2}m), cleared proximity alert", 
+                                avatarName, avatarPos.Key, distance);
+                        }
+                    }
+                        
+                    // Record visitor statistics for new coarse location avatars (fire and forget)
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await RecordVisitorStatAsync(avatarPos.Key.ToString(), avatarName, null);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Error recording visitor stat for coarse avatar {AvatarId}", avatarPos.Key);
+                        }
+                    });
                     
                     _avatarSimHandles[avatarPos.Key] = e.Simulator.Handle;
                 }
@@ -1691,12 +1768,16 @@ namespace RadegastWeb.Core
                 {
                     _coarseLocationAvatars.TryRemove(removeId, out _);
                     _avatarSimHandles.TryRemove(removeId, out _);
+                    _proximityAlertedAvatars.TryRemove(removeId, out _);
+                    _previousAvatarPositions.TryRemove(removeId, out _);
                     removedAvatars.Add(removeId);
                 }
 
                 // Trigger avatar removed events for all removed avatars
                 foreach (var removedId in removedAvatars)
                 {
+                    // Clear proximity alert tracking so we can alert again if they return
+                    _proximityAlertedAvatars.TryRemove(removedId, out _);
                     AvatarRemoved?.Invoke(this, removedId.ToString());
                 }
 
@@ -1774,59 +1855,7 @@ namespace RadegastWeb.Core
                 }
             }
             
-            // Check for Corrade whisper commands (avatars and optionally objects based on config)
-            if (e.Type == ChatType.Whisper && 
-                _corradeService.IsEnabled &&
-                _corradeService.IsWhisperCorradeCommand(e.Message))
-            {
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        // Check if this account should process Corrade whispers
-                        var shouldProcess = await _corradeService.ShouldProcessWhispersForAccountAsync(Guid.Parse(_accountId));
-                        if (!shouldProcess)
-                        {
-                            _logger.LogDebug("Corrade whisper ignored - account {AccountId} not configured for Corrade processing", _accountId);
-                            return;
-                        }
 
-                        // Check source type permissions
-                        if (e.SourceType == ChatSourceType.Object)
-                        {
-                            var allowObjects = await _corradeService.AreObjectCommandsAllowedAsync();
-                            if (!allowObjects)
-                            {
-                                _logger.LogDebug("Corrade whisper from object ignored - object commands not enabled in config");
-                                return;
-                            }
-                            _logger.LogInformation("Processing Corrade whisper command from object: {SenderName}", senderDisplayName);
-                        }
-                        else if (e.SourceType == ChatSourceType.Agent)
-                        {
-                            _logger.LogInformation("Processing Corrade whisper command from avatar: {SenderName}", senderDisplayName);
-                        }
-                        else
-                        {
-                            _logger.LogDebug("Corrade whisper ignored - unsupported source type: {SourceType}", e.SourceType);
-                            return;
-                        }
-
-                        var result = await _corradeService.ProcessWhisperCommandAsync(
-                            Guid.Parse(_accountId), 
-                            e.SourceID.ToString(), 
-                            senderDisplayName, 
-                            e.Message);
-                        
-                        _logger.LogInformation("Processed Corrade whisper command from {SenderName} ({SourceType}): Success={Success}, Message={Message}", 
-                            senderDisplayName, e.SourceType, result.Success, result.Message);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Error processing Corrade whisper command from {SenderName} ({SourceType})", senderDisplayName, e.SourceType);
-                    }
-                });
-            }
             
             var chatMessage = new ChatMessageDto
             {
@@ -1860,6 +1889,10 @@ namespace RadegastWeb.Core
 
         private async void Self_IM(object? sender, InstantMessageEventArgs e)
         {
+            // DEBUG: Log all incoming IM details to troubleshoot IM relay
+            _logger.LogDebug("INCOMING IM DEBUG - Dialog: {Dialog}, FromAgent: {FromAgent} ({FromAgentID}), IMSessionID: {IMSessionID}, Message: {Message}", 
+                e.IM.Dialog, e.IM.FromAgentName, e.IM.FromAgentID, e.IM.IMSessionID, e.IM.Message);
+            
             // First, check if this is a notice that needs special handling
             if (e.IM.Dialog == InstantMessageDialog.GroupNotice ||
                 e.IM.Dialog == InstantMessageDialog.GroupNoticeRequested)
@@ -1989,7 +2022,7 @@ namespace RadegastWeb.Core
             // If the display name is invalid, use the fallback name from the message
             if (string.IsNullOrWhiteSpace(senderDisplayName) || senderDisplayName == "Loading..." || senderDisplayName == "???")
             {
-                senderDisplayName = !string.IsNullOrWhiteSpace(e.IM.FromAgentName) ? e.IM.FromAgentName : "Unknown User";
+                senderDisplayName = !string.IsNullOrWhiteSpace(e.IM.FromAgentName) ? e.IM.FromAgentName : GetBestAvatarName(e.IM.FromAgentID, e.IM.FromAgentName);
                 
                 // Proactively request a proper display name for future use
                 _ = Task.Run(async () =>
@@ -2147,8 +2180,12 @@ namespace RadegastWeb.Core
                 case InstantMessageDialog.MessageFromAgent:
                     // Could be either individual IM or group message
                     // Check if this message is actually from a group by checking IMSessionID against our cached groups
+                    _logger.LogDebug("MessageFromAgent - Checking if IMSessionID {IMSessionID} is a group...", e.IM.IMSessionID);
+                    
                     var groupNameFromAgent = await _groupService.GetGroupNameAsync(Guid.Parse(_accountId), 
                         e.IM.IMSessionID.ToString(), string.Empty);
+                    
+                    _logger.LogDebug("Group name lookup result: '{GroupName}' for IMSessionID {IMSessionID}", groupNameFromAgent ?? "null", e.IM.IMSessionID);
                     
                     if (!string.IsNullOrEmpty(groupNameFromAgent))
                     {
@@ -2182,8 +2219,39 @@ namespace RadegastWeb.Core
                     break;
 
                 default:
-                    // Skip other dialog types (group invitations, notices, etc.)
-                    return;
+                    // Check if this might be an individual IM with a different dialog type
+                    // Individual IMs can come through as various dialog types depending on the sender and context
+                    
+                    // Skip certain dialog types that are definitely not individual IMs
+                    if (e.IM.Dialog == InstantMessageDialog.StartTyping ||
+                        e.IM.Dialog == InstantMessageDialog.StopTyping ||
+                        e.IM.Dialog == InstantMessageDialog.GroupNotice ||
+                        e.IM.Dialog == InstantMessageDialog.GroupNoticeRequested ||
+                        e.IM.Dialog == InstantMessageDialog.RequestTeleport ||
+                        e.IM.Dialog == InstantMessageDialog.MessageBox ||
+                        e.IM.Dialog == InstantMessageDialog.GroupInvitation ||
+                        e.IM.Dialog == InstantMessageDialog.InventoryOffered ||
+                        e.IM.Dialog == InstantMessageDialog.InventoryAccepted ||
+                        e.IM.Dialog == InstantMessageDialog.InventoryDeclined ||
+                        e.IM.Dialog == InstantMessageDialog.FriendshipOffered ||
+                        e.IM.Dialog == InstantMessageDialog.FriendshipAccepted ||
+                        e.IM.Dialog == InstantMessageDialog.FriendshipDeclined)
+                    {
+                        _logger.LogDebug("Skipping system IM dialog type: {Dialog} from {SenderName} ({SenderId})", 
+                            e.IM.Dialog, senderDisplayName, e.IM.FromAgentID);
+                        return;
+                    }
+                    
+                    // For other dialog types, treat as potential individual IMs
+                    _logger.LogDebug("TREATING AS INDIVIDUAL IM - Dialog: {Dialog} from {SenderName} ({SenderId}) - Message: {Message}", 
+                        e.IM.Dialog, senderDisplayName, e.IM.FromAgentID, e.IM.Message);
+                    
+                    // Individual IM (with non-standard dialog type)
+                    sessionId = $"im-{e.IM.FromAgentID}";
+                    sessionName = senderDisplayName;
+                    chatType = "IM";
+                    targetId = e.IM.FromAgentID.ToString();
+                    break;
             }
 
             // Create or update session
@@ -2254,6 +2322,8 @@ namespace RadegastWeb.Core
                 UpdateStatus($"Teleported to {AccountInfo.CurrentRegion}");
                 UpdateRegionInfo();
                 _nearbyAvatars.Clear(); // Clear avatars from previous location
+                _proximityAlertedAvatars.Clear(); // Clear proximity alert tracking for new location
+                _previousAvatarPositions.Clear(); // Clear position tracking for new location
                 
                 // Reset presence status on teleport completion to prevent state desync
                 ResetPresenceStatus();
@@ -2271,7 +2341,6 @@ namespace RadegastWeb.Core
                         {
                             var avatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
                             await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), avatarIds);
-                            _logger.LogInformation("Preloaded display names for {Count} avatars after teleport", avatarIds.Count);
                         }
                     }
                     catch (Exception ex)
@@ -3246,6 +3315,107 @@ namespace RadegastWeb.Core
 
         #endregion
 
+        #region IM Relay Functions
+
+        // Second Life NULL_KEY constant
+        private const string NULL_KEY = "00000000-0000-0000-0000-000000000000";
+
+        /*
+         * IM relay function if AvatarRelayUuid is configured:
+         * 
+         * HandleProximityWarning - Sends warning IM when avatar gets within 0.25m (triggered from radar)
+         * 
+         * Note: Individual IM relaying is now handled by the ChatProcessingService pipeline
+         */
+
+        /// <summary>
+        /// Sends proximity warning IM when an avatar comes within 0.25m
+        /// Includes spam prevention - only sends one alert per avatar until they move away and come back
+        /// This is triggered from the radar when avatars get close
+        /// </summary>
+        /// <param name="avatarId">The UUID of the nearby avatar</param>
+        private async Task HandleProximityWarning(string avatarId)
+        {
+            try
+            {
+                _logger.LogDebug("HandleProximityWarning called for avatar {AvatarId} on account {AccountId}. AvatarRelayUuid: {AvatarRelayUuid}", 
+                    avatarId, _accountId, AccountInfo.AvatarRelayUuid ?? "null");
+                
+                // Check if AvatarRelayUuid is valid (not null, empty, or NULL_KEY) using the AccountInfo property
+                if (string.IsNullOrEmpty(AccountInfo.AvatarRelayUuid) || AccountInfo.AvatarRelayUuid == NULL_KEY)
+                {
+                    _logger.LogDebug("Account {AccountId} has no valid relay avatar configured for proximity warnings", _accountId);
+                    return;
+                }
+
+                // Prevent sending IM to oneself
+                if (AccountInfo.AvatarRelayUuid.Equals(_client.Self.AgentID.ToString(), StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning("Account {AccountId} has AvatarRelayUuid set to own avatar ID {OwnId} - cannot send IM to self for proximity warnings", 
+                        _accountId, _client.Self.AgentID);
+                    return;
+                }
+
+                // Parse avatar UUID for tracking
+                if (!UUID.TryParse(avatarId, out var avatarUuid))
+                {
+                    _logger.LogWarning("Invalid avatar UUID for proximity detection: {AvatarId}", avatarId);
+                    return;
+                }
+
+                // Check if we've already alerted about this avatar being close
+                if (_proximityAlertedAvatars.ContainsKey(avatarUuid))
+                {
+                    _logger.LogDebug("Skipping proximity alert for avatar {AvatarId} - already alerted (preventing spam)", avatarId);
+                    return;
+                }
+
+                // Record that we've alerted about this avatar
+                _proximityAlertedAvatars.TryAdd(avatarUuid, DateTime.UtcNow);
+
+                // Get avatar name for better alert message
+                var avatarName = "Unknown";
+                if (_nearbyAvatars.TryGetValue(avatarUuid, out var detailedAvatar))
+                {
+                    avatarName = detailedAvatar.Name;
+                }
+                else if (_coarseLocationAvatars.TryGetValue(avatarUuid, out var coarseAvatar))
+                {
+                    avatarName = coarseAvatar.Name;
+                }
+
+                // Try to get display name for more informative alert
+                var displayName = await _globalDisplayNameCache.GetDisplayNameAsync(avatarId, NameDisplayMode.Smart, avatarName);
+                var finalName = !string.IsNullOrEmpty(displayName) && displayName != "Loading..." ? displayName : avatarName;
+
+                // Format the proximity message with more detail
+                var proximityMessage = $"[PROXIMITY ALERT] [secondlife:///app/agent/{avatarId}/about {finalName}] is close to me in {_client.Network.CurrentSim?.Name ?? "Unknown Region"}!";
+
+                // Send the IM to the relay avatar if we're connected
+                if (_client.Network.Connected)
+                {
+                    _logger.LogInformation("Sending proximity warning IM to relay avatar {RelayUuid} about {AvatarName} ({AvatarId}) on account {AccountId}", 
+                        AccountInfo.AvatarRelayUuid, finalName, avatarId, _accountId);
+                    
+                    SendIM(AccountInfo.AvatarRelayUuid!, proximityMessage);
+                    
+                    _logger.LogInformation("✓ Successfully sent proximity warning IM to relay avatar {RelayUuid} for avatar {AvatarName} ({AvatarId}) on account {AccountId}", 
+                        AccountInfo.AvatarRelayUuid, finalName, avatarId, _accountId);
+                }
+                else
+                {
+                    _logger.LogWarning("Cannot send proximity warning - account {AccountId} is not connected", _accountId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling proximity warning for avatar {AvatarId} on account {AccountId}", 
+                    avatarId, _accountId);
+            }
+        }
+
+        #endregion
+
         #region Script Dialog Service Event Handlers
 
         private void ScriptDialogService_DialogReceived(object? sender, Models.ScriptDialogEventArgs e)
@@ -3359,6 +3529,84 @@ namespace RadegastWeb.Core
             {
                 _logger.LogError(ex, "Error in Self_ScriptQuestion event handler for account {AccountId}", _accountId);
             }
+        }
+
+        #endregion
+
+        #region Avatar Name Resolution Helpers
+
+        /// <summary>
+        /// Gets the best available name for an avatar, with proper fallbacks
+        /// </summary>
+        /// <param name="avatarId">UUID of the avatar</param>
+        /// <param name="detailedAvatarName">Name from detailed avatar object, if available</param>
+        /// <returns>Best available name for the avatar</returns>
+        private string GetBestAvatarName(UUID avatarId, string? detailedAvatarName)
+        {
+            // Try detailed avatar name first
+            if (!string.IsNullOrWhiteSpace(detailedAvatarName) && 
+                detailedAvatarName != "Loading..." && 
+                detailedAvatarName != "???")
+            {
+                return detailedAvatarName;
+            }
+
+            // Try cached display name from global cache
+            try
+            {
+                var cachedDisplayName = _globalDisplayNameCache.GetCachedDisplayName(avatarId.ToString(), NameDisplayMode.Smart);
+                if (!string.IsNullOrWhiteSpace(cachedDisplayName) && 
+                    cachedDisplayName != "Loading..." && 
+                    cachedDisplayName != "???")
+                {
+                    return cachedDisplayName;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error getting cached display name for avatar {AvatarId}", avatarId);
+            }
+
+            // Try name resolution service cache
+            try
+            {
+                var cachedName = _nameResolutionService.GetCachedName(Guid.Parse(_accountId), avatarId, ResolveType.AgentDefaultName);
+                if (!string.IsNullOrWhiteSpace(cachedName) && 
+                    cachedName != "Loading..." && 
+                    cachedName != "???" &&
+                    cachedName != avatarId.ToString())
+                {
+                    return cachedName;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Error getting cached name from name resolution service for avatar {AvatarId}", avatarId);
+            }
+
+            // Request name resolution if we don't have a good name
+            // This will populate the cache for future lookups
+            if (_client.Network.Connected)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        _client.Avatars.RequestAvatarNames(new List<UUID> { avatarId });
+                        await _globalDisplayNameCache.RequestDisplayNamesAsync(
+                            new List<string> { avatarId.ToString() }, 
+                            Guid.Parse(_accountId));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error requesting names for avatar {AvatarId}", avatarId);
+                    }
+                });
+            }
+
+            // Return a more informative placeholder that includes the avatar ID
+            // This makes it easier to track which avatars need name resolution
+            return $"Resolving... ({avatarId.ToString().Substring(0, 8)})";
         }
 
         #endregion
