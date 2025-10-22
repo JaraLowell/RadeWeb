@@ -1164,7 +1164,6 @@ namespace RadegastWeb.Core
             Status = status;
             AccountInfo.Status = status;
             StatusChanged?.Invoke(this, status);
-            _logger.LogInformation("Account {AccountId} status: {Status}", _accountId, status);
         }
 
         #region Event Handlers

@@ -828,8 +828,6 @@ namespace RadegastWeb.Hubs
                 };
 
                 await Clients.Caller.PresenceStatusChanged(accountId, status.ToString(), statusText);
-                _logger.LogInformation("Retrieved and synced current presence status for account {AccountId}: {Status}", 
-                    accountId, status);
             }
             catch (Exception ex)
             {
