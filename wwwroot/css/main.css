@@ -106,7 +106,7 @@ body {
 .chat-column {
 	display: flex;
 	flex-direction: column;
-	height: calc(100vh - 140px); /* Use full available height */
+	height: calc(100vh - 220px); /* Use full available height */
 	overflow: hidden;
 }
 
