@@ -106,7 +106,7 @@ body {
 .chat-column {
 	display: flex;
 	flex-direction: column;
-	max-height: calc(100vh - 140px); /* Adjust for header and footer space */
+	height: calc(100vh - 140px); /* Use full available height */
 	overflow: hidden;
 }
 
@@ -125,12 +125,14 @@ body {
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
+	height: 100%;
 }
 #chatInterface .card {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
+	height: 100%;
 }
 #chatInterface .card-body {
 	flex: 1;
@@ -157,6 +159,16 @@ body {
 }
 .chat-input-area {
 	flex-shrink: 0;
+	margin-top: auto; /* Push to bottom of container */
+}
+
+/* Welcome message should also fill available space */
+#welcomeMessage {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	height: 100%;
+	min-height: calc(100vh - 200px); /* Fill most of the available space */
 }
 
 .mb-4 {

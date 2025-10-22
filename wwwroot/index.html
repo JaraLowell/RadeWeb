@@ -521,13 +521,13 @@
             const spacing = 60; // Account for margins, paddings, borders
             
             // Calculate available height for chat messages within the constrained layout
-            const maxContentHeight = viewportHeight - headerHeight - footerHeight - 40; // 40px for general spacing
+            const maxContentHeight = viewportHeight - headerHeight - footerHeight - 20; // 20px for minimal spacing
             const availableHeight = maxContentHeight - chatHeaderHeight - chatTabsHeight - chatInputHeight - chatMonitoringHeight - spacing;
             
-            // Set the height for all chat message containers
+            // Set the height for all chat message containers to fill available space
             const chatMessages = document.querySelectorAll('.chat-messages');
             chatMessages.forEach(container => {
-                const finalHeight = Math.max(200, Math.min(availableHeight, 500)); // Min 200px, max 500px
+                const finalHeight = Math.max(300, availableHeight); // Min 300px to fill space better
                 container.style.height = finalHeight + 'px';
                 container.style.maxHeight = finalHeight + 'px';
             });
