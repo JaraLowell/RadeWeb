@@ -418,8 +418,7 @@ class RadegastWebClient {
         const existingTab = document.getElementById(`chat-${sessionId}`);
         
         if (existingTab) {
-            // Tab already exists, just activate it
-            this.setActiveTab(`chat-${sessionId}`);
+            // Tab already exists, don't switch to it automatically
             return;
         }
         
@@ -493,8 +492,7 @@ class RadegastWebClient {
         // Update count
         this.updateTabCounts();
         
-        // Activate the new tab
-        this.setActiveTab(`chat-${sessionId}`);
+        // Don't automatically activate the new tab - let user choose
     }
 
     createGroupTab(session) {
@@ -509,8 +507,7 @@ class RadegastWebClient {
         const existingTab = document.getElementById(`chat-${sessionId}`);
         
         if (existingTab) {
-            // Tab already exists, just activate it
-            this.setActiveTab(`chat-${sessionId}`);
+            // Tab already exists, don't switch to it automatically
             return;
         }
         
@@ -584,8 +581,7 @@ class RadegastWebClient {
         // Update count
         this.updateTabCounts();
         
-        // Activate the new tab
-        this.setActiveTab(`chat-${sessionId}`);
+        // Don't automatically activate the new tab - let user choose
     }
 
     closeTab(sessionId, chatType) {
@@ -717,7 +713,9 @@ class RadegastWebClient {
         const existingSession = this.chatSessions[existingSessionId];
         
         if (existingSession) {
-            this.setActiveTab(`chat-${existingSessionId}`);
+            // Session already exists, but don't automatically switch to it
+            // Just show a brief message that the tab exists
+            this.showAlert(`IM tab with ${targetName} already open`, "info");
             return;
         }
 
@@ -923,7 +921,8 @@ class RadegastWebClient {
             const existingSession = this.chatSessions[existingSessionId];
             
             if (existingSession) {
-                this.setActiveTab(`chat-${existingSessionId}`);
+                // Session already exists, but don't automatically switch to it
+                this.showAlert(`Group chat with ${groupName} already open`, "info");
                 return;
             }
 
