@@ -1,4 +1,9 @@
 /* Stats Page Styles */
+html, body {
+    height: 100%;
+    overflow: auto; /* Prevent body scroll */
+}
+
 .bg-dark {
     --bs-bg-opacity: 1;
     background-color: rgb(53 53 53) !important;
