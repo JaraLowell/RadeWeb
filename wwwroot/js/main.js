@@ -1042,6 +1042,21 @@ class RadegastWebClient {
             this.saveAccount();
         });
 
+        // Update account button
+        document.getElementById('updateAccountBtn').addEventListener('click', () => {
+            this.updateAccount();
+        });
+
+        // Edit grid URL change (for completeness, though grid is disabled in edit mode)
+        document.getElementById('editGridUrl').addEventListener('change', (e) => {
+            const customDiv = document.getElementById('editCustomGridDiv');
+            if (e.target.value === 'custom') {
+                customDiv.classList.remove('d-none');
+            } else {
+                customDiv.classList.add('d-none');
+            }
+        });
+
         // Chat input enter key
         document.getElementById('localChatInput').addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -1293,6 +1308,9 @@ class RadegastWebClient {
                                 <ul class="dropdown-menu">
                                     <li><a class="dropdown-item" href="#" onclick="event.stopPropagation(); radegastClient.forceRefreshAccountStatus()">
                                         <i class="fas fa-sync me-2"></i>Refresh Status
+                                    </a></li>
+                                    <li><a class="dropdown-item" href="#" onclick="event.stopPropagation(); radegastClient.editAccount('${account.accountId}')">
+                                        <i class="fas fa-edit me-2"></i>Details
                                     </a></li>
                                     <li><hr class="dropdown-divider"></li>
                                     <li><a class="dropdown-item" href="#" onclick="event.stopPropagation(); radegastClient.deleteAccount('${account.accountId}')">
@@ -1570,6 +1588,7 @@ class RadegastWebClient {
             lastName: document.getElementById('lastName').value,
             password: document.getElementById('password').value,
             displayName: document.getElementById('displayName').value,
+            avatarUuid: document.getElementById('relayUuid').value,
             gridUrl: gridUrl
         };
 
@@ -1632,6 +1651,97 @@ class RadegastWebClient {
         } catch (error) {
             console.error("Error deleting account:", error);
             this.showAlert("Error deleting account", "danger");
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async editAccount(accountId) {
+        try {
+            this.showLoading(true);
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${accountId}`);
+            
+            if (response.ok) {
+                const account = await response.json();
+                
+                // Populate the edit form
+                document.getElementById('editAccountId').value = account.id;
+                document.getElementById('editFirstName').value = account.firstName;
+                document.getElementById('editLastName').value = account.lastName;
+                document.getElementById('editPassword').value = account.password;
+                document.getElementById('editDisplayName').value = account.displayName || '';
+                document.getElementById('editRelayUuid').value = account.avatarUuid || '';
+                
+                // Handle grid URL selection
+                const editGridUrl = document.getElementById('editGridUrl');
+                const editCustomGridDiv = document.getElementById('editCustomGridDiv');
+                const editCustomGridUrl = document.getElementById('editCustomGridUrl');
+                
+                if (account.gridUrl === 'https://login.agni.lindenlab.com/cgi-bin/login.cgi' || 
+                    account.gridUrl === 'https://login.aditi.lindenlab.com/cgi-bin/login.cgi') {
+                    editGridUrl.value = account.gridUrl;
+                    editCustomGridDiv.classList.add('d-none');
+                } else {
+                    editGridUrl.value = 'custom';
+                    editCustomGridUrl.value = account.gridUrl;
+                    editCustomGridDiv.classList.remove('d-none');
+                }
+                
+                // Show the modal
+                const modal = new bootstrap.Modal(document.getElementById('editAccountModal'));
+                modal.show();
+            } else {
+                this.showAlert("Failed to load account details", "danger");
+            }
+        } catch (error) {
+            console.error("Error loading account details:", error);
+            this.showAlert("Error loading account details", "danger");
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async updateAccount() {
+        const accountId = document.getElementById('editAccountId').value;
+        
+        const account = {
+            id: accountId,
+            firstName: document.getElementById('editFirstName').value,
+            lastName: document.getElementById('editLastName').value,
+            password: document.getElementById('editPassword').value,
+            displayName: document.getElementById('editDisplayName').value,
+            avatarUuid: document.getElementById('editRelayUuid').value,
+            gridUrl: document.getElementById('editGridUrl').value === 'custom' 
+                ? document.getElementById('editCustomGridUrl').value 
+                : document.getElementById('editGridUrl').value
+        };
+
+        if (!account.password) {
+            this.showAlert("Password is required", "danger");
+            return;
+        }
+
+        try {
+            this.showLoading(true);
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${accountId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(account)
+            });
+
+            if (response.ok) {
+                this.showAlert("Account updated successfully", "success");
+                bootstrap.Modal.getInstance(document.getElementById('editAccountModal')).hide();
+                await this.loadAccounts();
+            } else {
+                const error = await response.text();
+                this.showAlert("Failed to update account: " + error, "danger");
+            }
+        } catch (error) {
+            console.error("Error updating account:", error);
+            this.showAlert("Error updating account", "danger");
         } finally {
             this.showLoading(false);
         }

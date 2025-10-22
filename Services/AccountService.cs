@@ -13,6 +13,7 @@ namespace RadegastWeb.Services
         Task<Account> CreateAccountAsync(Account account);
         Task<IEnumerable<Account>> GetAccountsAsync();
         Task<Account?> GetAccountAsync(Guid id);
+        Task<Account?> UpdateAccountAsync(Account account);
         Task<bool> DeleteAccountAsync(Guid id);
         Task<bool> LoginAccountAsync(Guid id);
         Task<bool> LogoutAccountAsync(Guid id);
@@ -173,6 +174,40 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating account for {DisplayName}", account.DisplayName);
+                throw;
+            }
+        }
+
+        public async Task<Account?> UpdateAccountAsync(Account account)
+        {
+            try
+            {
+                using var context = CreateDbContext();
+                var existingAccount = await context.Accounts.FindAsync(account.Id);
+                
+                if (existingAccount == null)
+                {
+                    return null;
+                }
+
+                // Update only the allowed fields
+                existingAccount.Password = account.Password;
+                existingAccount.DisplayName = account.DisplayName;
+                existingAccount.AvatarUuid = account.AvatarUuid;
+                // Note: FirstName, LastName, and GridUrl are not updatable as per requirements
+
+                await context.SaveChangesAsync();
+
+                // Update the in-memory cache
+                _accounts.TryUpdate(account.Id, existingAccount, _accounts[account.Id]);
+                
+                _logger.LogInformation("Updated account {AccountId} for {DisplayName}", account.Id, existingAccount.DisplayName);
+                
+                return existingAccount;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating account {AccountId}", account.Id);
                 throw;
             }
         }

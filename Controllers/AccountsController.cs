@@ -84,6 +84,39 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
+        /// Update an existing account
+        /// </summary>
+        [HttpPut("{id}")]
+        public async Task<ActionResult<Account>> UpdateAccount(Guid id, Account account)
+        {
+            try
+            {
+                if (id != account.Id)
+                {
+                    return BadRequest("Account ID mismatch");
+                }
+
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(ModelState);
+                }
+
+                var updatedAccount = await _accountService.UpdateAccountAsync(account);
+                if (updatedAccount == null)
+                {
+                    return NotFound();
+                }
+
+                return Ok(updatedAccount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
         /// Delete an account
         /// </summary>
         [HttpDelete("{id}")]
