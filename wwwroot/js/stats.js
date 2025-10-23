@@ -345,6 +345,11 @@ class StatsManager {
             const isRecentlySeen = this.isSeenWithinPastHour(lastSeenUtc);
             const rowClass = isRecentlySeen ? 'recent-visitor-row' : '';
             
+            // Debug logging for CSS class assignment
+            if (isRecentlySeen) {
+                console.log(`Applying recent-visitor-row class to: ${displayName}, lastSeen: ${lastSeenUtc}`);
+            }
+            
             return `
                 <tr class="${rowClass}" ${isRecentlySeen ? 'title="Seen within the past hour (SLT)"' : ''}>
                     <td>
@@ -379,13 +384,14 @@ class StatsManager {
         // Calculate difference in milliseconds (both are UTC, so direct comparison works)
         const timeDiffMs = now - lastSeenDate;
         
-        // Check if less than 1 hour (3600000 milliseconds) and not in the future
-        const isWithinHour = timeDiffMs <= 3600000 && timeDiffMs >= 0;
+        // Convert to minutes for easier debugging
+        const timeDiffMinutes = Math.round(timeDiffMs / 1000 / 60);
         
-        // Debug logging for testing
-        if (isWithinHour) {
-            console.log(`Recent visitor found: lastSeen=${lastSeenUtc}, now=${now.toISOString()}, diff=${Math.round(timeDiffMs/1000/60)} minutes ago`);
-        }
+        // Check if less than 1 hour (60 minutes) and not in the future
+        const isWithinHour = timeDiffMinutes <= 60 && timeDiffMinutes >= 0;
+        
+        // Debug logging for all visitors to see what's happening
+        console.log(`Visitor time check: lastSeen=${lastSeenUtc}, now=${now.toISOString()}, diff=${timeDiffMinutes} minutes, isWithinHour=${isWithinHour}`);
         
         return isWithinHour;
     }
