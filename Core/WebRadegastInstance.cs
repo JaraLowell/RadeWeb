@@ -401,6 +401,19 @@ namespace RadegastWeb.Core
                     sessionId: "local-chat"
                 );
                 
+                // Process outgoing chat through chat pipeline (handles database save and SignalR broadcast)
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _chatProcessingService.ProcessChatMessageAsync(chatMessage, Guid.Parse(_accountId));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing outgoing chat through chat pipeline");
+                    }
+                });
+                
                 ChatReceived?.Invoke(this, chatMessage);
             }
             catch (Exception ex)
@@ -491,14 +504,24 @@ namespace RadegastWeb.Core
                         SessionId = sessionId
                     };
 
-                    // Record outgoing IM in chat history
+                    // Process outgoing IM through chat pipeline (handles database save and SignalR broadcast)
                     try
                     {
-                        await _chatHistoryService.SaveChatMessageAsync(chatMessage);
+                        await _chatProcessingService.ProcessChatMessageAsync(chatMessage, Guid.Parse(_accountId));
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error recording outgoing IM in chat history");
+                        _logger.LogError(ex, "Error processing outgoing IM through chat pipeline");
+                        
+                        // Fallback: save to database directly if pipeline fails
+                        try
+                        {
+                            await _chatHistoryService.SaveChatMessageAsync(chatMessage);
+                        }
+                        catch (Exception saveEx)
+                        {
+                            _logger.LogError(saveEx, "Error saving outgoing IM to database as fallback");
+                        }
                     }
 
                     ChatReceived?.Invoke(this, chatMessage);

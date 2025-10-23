@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
+using OpenMetaverse;
 using RadegastWeb.Core;
 using RadegastWeb.Hubs;
 using RadegastWeb.Models;
@@ -467,6 +468,16 @@ namespace RadegastWeb.Services
 
                 // Format the relay message
                 var formattedMessage = $"[IM RELAY] secondlife:///app/agent/{message.SenderId}/about containing: {relayMessage}";
+
+                // Ensure relay avatar name is cached before sending IM
+                var nameResolutionService = scope.ServiceProvider.GetRequiredService<INameResolutionService>();
+                
+                // Pre-cache the relay avatar's name so it shows correctly in our chat history
+                var relayAvatarName = await nameResolutionService.ResolveAgentNameAsync(
+                    context.AccountId, 
+                    new UUID(account.AvatarRelayUuid), 
+                    ResolveType.AgentDefaultName, 
+                    3000); // 3 second timeout
 
                 // Send the IM to the relay avatar
                 if (context.AccountInstance != null && context.AccountInstance.IsConnected)

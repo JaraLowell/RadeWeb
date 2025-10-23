@@ -330,10 +330,18 @@ namespace RadegastWeb.Services
                 if (IsInvalidNameValue(agentDisplayName.DisplayName))
                     continue;
 
+                // Clean display name at database level: only strip "Resident" if it's a default display name 
+                // and the legacy last name is "Resident" (indicating it's a legacy SL naming artifact, not intentional)
+                var cleanedDisplayName = agentDisplayName.IsDefaultDisplayName && 
+                                        agentDisplayName.LegacyLastName.Equals("Resident", StringComparison.OrdinalIgnoreCase) &&
+                                        agentDisplayName.DisplayName.EndsWith(" Resident", StringComparison.OrdinalIgnoreCase)
+                    ? agentDisplayName.DisplayName.Substring(0, agentDisplayName.DisplayName.Length - " Resident".Length)
+                    : agentDisplayName.DisplayName;
+
                 var displayName = new DisplayName
                 {
                     AvatarId = avatarId,
-                    DisplayNameValue = agentDisplayName.DisplayName,
+                    DisplayNameValue = cleanedDisplayName,
                     UserName = agentDisplayName.UserName,
                     LegacyFirstName = agentDisplayName.LegacyFirstName,
                     LegacyLastName = agentDisplayName.LegacyLastName.Equals("Resident", StringComparison.OrdinalIgnoreCase) ? string.Empty : agentDisplayName.LegacyLastName,
@@ -369,10 +377,16 @@ namespace RadegastWeb.Services
                 var lastName = parts[1];
                 var userName = lastName == "Resident" ? firstName.ToLower() : $"{firstName}.{lastName}".ToLower();
 
-                // Format the display name to remove "Resident" if it's the last name
+                // Clean legacy names at database level: always strip "Resident" from legacy names since they are default display names
                 var cleanedDisplayName = lastName.Equals("Resident", StringComparison.OrdinalIgnoreCase) 
                     ? firstName 
                     : fullName;
+
+                if (cleanedDisplayName != fullName)
+                {
+                    _logger.LogDebug("Cleaned legacy name for {AvatarId}: '{Original}' -> '{Cleaned}'", 
+                        avatarId, fullName, cleanedDisplayName);
+                }
 
                 // Check if we already have a display name for this avatar
                 var existingName = _globalNameCache.TryGetValue(avatarId, out var existing) ? existing : null;
