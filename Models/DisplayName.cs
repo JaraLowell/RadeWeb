@@ -46,7 +46,7 @@ namespace RadegastWeb.Models
     public enum NameDisplayMode
     {
         Standard = 0,           // No display names - legacy names only
-        Smart = 1,              // Display name with (username) if not default
+        Smart = 1,              // Display name with (legacy name) if both available and different
         OnlyDisplayName = 2,    // Only show display name
         DisplayNameAndUserName = 3  // Always show "DisplayName (username)"
     }

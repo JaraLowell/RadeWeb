@@ -133,13 +133,16 @@ builder.Services.AddSingleton<IConnectionTrackingService, ConnectionTrackingServ
 builder.Services.AddSingleton<IChatProcessingService, ChatProcessingService>();
 builder.Services.AddSingleton<ISLTimeService, SLTimeService>();
 
-// Display name services - Use the simpler, working approach
+// Display name services - Unified approach with separate global cache
 builder.Services.AddSingleton<IGlobalDisplayNameCache, GlobalDisplayNameCache>();
-builder.Services.AddSingleton<IDisplayNameService, DisplayNameService>();
-builder.Services.AddSingleton<IPeriodicDisplayNameService, PeriodicDisplayNameService>();
+builder.Services.AddSingleton<IMasterDisplayNameService, MasterDisplayNameService>();
+
+// Compatibility adapter for existing IDisplayNameService interface
+builder.Services.AddSingleton<IDisplayNameService>(provider => 
+    new DisplayNameServiceCompatibilityAdapter(provider.GetRequiredService<IMasterDisplayNameService>()));
 
 builder.Services.AddHostedService<RadegastBackgroundService>();
-builder.Services.AddHostedService<PeriodicDisplayNameService>();
+builder.Services.AddHostedService<MasterDisplayNameService>();
 
 // Add logging configuration with additional filters
 builder.Services.AddLogging(logging =>

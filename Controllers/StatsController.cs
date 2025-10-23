@@ -14,12 +14,14 @@ namespace RadegastWeb.Controllers
         private readonly IStatsService _statsService;
         private readonly ILogger<StatsController> _logger;
         private readonly ISLTimeService _sltTimeService;
+        private readonly IMasterDisplayNameService _displayNameService;
 
-        public StatsController(IStatsService statsService, ILogger<StatsController> logger, ISLTimeService sltTimeService)
+        public StatsController(IStatsService statsService, ILogger<StatsController> logger, ISLTimeService sltTimeService, IMasterDisplayNameService displayNameService)
         {
             _statsService = statsService;
             _logger = logger;
             _sltTimeService = sltTimeService;
+            _displayNameService = displayNameService;
         }
 
         /// <summary>
@@ -292,6 +294,33 @@ namespace RadegastWeb.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting hourly activity for region {RegionName}", region);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Get display name service retry queue statistics
+        /// </summary>
+        [HttpGet("displaynames/queue")]
+        public ActionResult<object> GetDisplayNameQueueStats()
+        {
+            try
+            {
+                var (pendingRetries, readyForRetry, totalRequests, failureTypes) = _displayNameService.GetQueueStatistics();
+                
+                return Ok(new
+                {
+                    PendingRetries = pendingRetries,
+                    ReadyForRetry = readyForRetry,
+                    TotalRequests = totalRequests,
+                    FailureTypes = failureTypes,
+                    Timestamp = DateTime.UtcNow,
+                    SLT = _sltTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, yyyy HH:mm:ss")
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting display name queue statistics");
                 return StatusCode(500, "Internal server error");
             }
         }

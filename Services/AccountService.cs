@@ -43,16 +43,16 @@ namespace RadegastWeb.Services
         private readonly string _connectionString;
         private readonly ConcurrentDictionary<Guid, Account> _accounts = new();
         private readonly ConcurrentDictionary<Guid, WebRadegastInstance> _instances = new();
-        private readonly IPeriodicDisplayNameService _periodicDisplayNameService;
+        private readonly IMasterDisplayNameService _masterDisplayNameService;
         private readonly ISLTimeService _sltTimeService;
         private bool _disposed;
 
-        public AccountService(ILogger<AccountService> logger, IServiceProvider serviceProvider, IConfiguration configuration, IPeriodicDisplayNameService periodicDisplayNameService, ISLTimeService sltTimeService)
+        public AccountService(ILogger<AccountService> logger, IServiceProvider serviceProvider, IConfiguration configuration, IMasterDisplayNameService masterDisplayNameService, ISLTimeService sltTimeService)
         {
             _logger = logger;
             _serviceProvider = serviceProvider;
             _sltTimeService = sltTimeService;
-            _periodicDisplayNameService = periodicDisplayNameService;
+            _masterDisplayNameService = masterDisplayNameService;
             
             // Get the connection string from configuration or build it
             var contentRoot = configuration.GetValue<string>("ContentRoot") ?? Directory.GetCurrentDirectory();
@@ -448,7 +448,7 @@ namespace RadegastWeb.Services
                             // Register account for periodic display name processing
                             try
                             {
-                                _periodicDisplayNameService.RegisterAccount(id);
+                                _masterDisplayNameService.RegisterAccount(id);
                                 _logger.LogInformation("Registered account {AccountId} for periodic display name processing", id);
                             }
                             catch (Exception ex)
@@ -527,7 +527,7 @@ namespace RadegastWeb.Services
                 // Unregister account from periodic display name processing
                 try
                 {
-                    _periodicDisplayNameService.UnregisterAccount(id);
+                    _masterDisplayNameService.UnregisterAccount(id);
                     _logger.LogInformation("Unregistered account {AccountId} from periodic display name processing", id);
                 }
                 catch (Exception ex)
