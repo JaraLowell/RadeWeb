@@ -370,19 +370,24 @@ class StatsManager {
     isSeenWithinPastHour(lastSeenUtc) {
         if (!lastSeenUtc) return false;
         
-        // Get current time in SLT (Pacific Time)
-        const nowSLT = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
-        const currentTimeSLT = new Date(nowSLT);
+        // Get current time as UTC Date object
+        const now = new Date();
         
-        // Convert the last seen UTC time to SLT
-        const lastSeenSLT = new Date(lastSeenUtc).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
-        const lastSeenTimeSLT = new Date(lastSeenSLT);
+        // Parse the last seen UTC timestamp
+        const lastSeenDate = new Date(lastSeenUtc);
         
-        // Calculate difference in milliseconds
-        const timeDiffMs = currentTimeSLT - lastSeenTimeSLT;
+        // Calculate difference in milliseconds (both are UTC, so direct comparison works)
+        const timeDiffMs = now - lastSeenDate;
         
-        // Check if less than 1 hour (3600000 milliseconds)
-        return timeDiffMs <= 3600000 && timeDiffMs >= 0;
+        // Check if less than 1 hour (3600000 milliseconds) and not in the future
+        const isWithinHour = timeDiffMs <= 3600000 && timeDiffMs >= 0;
+        
+        // Debug logging for testing
+        if (isWithinHour) {
+            console.log(`Recent visitor found: lastSeen=${lastSeenUtc}, now=${now.toISOString()}, diff=${Math.round(timeDiffMs/1000/60)} minutes ago`);
+        }
+        
+        return isWithinHour;
     }
 
     /**
