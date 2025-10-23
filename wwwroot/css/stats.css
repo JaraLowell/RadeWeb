@@ -264,3 +264,12 @@ canvas {
 .stats-card.bg-warning {
     background: linear-gradient(135deg, #ffc107 0%, #d39e00 100%) !important;
 }
+
+/* Recent visitor highlighting */
+.recent-visitor-row {
+    background-color: rgba(144, 238, 144, 0.3) !important; /* Light green background */
+}
+
+.recent-visitor-row:hover {
+    background-color: rgba(144, 238, 144, 0.5) !important; /* Slightly darker on hover */
+}

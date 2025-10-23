@@ -340,8 +340,13 @@ class StatsManager {
             const avatarId = visitor.AvatarId || visitor.avatarId || 'unknown';
             const regionsVisited = visitor.RegionsVisited || visitor.regionsVisited || [];
             
+            // Check if visitor was seen within the past hour in SLT
+            const lastSeenUtc = visitor.LastSeen || visitor.lastSeen;
+            const isRecentlySeen = this.isSeenWithinPastHour(lastSeenUtc);
+            const rowClass = isRecentlySeen ? 'recent-visitor-row' : '';
+            
             return `
-                <tr>
+                <tr class="${rowClass}" ${isRecentlySeen ? 'title="Seen within the past hour (SLT)"' : ''}>
                     <td>
                         <div class="visitor-display-name" title="${avatarId}">
                             ${this.escapeHtml(displayName)}${uniqueBadge}
@@ -357,6 +362,27 @@ class StatsManager {
                 </tr>
             `;
         }).join('');
+    }
+
+    /**
+     * Checks if a visitor was seen within the past hour in SLT timezone
+     */
+    isSeenWithinPastHour(lastSeenUtc) {
+        if (!lastSeenUtc) return false;
+        
+        // Get current time in SLT (Pacific Time)
+        const nowSLT = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+        const currentTimeSLT = new Date(nowSLT);
+        
+        // Convert the last seen UTC time to SLT
+        const lastSeenSLT = new Date(lastSeenUtc).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' });
+        const lastSeenTimeSLT = new Date(lastSeenSLT);
+        
+        // Calculate difference in milliseconds
+        const timeDiffMs = currentTimeSLT - lastSeenTimeSLT;
+        
+        // Check if less than 1 hour (3600000 milliseconds)
+        return timeDiffMs <= 3600000 && timeDiffMs >= 0;
     }
 
     /**
