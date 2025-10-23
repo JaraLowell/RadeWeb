@@ -29,7 +29,24 @@ namespace RadegastWeb.Models
         [StringLength(100)]
         public string LegacyLastName { get; set; } = string.Empty;
         
-        public string LegacyFullName => $"{LegacyFirstName} {LegacyLastName}";
+        public string LegacyFullName => FormatLegacyName(LegacyFirstName, LegacyLastName);
+        
+        /// <summary>
+        /// Formats the legacy name, removing "Resident" as last name if present
+        /// </summary>
+        /// <param name="firstName">First name</param>
+        /// <param name="lastName">Last name</param>
+        /// <returns>Formatted name without "Resident" suffix</returns>
+        private static string FormatLegacyName(string firstName, string lastName)
+        {
+            if (string.IsNullOrEmpty(firstName))
+                return string.Empty;
+                
+            if (string.IsNullOrEmpty(lastName) || lastName.Equals("Resident", StringComparison.OrdinalIgnoreCase))
+                return firstName;
+                
+            return $"{firstName} {lastName}";
+        }
         
         public bool IsDefaultDisplayName { get; set; } = true;
         

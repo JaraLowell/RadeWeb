@@ -369,6 +369,11 @@ namespace RadegastWeb.Services
                 var lastName = parts[1];
                 var userName = lastName == "Resident" ? firstName.ToLower() : $"{firstName}.{lastName}".ToLower();
 
+                // Format the display name to remove "Resident" if it's the last name
+                var cleanedDisplayName = lastName.Equals("Resident", StringComparison.OrdinalIgnoreCase) 
+                    ? firstName 
+                    : fullName;
+
                 // Check if we already have a display name for this avatar
                 var existingName = _globalNameCache.TryGetValue(avatarId, out var existing) ? existing : null;
                 var isExistingNameValid = existingName != null && !IsInvalidNameValue(existingName.DisplayNameValue);
@@ -380,17 +385,17 @@ namespace RadegastWeb.Services
                 // 
                 // NEVER overwrite a valid custom display name with a legacy name
                 if (existingName != null && isExistingNameValid && 
-                    !existingName.DisplayNameValue.Equals(fullName, StringComparison.OrdinalIgnoreCase))
+                    !existingName.DisplayNameValue.Equals(cleanedDisplayName, StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogDebug("PROTECTED: Skipping legacy name update for {AvatarId}: existing valid display name '{ExistingName}' (custom={IsCustom}), not overwriting with legacy name '{LegacyName}'", 
-                        avatarId, existingName.DisplayNameValue, !existingName.IsDefaultDisplayName, fullName);
+                        avatarId, existingName.DisplayNameValue, !existingName.IsDefaultDisplayName, cleanedDisplayName);
                     continue;
                 }
 
                 var displayName = new DisplayName
                 {
                     AvatarId = avatarId,
-                    DisplayNameValue = fullName,
+                    DisplayNameValue = cleanedDisplayName,
                     UserName = userName,
                     LegacyFirstName = firstName,
                     LegacyLastName = lastName,
