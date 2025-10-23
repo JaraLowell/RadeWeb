@@ -890,7 +890,9 @@ namespace RadegastWeb.Services
                 NameDisplayMode.Smart => displayName.IsDefaultDisplayName 
                     ? displayName.DisplayNameValue 
                     : $"{displayName.DisplayNameValue} ({displayName.UserName})",
-                NameDisplayMode.DisplayNameAndUserName => $"{displayName.DisplayNameValue} ({displayName.UserName})",
+                NameDisplayMode.DisplayNameAndUserName => displayName.IsDefaultDisplayName
+                    ? displayName.DisplayNameValue
+                    : $"{displayName.DisplayNameValue} ({displayName.UserName})",
                 _ => displayName.LegacyFullName
             };
         }

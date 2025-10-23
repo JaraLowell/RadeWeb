@@ -268,6 +268,13 @@ namespace RadegastWeb.Services
             var displayPart = displayName.DisplayNameValue;
             var legacyName = displayName.LegacyFullName;
             
+            // If this is a default display name (no custom display name set by user),
+            // just return the cleaned display name value
+            if (displayName.IsDefaultDisplayName && !IsInvalidNameValue(displayPart))
+            {
+                return displayPart;
+            }
+            
             // If we have both display name and legacy name, and they're different, show both
             if (!IsInvalidNameValue(displayPart) && !IsInvalidNameValue(legacyName) && displayPart != legacyName)
             {
