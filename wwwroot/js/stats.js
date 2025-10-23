@@ -378,8 +378,12 @@ class StatsManager {
         // Get current time as UTC Date object
         const now = new Date();
         
-        // Parse the last seen UTC timestamp
-        const lastSeenDate = new Date(lastSeenUtc);
+        // Parse the last seen timestamp as UTC (add 'Z' if not present to force UTC interpretation)
+        let lastSeenString = lastSeenUtc;
+        if (!lastSeenString.endsWith('Z') && !lastSeenString.includes('+') && !lastSeenString.includes('-', 10)) {
+            lastSeenString += 'Z'; // Force UTC interpretation
+        }
+        const lastSeenDate = new Date(lastSeenString);
         
         // Calculate difference in milliseconds (both are UTC, so direct comparison works)
         const timeDiffMs = now - lastSeenDate;
@@ -391,7 +395,7 @@ class StatsManager {
         const isWithinHour = timeDiffMinutes <= 60 && timeDiffMinutes >= 0;
         
         // Debug logging for all visitors to see what's happening
-        console.log(`Visitor time check: lastSeen=${lastSeenUtc}, now=${now.toISOString()}, diff=${timeDiffMinutes} minutes, isWithinHour=${isWithinHour}`);
+        console.log(`Visitor time check: lastSeen=${lastSeenUtc} -> ${lastSeenString}, now=${now.toISOString()}, diff=${timeDiffMinutes} minutes, isWithinHour=${isWithinHour}`);
         
         return isWithinHour;
     }
