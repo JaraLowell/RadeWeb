@@ -244,6 +244,49 @@ namespace RadegastWeb.Services
             }
         }
 
+        public void ForceRemoveConnection(string connectionId)
+        {
+            if (_disposed) return;
+
+            _lock.EnterWriteLock();
+            try
+            {
+                // Get all accounts this connection was associated with
+                if (_connectionAccounts.TryRemove(connectionId, out var accountIds))
+                {
+                    // Remove this connection from all account mappings
+                    foreach (var accountId in accountIds.Keys)
+                    {
+                        if (_accountConnections.TryGetValue(accountId, out var accountConnections))
+                        {
+                            accountConnections.TryRemove(connectionId, out _);
+                            
+                            // Clean up empty account entries
+                            if (accountConnections.IsEmpty)
+                            {
+                                _accountConnections.TryRemove(accountId, out _);
+                            }
+                        }
+                    }
+
+                    _logger.LogInformation("Force removed connection {ConnectionId} from {AccountCount} accounts",
+                        connectionId, accountIds.Count);
+                }
+                else
+                {
+                    _logger.LogDebug("Connection {ConnectionId} was not found in tracking (already cleaned up)", connectionId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error force removing connection {ConnectionId}", connectionId);
+            }
+            finally
+            {
+                _lock.ExitWriteLock();
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed) return;

@@ -1053,6 +1053,47 @@ class RadegastWebClient {
             this.cleanup();
         });
 
+        // Page visibility change handling (tab switching, minimizing, etc.)
+        document.addEventListener('visibilitychange', () => {
+            if (this.connection && this.connection.state === 'Connected') {
+                if (document.hidden) {
+                    // Page is hidden (user switched tabs or minimized)
+                    try {
+                        this.connection.invoke("HandleBrowserClose").catch(error => {
+                            console.warn("Failed to notify server of browser hide:", error);
+                        });
+                    } catch (error) {
+                        console.warn("Error invoking HandleBrowserClose:", error);
+                    }
+                } else {
+                    // Page is visible again
+                    try {
+                        this.connection.invoke("HandleBrowserReturn").catch(error => {
+                            console.warn("Failed to notify server of browser return:", error);
+                        });
+                    } catch (error) {
+                        console.warn("Error invoking HandleBrowserReturn:", error);
+                    }
+                }
+            }
+        });
+
+        // Handle page hide event (more reliable than beforeunload in some browsers)
+        window.addEventListener('pagehide', () => {
+            if (this.connection && this.connection.state === 'Connected') {
+                try {
+                    // Use sendBeacon for more reliable delivery during page unload
+                    if (navigator.sendBeacon && this.currentAccountId) {
+                        navigator.sendBeacon('/api/presence/browser-close', JSON.stringify({
+                            accountId: this.currentAccountId
+                        }));
+                    }
+                } catch (error) {
+                    console.warn("Failed to send beacon on page hide:", error);
+                }
+            }
+        });
+
         // Grid URL selection
         document.getElementById('gridUrl').addEventListener('change', (e) => {
             const customDiv = document.getElementById('customGridDiv');
@@ -3139,21 +3180,50 @@ class RadegastWebClient {
     }
 
     async cleanup() {
+        console.log("Starting cleanup process...");
+        
         // Clean up any stray modal backdrops
         this.cleanupModalBackdrops();
         
-        // Leave current account group on page unload
-        if (this.connection && this.currentAccountId) {
+        // Clean up SignalR connections and account groups
+        if (this.connection) {
             try {
-                await this.connection.invoke("LeaveAccountGroup", this.currentAccountId);
-                console.log(`Left account group for ${this.currentAccountId} during cleanup`);
+                // First try to clean up stale connections
+                if (this.connection.state === 'Connected') {
+                    try {
+                        await this.connection.invoke("CleanupStaleConnections");
+                        console.log("Cleaned up stale connections");
+                    } catch (cleanupError) {
+                        console.warn("Failed to cleanup stale connections:", cleanupError);
+                    }
+                    
+                    // Leave current account group on page unload
+                    if (this.currentAccountId) {
+                        try {
+                            await this.connection.invoke("LeaveAccountGroup", this.currentAccountId);
+                            console.log(`Left account group for ${this.currentAccountId} during cleanup`);
+                        } catch (error) {
+                            console.error("Error leaving account group during cleanup:", error);
+                        }
+                    }
+                    
+                    // Notify server of browser close
+                    try {
+                        await this.connection.invoke("HandleBrowserClose");
+                        console.log("Notified server of browser close");
+                    } catch (error) {
+                        console.warn("Failed to notify server of browser close:", error);
+                    }
+                }
             } catch (error) {
-                console.error("Error leaving account group during cleanup:", error);
+                console.error("Error during SignalR cleanup:", error);
             }
         }
         
         // Stop avatar refresh
         this.stopAvatarRefresh();
+        
+        console.log("Cleanup process completed");
     }
 
     // Display a notice in the notices tab

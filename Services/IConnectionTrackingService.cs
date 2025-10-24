@@ -36,5 +36,10 @@ namespace RadegastWeb.Services
         /// Clean up any stale connection tracking data
         /// </summary>
         void CleanupStaleConnections();
+        
+        /// <summary>
+        /// Force remove a connection and clean up all its associated data
+        /// </summary>
+        void ForceRemoveConnection(string connectionId);
     }
 }

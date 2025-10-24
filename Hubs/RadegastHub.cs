@@ -57,8 +57,9 @@ namespace RadegastWeb.Hubs
                     await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
                     _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
                     
+                    var connectionCount = _connectionTrackingService.GetConnectionCount(accountGuid);
                     _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}. Total connections: {Count}", 
-                        Context.ConnectionId, accountId, _connectionTrackingService.GetConnectionCount(accountGuid));
+                        Context.ConnectionId, accountId, connectionCount);
                 }
                 else
                 {
@@ -94,8 +95,9 @@ namespace RadegastWeb.Hubs
                     await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"account_{accountId}");
                     _connectionTrackingService.RemoveConnection(Context.ConnectionId, accountGuid);
                     
+                    var connectionCount = _connectionTrackingService.GetConnectionCount(accountGuid);
                     _logger.LogInformation("Client {ConnectionId} left account group {AccountId}. Remaining connections: {Count}", 
-                        Context.ConnectionId, accountId, _connectionTrackingService.GetConnectionCount(accountGuid));
+                        Context.ConnectionId, accountId, connectionCount);
                 }
                 else
                 {
@@ -133,6 +135,9 @@ namespace RadegastWeb.Hubs
             _logger.LogInformation("Account group switch requested from {FromAccountId} to {ToAccountId} for connection {ConnectionId}", 
                 fromAccountId, toAccountId, Context.ConnectionId);
 
+            // Clean up any stale connections before switching
+            _connectionTrackingService.CleanupStaleConnections();
+
             // Leave the previous account group first
             if (!string.IsNullOrEmpty(fromAccountId))
             {
@@ -165,6 +170,28 @@ namespace RadegastWeb.Hubs
 
             _logger.LogInformation("Account group switch completed from {FromAccountId} to {ToAccountId} for connection {ConnectionId}", 
                 fromAccountId, toAccountId, Context.ConnectionId);
+        }
+
+        public Task CleanupStaleConnections()
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to cleanup stale connections from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return Task.CompletedTask;
+            }
+
+            try
+            {
+                _connectionTrackingService.CleanupStaleConnections();
+                _logger.LogInformation("Stale connections cleanup completed for connection {ConnectionId}", Context.ConnectionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during stale connections cleanup for connection {ConnectionId}", Context.ConnectionId);
+            }
+            
+            return Task.CompletedTask;
         }
 
         public async Task SendChat(SendChatRequest request)
@@ -945,10 +972,10 @@ namespace RadegastWeb.Hubs
                 _logger.LogInformation("Client disconnected: {ConnectionId}", connectionId);
             }
             
-            // Clean up connection tracking with error handling
+            // Clean up connection tracking with error handling - use force removal to ensure cleanup
             try
             {
-                _connectionTrackingService.RemoveConnection(connectionId);
+                _connectionTrackingService.ForceRemoveConnection(connectionId);
             }
             catch (Exception ex)
             {
