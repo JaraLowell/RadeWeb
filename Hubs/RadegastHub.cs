@@ -39,17 +39,36 @@ namespace RadegastWeb.Hubs
         {
             if (!IsAuthenticated())
             {
+                _logger.LogWarning("Unauthenticated attempt to join account group {AccountId} from {ConnectionId}", accountId, Context.ConnectionId);
                 Context.Abort();
                 return;
             }
 
-            if (Guid.TryParse(accountId, out var accountGuid))
+            if (string.IsNullOrEmpty(accountId))
             {
-                await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
-                _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
-                
-                _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}. Total connections: {Count}", 
-                    Context.ConnectionId, accountId, _connectionTrackingService.GetConnectionCount(accountGuid));
+                _logger.LogWarning("Empty account ID provided for JoinAccountGroup from {ConnectionId}", Context.ConnectionId);
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
+                    _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
+                    
+                    _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}. Total connections: {Count}", 
+                        Context.ConnectionId, accountId, _connectionTrackingService.GetConnectionCount(accountGuid));
+                }
+                else
+                {
+                    _logger.LogWarning("Invalid account ID format for JoinAccountGroup: {AccountId} from {ConnectionId}", accountId, Context.ConnectionId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error joining account group {AccountId} for connection {ConnectionId}", accountId, Context.ConnectionId);
+                // Don't re-throw, just log the error to prevent client disconnection
             }
         }
 
@@ -57,18 +76,95 @@ namespace RadegastWeb.Hubs
         {
             if (!IsAuthenticated())
             {
+                _logger.LogWarning("Unauthenticated attempt to leave account group {AccountId} from {ConnectionId}", accountId, Context.ConnectionId);
                 Context.Abort();
                 return;
             }
 
-            if (Guid.TryParse(accountId, out var accountGuid))
+            if (string.IsNullOrEmpty(accountId))
             {
-                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"account_{accountId}");
-                _connectionTrackingService.RemoveConnection(Context.ConnectionId, accountGuid);
-                
-                _logger.LogInformation("Client {ConnectionId} left account group {AccountId}. Remaining connections: {Count}", 
-                    Context.ConnectionId, accountId, _connectionTrackingService.GetConnectionCount(accountGuid));
+                _logger.LogWarning("Empty account ID provided for LeaveAccountGroup from {ConnectionId}", Context.ConnectionId);
+                return;
             }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"account_{accountId}");
+                    _connectionTrackingService.RemoveConnection(Context.ConnectionId, accountGuid);
+                    
+                    _logger.LogInformation("Client {ConnectionId} left account group {AccountId}. Remaining connections: {Count}", 
+                        Context.ConnectionId, accountId, _connectionTrackingService.GetConnectionCount(accountGuid));
+                }
+                else
+                {
+                    _logger.LogWarning("Invalid account ID format for LeaveAccountGroup: {AccountId} from {ConnectionId}", accountId, Context.ConnectionId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error leaving account group {AccountId} for connection {ConnectionId}", accountId, Context.ConnectionId);
+                // Still try to clean up the connection tracking even if SignalR group removal failed
+                try
+                {
+                    if (Guid.TryParse(accountId, out var accountGuid))
+                    {
+                        _connectionTrackingService.RemoveConnection(Context.ConnectionId, accountGuid);
+                    }
+                }
+                catch (Exception cleanupEx)
+                {
+                    _logger.LogError(cleanupEx, "Error during cleanup for LeaveAccountGroup {AccountId} from {ConnectionId}", accountId, Context.ConnectionId);
+                }
+            }
+        }
+
+        public async Task SwitchAccountGroup(string fromAccountId, string toAccountId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to switch account groups from {FromAccountId} to {ToAccountId} from {ConnectionId}", 
+                    fromAccountId, toAccountId, Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            _logger.LogInformation("Account group switch requested from {FromAccountId} to {ToAccountId} for connection {ConnectionId}", 
+                fromAccountId, toAccountId, Context.ConnectionId);
+
+            // Leave the previous account group first
+            if (!string.IsNullOrEmpty(fromAccountId))
+            {
+                try
+                {
+                    await LeaveAccountGroup(fromAccountId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error leaving previous account group {FromAccountId} during switch for connection {ConnectionId}", 
+                        fromAccountId, Context.ConnectionId);
+                    // Continue with joining the new group even if leaving failed
+                }
+            }
+
+            // Join the new account group
+            if (!string.IsNullOrEmpty(toAccountId))
+            {
+                try
+                {
+                    await JoinAccountGroup(toAccountId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error joining new account group {ToAccountId} during switch for connection {ConnectionId}", 
+                        toAccountId, Context.ConnectionId);
+                    throw; // Re-throw this one since it's critical for the new account
+                }
+            }
+
+            _logger.LogInformation("Account group switch completed from {FromAccountId} to {ToAccountId} for connection {ConnectionId}", 
+                fromAccountId, toAccountId, Context.ConnectionId);
         }
 
         public async Task SendChat(SendChatRequest request)
@@ -838,10 +934,26 @@ namespace RadegastWeb.Hubs
 
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
-            _logger.LogInformation("Client disconnected: {ConnectionId}", Context.ConnectionId);
+            var connectionId = Context.ConnectionId;
             
-            // Clean up connection tracking
-            _connectionTrackingService.RemoveConnection(Context.ConnectionId);
+            if (exception != null)
+            {
+                _logger.LogWarning(exception, "Client disconnected with exception: {ConnectionId}", connectionId);
+            }
+            else
+            {
+                _logger.LogInformation("Client disconnected: {ConnectionId}", connectionId);
+            }
+            
+            // Clean up connection tracking with error handling
+            try
+            {
+                _connectionTrackingService.RemoveConnection(connectionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleaning up connection tracking for {ConnectionId}", connectionId);
+            }
             
             // Handle browser close event (automatic status changes disabled)
             try
@@ -850,10 +962,17 @@ namespace RadegastWeb.Hubs
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error handling browser close event");
+                _logger.LogError(ex, "Error handling browser close event for {ConnectionId}", connectionId);
             }
             
-            await base.OnDisconnectedAsync(exception);
+            try
+            {
+                await base.OnDisconnectedAsync(exception);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in base OnDisconnectedAsync for {ConnectionId}", connectionId);
+            }
         }
     }
 

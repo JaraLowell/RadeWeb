@@ -26,5 +26,15 @@ namespace RadegastWeb.Services
         /// Get the count of active connections for an account
         /// </summary>
         int GetConnectionCount(Guid accountId);
+        
+        /// <summary>
+        /// Get all connections for an account (for cleanup purposes)
+        /// </summary>
+        IEnumerable<string> GetConnectionsForAccount(Guid accountId);
+        
+        /// <summary>
+        /// Clean up any stale connection tracking data
+        /// </summary>
+        void CleanupStaleConnections();
     }
 }

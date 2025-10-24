@@ -88,11 +88,15 @@ builder.Services.Configure<AuthenticationConfig>(
     builder.Configuration.GetSection("Authentication"));
 builder.Services.AddSingleton<IAuthenticationService, AuthenticationService>();
 
-// Add SignalR
+// Add SignalR with improved configuration
 builder.Services.AddSignalR(options =>
 {
     options.MaximumReceiveMessageSize = 1024 * 1024; // 1MB
     options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(60); // Server will timeout client after 60 seconds of inactivity
+    options.KeepAliveInterval = TimeSpan.FromSeconds(15); // Send keep-alive ping every 15 seconds
+    options.HandshakeTimeout = TimeSpan.FromSeconds(15); // Handshake must complete within 15 seconds
+    options.MaximumParallelInvocationsPerClient = 10; // Limit concurrent method calls per client
 });
 
 // Add CORS

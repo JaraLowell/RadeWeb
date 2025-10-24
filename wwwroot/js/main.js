@@ -213,6 +213,33 @@ class RadegastWebClient {
                 this.showAlert("Teleport Request Error: " + error, "danger");
             });
 
+            // Add reconnection event handlers
+            this.connection.onreconnecting((error) => {
+                console.warn("SignalR connection lost, attempting to reconnect...", error);
+                this.showAlert("Connection lost, reconnecting...", "warning");
+            });
+
+            this.connection.onreconnected((connectionId) => {
+                console.log("SignalR reconnected with connection ID:", connectionId);
+                this.showAlert("Connection restored", "success");
+                
+                // Rejoin the current account group after reconnection
+                if (this.currentAccountId) {
+                    this.connection.invoke("JoinAccountGroup", this.currentAccountId)
+                        .then(() => {
+                            console.log(`Rejoined account group ${this.currentAccountId} after reconnection`);
+                        })
+                        .catch(error => {
+                            console.error("Failed to rejoin account group after reconnection:", error);
+                        });
+                }
+            });
+
+            this.connection.onclose((error) => {
+                console.error("SignalR connection closed:", error);
+                this.showAlert("Real-time connection lost", "danger");
+            });
+
             await this.connection.start();
         } catch (err) {
             console.error("SignalR Connection Error:", err);
@@ -1563,15 +1590,36 @@ class RadegastWebClient {
         // Manage SignalR account groups
         if (this.connection) {
             try {
-                // Leave previous account group if switching accounts
+                // Use the new atomic switch method if available, otherwise fall back to separate calls
                 if (this.previousAccountId && this.previousAccountId !== accountId) {
-                    await this.connection.invoke("LeaveAccountGroup", this.previousAccountId);
-                    console.log(`Left account group for ${this.previousAccountId}`);
+                    try {
+                        await this.connection.invoke("SwitchAccountGroup", this.previousAccountId, accountId);
+                        console.log(`Switched account groups from ${this.previousAccountId} to ${accountId}`);
+                    } catch (switchError) {
+                        console.warn("SwitchAccountGroup not available or failed, using separate calls:", switchError);
+                        
+                        // Fallback to separate calls with better error handling
+                        try {
+                            await this.connection.invoke("LeaveAccountGroup", this.previousAccountId);
+                            console.log(`Left account group for ${this.previousAccountId}`);
+                        } catch (leaveError) {
+                            console.error("Failed to leave previous account group:", leaveError);
+                            // Continue anyway, the server will clean up on reconnection
+                        }
+                        
+                        try {
+                            await this.connection.invoke("JoinAccountGroup", accountId);
+                            console.log(`Joined account group for ${accountId}`);
+                        } catch (joinError) {
+                            console.error("Failed to join new account group:", joinError);
+                            throw joinError; // This is critical, so re-throw
+                        }
+                    }
+                } else {
+                    // First time joining or same account
+                    await this.connection.invoke("JoinAccountGroup", accountId);
+                    console.log(`Joined account group for ${accountId}`);
                 }
-                
-                // Join SignalR group for the new account
-                await this.connection.invoke("JoinAccountGroup", accountId);
-                console.log(`Joined account group for ${accountId}`);
                 
                 // Also call SetActiveAccount via SignalR for additional server-side notification
                 try {
