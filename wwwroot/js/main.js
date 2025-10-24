@@ -735,48 +735,76 @@ class RadegastWebClient {
     }
 
     updateNearbyAvatars(avatars) {
-        console.log('Updating nearby avatars:', avatars);
+        console.debug(`Received avatar update: ${avatars.length} avatars`);
         
-        // Only update if avatars belong to the currently selected account
-        if (!this.currentAccountId || avatars.length === 0) {
-            this.nearbyAvatars = avatars;
+        // If no current account selected, clear avatars
+        if (!this.currentAccountId) {
+            this.nearbyAvatars = [];
             this.renderPeopleList();
             
             // Notify minimap to redraw (will clear yellow dots if no avatars)
             if (window.miniMap && typeof window.miniMap.safeRedraw === 'function') {
-                console.log('Main: Triggering minimap redraw (clearing avatars)');
+                console.debug('Main: Triggering minimap redraw (clearing avatars - no account)');
                 window.miniMap.safeRedraw();
             }
             return;
         }
         
-        // Filter avatars to only include those from the current account
-        const currentAccountAvatars = avatars.filter(avatar => 
-            avatar.accountId === this.currentAccountId
+        // If no avatars provided, clear the list
+        if (avatars.length === 0) {
+            this.nearbyAvatars = [];
+            this.renderPeopleList();
+            
+            // Notify minimap to redraw (will clear yellow dots)
+            if (window.miniMap && typeof window.miniMap.safeRedraw === 'function') {
+                console.debug('Main: Triggering minimap redraw (clearing avatars - empty list)');
+                window.miniMap.safeRedraw();
+            }
+            return;
+        }
+        
+        // Check if any avatar belongs to a different account
+        const wrongAccountAvatars = avatars.filter(avatar => 
+            avatar.accountId && avatar.accountId !== this.currentAccountId
         );
         
-        // Only update if these avatars are for the current account
-        if (currentAccountAvatars.length > 0 && currentAccountAvatars[0].accountId === this.currentAccountId) {
+        if (wrongAccountAvatars.length > 0) {
+            // Use debug level for expected behavior during account switching
+            console.debug(`Ignoring avatar update for account ${wrongAccountAvatars[0].accountId}, current account is ${this.currentAccountId}`);
+            return;
+        }
+        
+        // Filter avatars to only include those from the current account (or those without accountId for backward compatibility)
+        const currentAccountAvatars = avatars.filter(avatar => 
+            !avatar.accountId || avatar.accountId === this.currentAccountId
+        );
+        
+        if (currentAccountAvatars.length > 0) {
             this.nearbyAvatars = currentAccountAvatars;
             this.renderPeopleList();
             
-            // Notify minimap to redraw with updated avatar positions (only if changed)
+            console.debug(`Updated nearby avatars: ${currentAccountAvatars.length} for account ${this.currentAccountId}`);
+            
+            // Notify minimap to redraw with updated avatar positions
             if (window.miniMap && typeof window.miniMap.safeRedraw === 'function') {
-                console.log('Main: Checking if minimap needs redraw after avatar update');
+                console.debug('Main: Triggering minimap redraw after avatar update');
                 window.miniMap.safeRedraw();
             }
-        } else if (avatars.length > 0 && avatars[0].accountId !== this.currentAccountId) {
-            // Don't update if avatars are for a different account
-            console.log(`Ignoring avatar update for account ${avatars[0].accountId}, current account is ${this.currentAccountId}`);
         }
     }
 
     updateSingleAvatar(avatar) {
-        console.log('Updating single avatar:', avatar);
+        console.debug(`Updating single avatar: ${avatar.name || avatar.displayName} (${avatar.id})`);
         
         // Only update if avatar belongs to the currently selected account
-        if (!this.currentAccountId || avatar.accountId !== this.currentAccountId) {
-            console.log(`Ignoring single avatar update for account ${avatar.accountId}, current account is ${this.currentAccountId}`);
+        if (!this.currentAccountId) {
+            console.debug('No current account selected, ignoring single avatar update');
+            return;
+        }
+        
+        // Check if avatar belongs to wrong account (with accountId check for safety)
+        if (avatar.accountId && avatar.accountId !== this.currentAccountId) {
+            console.debug(`Ignoring single avatar update for account ${avatar.accountId}, current account is ${this.currentAccountId}`);
             return;
         }
         
@@ -784,15 +812,17 @@ class RadegastWebClient {
         const existingIndex = this.nearbyAvatars.findIndex(a => a.id === avatar.id);
         if (existingIndex >= 0) {
             this.nearbyAvatars[existingIndex] = avatar;
+            console.debug(`Updated existing avatar: ${avatar.name || avatar.displayName}`);
         } else {
             this.nearbyAvatars.push(avatar);
+            console.debug(`Added new avatar: ${avatar.name || avatar.displayName}`);
         }
         
         this.renderPeopleList();
         
         // Notify minimap to redraw with updated avatar positions
         if (window.miniMap && typeof window.miniMap.safeRedraw === 'function') {
-            console.log('Main: Triggering minimap redraw after single avatar update');
+            console.debug('Main: Triggering minimap redraw after single avatar update');
             window.miniMap.safeRedraw();
         }
     }
@@ -985,12 +1015,20 @@ class RadegastWebClient {
     }
 
     async refreshNearbyAvatars() {
-        if (!this.currentAccountId) return;
+        if (!this.currentAccountId) {
+            console.debug("No current account ID, skipping avatar refresh");
+            return;
+        }
+
+        // Check if the connection is in a good state
+        if (!this.connection || this.connection.state !== "Connected") {
+            console.debug("SignalR not connected, skipping avatar refresh");
+            return;
+        }
 
         try {
-            if (this.connection) {
-                await this.connection.invoke("GetNearbyAvatars", this.currentAccountId);
-            }
+            console.debug(`Refreshing nearby avatars for account: ${this.currentAccountId}`);
+            await this.connection.invoke("GetNearbyAvatars", this.currentAccountId);
         } catch (error) {
             console.error("Error refreshing nearby avatars:", error);
         }
@@ -1000,11 +1038,22 @@ class RadegastWebClient {
         // Clear any existing interval
         this.stopAvatarRefresh();
         
-        console.log('Starting avatar refresh timer');
+        if (!this.currentAccountId) {
+            console.debug("No current account ID, not starting avatar refresh");
+            return;
+        }
+        
+        console.log(`Starting avatar refresh timer for account: ${this.currentAccountId}`);
         
         // Start periodic refresh every 10 seconds
         this.avatarRefreshInterval = setInterval(() => {
-            console.log('Periodic avatar refresh triggered');
+            // Double-check we still have the same account selected
+            if (!this.currentAccountId) {
+                console.log('No current account ID, stopping avatar refresh timer');
+                this.stopAvatarRefresh();
+                return;
+            }
+            console.log(`Periodic avatar refresh triggered for account: ${this.currentAccountId}`);
             this.refreshNearbyAvatars();
         }, 10000);
         
@@ -1419,8 +1468,10 @@ class RadegastWebClient {
 
     async selectAccount(accountId) {
         // Store previous account for cleanup
-        this.previousAccountId = this.currentAccountId;
-        this.currentAccountId = accountId;
+        const previousAccountId = this.currentAccountId;
+        
+        console.log(`Starting account switch from ${previousAccountId} to ${accountId}`);
+        
         const account = this.accounts.find(a => a.accountId === accountId);
         
         if (!account) {
@@ -1430,10 +1481,31 @@ class RadegastWebClient {
 
         console.log(`Selecting account ${accountId}: connected=${account.isConnected}, status=${account.status}`);
 
-        // Clear all existing chat sessions and tabs when switching accounts
+        // Step 1: Stop all activity for the previous account first
+        this.stopAvatarRefresh();
+        
+        // Step 2: Handle SignalR group management before changing currentAccountId
+        if (this.connection && previousAccountId && previousAccountId !== accountId) {
+            try {
+                console.log(`Leaving SignalR group for previous account: ${previousAccountId}`);
+                await this.connection.invoke("LeaveAccountGroup", previousAccountId);
+                console.log(`Successfully left account group for ${previousAccountId}`);
+                
+                // Add a small delay to ensure the server processes the leave request
+                await new Promise(resolve => setTimeout(resolve, 100));
+            } catch (error) {
+                console.error("Error leaving previous account group:", error);
+            }
+        }
+        
+        // Step 3: Now update the current account ID (this stops avatar filtering issues)
+        this.previousAccountId = this.currentAccountId;
+        this.currentAccountId = accountId;
+        
+        // Step 4: Clear all UI state for the previous account
         this.clearAllChatTabs();
         
-        // Clear nearby avatars list
+        // Clear nearby avatars list immediately
         this.nearbyAvatars = [];
         this.renderPeopleList();
 
@@ -1441,15 +1513,13 @@ class RadegastWebClient {
         this.groups = [];
         this.renderGroupsList();
 
-        // Update UI
+        // Step 5: Update UI
         this.renderAccountsList();
         document.getElementById('welcomeMessage').classList.add('d-none');
         document.getElementById('chatInterface').classList.remove('d-none');
         
         // Show people panel when account is selected
         document.getElementById('peoplePanel').classList.remove('d-none');
-        // Stop any existing avatar refresh
-        this.stopAvatarRefresh();
         
         // Update chat interface
         const accountNameElement = document.getElementById('chatAccountName');
@@ -1467,8 +1537,6 @@ class RadegastWebClient {
             loginBtn.classList.add('d-none');
             logoutBtn.classList.remove('d-none');
             regionInfoBtn.classList.remove('d-none');
-            // Start avatar refresh for connected accounts
-            this.startAvatarRefresh();
             
             // Show minimap for connected accounts
             if (window.miniMap) {
@@ -1494,18 +1562,13 @@ class RadegastWebClient {
         this.currentChatSession = 'local';
         console.log('Account switched - local chat set as default');
 
-        // Manage SignalR account groups
+        // Step 6: Join SignalR group for the new account and load data
         if (this.connection) {
             try {
-                // Leave previous account group if switching accounts
-                if (this.previousAccountId && this.previousAccountId !== accountId) {
-                    await this.connection.invoke("LeaveAccountGroup", this.previousAccountId);
-                    console.log(`Left account group for ${this.previousAccountId}`);
-                }
-                
                 // Join SignalR group for the new account
+                console.log(`Joining SignalR group for new account: ${accountId}`);
                 await this.connection.invoke("JoinAccountGroup", accountId);
-                console.log(`Joined account group for ${accountId}`);
+                console.log(`Successfully joined account group for ${accountId}`);
                 
                 // Load recent chat sessions for this account
                 await this.connection.invoke("GetRecentSessions", accountId);
@@ -1513,19 +1576,29 @@ class RadegastWebClient {
                 await this.connection.invoke("GetChatHistory", accountId, "local-chat", 50, 0);
                 // Load recent notices for this account
                 await this.loadAccountNotices(accountId);
-                // Refresh nearby avatars for the new account (only if connected)
+                
+                // Only start avatar refresh and load data if the account is connected
                 if (account.isConnected) {
-                    this.refreshNearbyAvatars();
-                    // Load groups for connected accounts
-                    this.loadGroups();
+                    // Load groups first, then start avatar refresh
+                    await this.loadGroups();
+                    
+                    // Add a small delay before starting avatar refresh to ensure everything is set up
+                    setTimeout(() => {
+                        if (this.currentAccountId === accountId) { // Double-check we haven't switched again
+                            this.startAvatarRefresh();
+                            console.log(`Avatar refresh started for account ${accountId}`);
+                        }
+                    }, 200);
                 }
             } catch (error) {
-                console.error("Error managing account groups:", error);
+                console.error("Error managing new account setup:", error);
             }
         }
 
-        // Initialize presence status display with current account status
+        // Step 7: Initialize presence status display with current account status
         this.initializePresenceStatusForAccount(account);
+        
+        console.log(`Account switch completed: ${accountId}`);
     }
 
     // Initialize the presence status display based on current account status
@@ -2946,6 +3019,9 @@ class RadegastWebClient {
         // Clean up any stray modal backdrops
         this.cleanupModalBackdrops();
         
+        // Stop avatar refresh first
+        this.stopAvatarRefresh();
+        
         // Leave current account group on page unload
         if (this.connection && this.currentAccountId) {
             try {
@@ -2956,8 +3032,11 @@ class RadegastWebClient {
             }
         }
         
-        // Stop avatar refresh
-        this.stopAvatarRefresh();
+        // Clear account state
+        this.currentAccountId = null;
+        this.previousAccountId = null;
+        this.nearbyAvatars = [];
+        this.groups = [];
     }
 
     // Display a notice in the notices tab
