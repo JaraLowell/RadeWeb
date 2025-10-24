@@ -23,6 +23,7 @@ class RadegastWebClient {
         this.currentPermissionId = null; // Track the currently displayed permission ID
         this.currentTeleportRequestId = null; // Track the currently displayed teleport request ID
         this.isInitialized = false; // Track if the client is fully initialized
+        this.presenceStates = new Map(); // Track presence for each account
         
         this.initializeSignalR();
         this.bindEvents();
@@ -174,7 +175,7 @@ class RadegastWebClient {
             });
 
             this.connection.on("PresenceStatusChanged", (accountId, status, statusText) => {
-                this.updatePresenceStatusDisplay(accountId, status, statusText);
+                this.onPresenceStatusChanged(accountId, status, statusText);
             });
 
             // Script dialog event handlers
@@ -1182,6 +1183,16 @@ class RadegastWebClient {
                     if (currentAccount) {
                         // Update the chat interface to reflect current status
                         this.updateChatInterfaceForAccount(currentAccount);
+                        
+                        // Sync presence status for the current account if connected
+                        if (currentAccount.isConnected && this.connection && this.connection.state === "Connected") {
+                            try {
+                                console.log('Syncing presence status for current account after load');
+                                await this.connection.invoke("GetCurrentPresenceStatus", this.currentAccountId);
+                            } catch (error) {
+                                console.error(`Error syncing presence for current account ${this.currentAccountId}:`, error);
+                            }
+                        }
                     } else {
                         console.warn(`Current account ${this.currentAccountId} not found in loaded accounts`);
                         // Reset UI if current account no longer exists
@@ -1189,6 +1200,17 @@ class RadegastWebClient {
                         document.getElementById('chatInterface').classList.add('d-none');
                         document.getElementById('peoplePanel').classList.add('d-none');
                         document.getElementById('welcomeMessage').classList.remove('d-none');
+                    }
+                }
+                
+                // Also sync presence for all connected accounts to update the account list
+                for (const account of this.accounts) {
+                    if (account.isConnected && this.connection && this.connection.state === "Connected") {
+                        try {
+                            await this.connection.invoke("GetCurrentPresenceStatus", account.accountId);
+                        } catch (error) {
+                            console.error(`Error syncing presence for account ${account.accountId}:`, error);
+                        }
                     }
                 }
                 
@@ -1538,12 +1560,31 @@ class RadegastWebClient {
                 await this.connection.invoke("JoinAccountGroup", accountId);
                 console.log(`Joined account group for ${accountId}`);
                 
+                // Also call SetActiveAccount via SignalR for additional server-side notification
+                try {
+                    await this.connection.invoke("SetActiveAccount", accountId);
+                    console.log(`Successfully notified server via SignalR of active account: ${accountId}`);
+                } catch (signalRError) {
+                    console.warn("SignalR SetActiveAccount failed (this is okay, REST API call should have worked):", signalRError);
+                }
+                
                 // Load recent chat sessions for this account
                 await this.connection.invoke("GetRecentSessions", accountId);
                 // Load local chat history
                 await this.connection.invoke("GetChatHistory", accountId, "local-chat", 50, 0);
                 // Load recent notices for this account
                 await this.loadAccountNotices(accountId);
+                
+                // Sync presence status for the newly active account
+                if (account.isConnected) {
+                    try {
+                        await this.connection.invoke("GetCurrentPresenceStatus", accountId);
+                        console.log(`Synced presence status for newly active account: ${accountId}`);
+                    } catch (presenceError) {
+                        console.warn("Failed to sync presence status for new account:", presenceError);
+                    }
+                }
+                
                 // Refresh nearby avatars for the new account (only if connected)
                 if (account.isConnected) {
                     this.refreshNearbyAvatars();
@@ -2913,6 +2954,45 @@ class RadegastWebClient {
             console.error('Error setting online status:', error);
             this.showAlert(`Failed to set online status: ${error.message}`, "danger");
         }
+    }
+
+    // Handle presence status changes from SignalR
+    onPresenceStatusChanged(accountId, status, statusText) {
+        console.log(`Presence status changed for ${accountId}: ${status} (${statusText})`);
+        
+        // Update local presence state tracking
+        this.presenceStates.set(accountId, { status, statusText });
+        
+        // Update the presence display for the current account
+        this.updatePresenceStatusDisplay(accountId, status, statusText);
+        
+        // Update account list display if needed
+        this.updateAccountPresenceDisplay(accountId, status, statusText);
+        
+        // Show notification for presence changes
+        const account = this.accounts.find(a => a.accountId === accountId);
+        const accountName = account ? (account.displayName || `${account.firstName} ${account.lastName}`) : 'Unknown Account';
+        this.showAlert(`${accountName} is now ${statusText}`, "info");
+    }
+
+    // Update presence display in the accounts list
+    updateAccountPresenceDisplay(accountId, status, statusText) {
+        const accountElement = document.querySelector(`[data-account-id="${accountId}"]`);
+        if (accountElement) {
+            const statusElement = accountElement.querySelector('.account-status');
+            if (statusElement) {
+                statusElement.textContent = statusText;
+                statusElement.className = `account-status status-${status.toLowerCase()}`;
+            }
+        }
+    }
+
+    // Update presence states for all accounts (useful after reconnection)
+    updateAccountPresenceStates() {
+        this.accounts.forEach(account => {
+            const presence = this.presenceStates.get(account.accountId) || { status: 'Online', statusText: 'Online' };
+            this.updateAccountPresenceDisplay(account.accountId, presence.status, presence.statusText);
+        });
     }
 
     // Update presence status display based on SignalR events
