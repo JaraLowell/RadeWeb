@@ -24,6 +24,7 @@ class RadegastWebClient {
         this.currentTeleportRequestId = null; // Track the currently displayed teleport request ID
         this.isInitialized = false; // Track if the client is fully initialized
         this.presenceStates = new Map(); // Track presence for each account
+        this.isSwitchingAccounts = false; // Flag to suppress notifications during account switching
         
         this.initializeSignalR();
         this.bindEvents();
@@ -1203,13 +1204,24 @@ class RadegastWebClient {
                     }
                 }
                 
-                // Also sync presence for all connected accounts to update the account list
-                for (const account of this.accounts) {
-                    if (account.isConnected && this.connection && this.connection.state === "Connected") {
-                        try {
-                            await this.connection.invoke("GetCurrentPresenceStatus", account.accountId);
-                        } catch (error) {
-                            console.error(`Error syncing presence for account ${account.accountId}:`, error);
+                // Only sync presence for other connected accounts if this is not during initialization
+                if (this.isInitialized) {
+                    console.log('Syncing presence for all connected accounts (selective)');
+                    for (const account of this.accounts) {
+                        if (account.isConnected && account.accountId !== this.currentAccountId && 
+                            this.connection && this.connection.state === "Connected") {
+                            try {
+                                // Add a small delay to prevent overwhelming the server
+                                setTimeout(async () => {
+                                    try {
+                                        await this.connection.invoke("GetCurrentPresenceStatus", account.accountId);
+                                    } catch (error) {
+                                        console.debug(`Error syncing presence for account ${account.accountId}:`, error);
+                                    }
+                                }, 100 * this.accounts.indexOf(account)); // Stagger the requests
+                            } catch (error) {
+                                console.debug(`Error setting up presence sync for account ${account.accountId}:`, error);
+                            }
                         }
                     }
                 }
@@ -1438,6 +1450,9 @@ class RadegastWebClient {
     }
 
     async selectAccount(accountId) {
+        // Set flag to suppress presence notifications during switching
+        this.isSwitchingAccounts = true;
+        
         // Store previous account for cleanup
         this.previousAccountId = this.currentAccountId;
         this.currentAccountId = accountId;
@@ -1445,6 +1460,7 @@ class RadegastWebClient {
         
         if (!account) {
             console.error(`Account ${accountId} not found`);
+            this.isSwitchingAccounts = false; // Reset flag on error
             return;
         }
 
@@ -1598,6 +1614,12 @@ class RadegastWebClient {
 
         // Initialize presence status display with current account status
         this.initializePresenceStatusForAccount(account);
+        
+        // Reset the switching flag after a short delay to allow all status updates to complete
+        setTimeout(() => {
+            this.isSwitchingAccounts = false;
+            console.log(`Account switch completed: ${accountId}`);
+        }, 1000); // Give 1 second for all presence updates to settle
     }
 
     // Initialize the presence status display based on current account status
@@ -2958,7 +2980,13 @@ class RadegastWebClient {
 
     // Handle presence status changes from SignalR
     onPresenceStatusChanged(accountId, status, statusText) {
-        console.log(`Presence status changed for ${accountId}: ${status} (${statusText})`);
+        console.log(`Presence status update for ${accountId}: ${status} (${statusText}) [switching: ${this.isSwitchingAccounts}]`);
+        
+        // Check if this is actually a change or just a sync
+        const previousState = this.presenceStates.get(accountId);
+        const isActualChange = !previousState || 
+            previousState.status !== status || 
+            previousState.statusText !== statusText;
         
         // Update local presence state tracking
         this.presenceStates.set(accountId, { status, statusText });
@@ -2969,10 +2997,22 @@ class RadegastWebClient {
         // Update account list display if needed
         this.updateAccountPresenceDisplay(accountId, status, statusText);
         
-        // Show notification for presence changes
-        const account = this.accounts.find(a => a.accountId === accountId);
-        const accountName = account ? (account.displayName || `${account.firstName} ${account.lastName}`) : 'Unknown Account';
-        this.showAlert(`${accountName} is now ${statusText}`, "info");
+        // Only show notification for actual changes (not routine syncing or during account switching)
+        if (isActualChange && previousState && !this.isSwitchingAccounts && this.isInitialized) {
+            const account = this.accounts.find(a => a.accountId === accountId);
+            const accountName = account ? (account.displayName || `${account.firstName} ${account.lastName}`) : 'Unknown Account';
+            
+            // Only show notifications for significant status changes (Away/Busy) or manual changes to current account
+            const isSignificantChange = (status === 'Away' || status === 'Busy') && previousState.status !== status;
+            const isCurrentAccountChange = accountId === this.currentAccountId && previousState.statusText !== statusText;
+            
+            if (isSignificantChange || isCurrentAccountChange) {
+                console.log(`Significant presence change for ${accountName}: ${previousState.statusText} → ${statusText}`);
+                this.showAlert(`${accountName} is now ${statusText}`, "info");
+            } else {
+                console.debug(`Minor presence update for ${accountName}: ${previousState.statusText} → ${statusText} (no notification)`);
+            }
+        }
     }
 
     // Update presence display in the accounts list
