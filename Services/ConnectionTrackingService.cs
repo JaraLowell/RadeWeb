@@ -47,6 +47,7 @@ namespace RadegastWeb.Services
         {
             if (_disposed) return;
 
+            int remainingConnections = 0;
             _lock.EnterWriteLock();
             try
             {
@@ -54,6 +55,7 @@ namespace RadegastWeb.Services
                 if (_accountConnections.TryGetValue(accountId, out var accountConnections))
                 {
                     accountConnections.TryRemove(connectionId, out _);
+                    remainingConnections = accountConnections.Count; // Get count while we have the lock
                     
                     // Clean up empty account entries
                     if (accountConnections.IsEmpty)
@@ -75,7 +77,7 @@ namespace RadegastWeb.Services
                 }
 
                 _logger.LogDebug("Removed connection {ConnectionId} from account {AccountId}. Remaining connections for account: {Count}",
-                    connectionId, accountId, GetConnectionCount(accountId));
+                    connectionId, accountId, remainingConnections);
             }
             catch (Exception ex)
             {
