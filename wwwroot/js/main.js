@@ -1543,9 +1543,6 @@ class RadegastWebClient {
             if (response.ok) {
                 const result = await response.json();
                 console.log(`Successfully set account ${accountId} as active on server:`, result);
-                
-                // Show a brief success message for user feedback
-                this.showAlert(`Switched to ${account.firstName} ${account.lastName}`, "success");
             } else {
                 console.error(`Failed to set account as active on server, status: ${response.status}`);
                 const errorText = await response.text();
