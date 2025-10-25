@@ -41,5 +41,11 @@ namespace RadegastWeb.Services
         /// Force remove a connection and clean up all its associated data
         /// </summary>
         void ForceRemoveConnection(string connectionId);
+        
+        /// <summary>
+        /// Perform deep validation and cleanup of connection tracking state
+        /// Use this after long periods of server uptime to prevent state drift
+        /// </summary>
+        void PerformDeepCleanup();
     }
 }

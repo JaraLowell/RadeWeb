@@ -54,6 +54,21 @@ namespace RadegastWeb.Hubs
             {
                 if (Guid.TryParse(accountId, out var accountGuid))
                 {
+                    // Clean up any potential stale connections first (especially important after long periods)
+                    _connectionTrackingService.CleanupStaleConnections();
+                    
+                    // Check if this connection is already in the account group to prevent duplicates
+                    var existingConnections = _connectionTrackingService.GetConnectionsForAccount(accountGuid);
+                    if (existingConnections.Contains(Context.ConnectionId))
+                    {
+                        _logger.LogDebug("Connection {ConnectionId} already in account group {AccountId}, skipping duplicate join", 
+                            Context.ConnectionId, accountId);
+                        return;
+                    }
+
+                    // Force cleanup of this specific connection from all groups to prevent drift
+                    _connectionTrackingService.ForceRemoveConnection(Context.ConnectionId);
+                    
                     await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
                     _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
                     
@@ -138,18 +153,30 @@ namespace RadegastWeb.Hubs
             // Clean up any stale connections before switching
             _connectionTrackingService.CleanupStaleConnections();
 
-            // Leave the previous account group first
-            if (!string.IsNullOrEmpty(fromAccountId))
+            // First, completely clean up this connection from all existing groups to prevent duplicates
+            try
+            {
+                _connectionTrackingService.ForceRemoveConnection(Context.ConnectionId);
+                _logger.LogDebug("Cleaned up all existing group memberships for connection {ConnectionId}", Context.ConnectionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during cleanup of existing group memberships for connection {ConnectionId}", Context.ConnectionId);
+            }
+
+            // Leave the previous account group explicitly (in case SignalR groups weren't cleaned up properly)
+            if (!string.IsNullOrEmpty(fromAccountId) && Guid.TryParse(fromAccountId, out var fromGuid))
             {
                 try
                 {
-                    await LeaveAccountGroup(fromAccountId);
+                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"account_{fromAccountId}");
+                    _logger.LogDebug("Explicitly removed connection {ConnectionId} from SignalR group account_{FromAccountId}", 
+                        Context.ConnectionId, fromAccountId);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error leaving previous account group {FromAccountId} during switch for connection {ConnectionId}", 
+                    _logger.LogError(ex, "Error removing from SignalR group account_{FromAccountId} for connection {ConnectionId}", 
                         fromAccountId, Context.ConnectionId);
-                    // Continue with joining the new group even if leaving failed
                 }
             }
 
@@ -189,6 +216,56 @@ namespace RadegastWeb.Hubs
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during stale connections cleanup for connection {ConnectionId}", Context.ConnectionId);
+            }
+            
+            return Task.CompletedTask;
+        }
+
+        public async Task LeaveAllAccountGroups()
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to leave all account groups from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                // Force remove this connection from all account groups
+                _connectionTrackingService.ForceRemoveConnection(Context.ConnectionId);
+                _logger.LogInformation("Connection {ConnectionId} removed from all account groups", Context.ConnectionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error leaving all account groups for connection {ConnectionId}", Context.ConnectionId);
+            }
+        }
+
+        public Task PerformDeepConnectionCleanup()
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to perform deep connection cleanup from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return Task.CompletedTask;
+            }
+
+            try
+            {
+                _logger.LogInformation("Performing deep connection cleanup for long-running server instance");
+                
+                // Perform comprehensive cleanup - this helps after long periods of inactivity
+                _connectionTrackingService.CleanupStaleConnections();
+                
+                // Also clean up this specific connection completely
+                _connectionTrackingService.ForceRemoveConnection(Context.ConnectionId);
+                
+                _logger.LogInformation("Deep connection cleanup completed for connection {ConnectionId}", Context.ConnectionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during deep connection cleanup for connection {ConnectionId}", Context.ConnectionId);
             }
             
             return Task.CompletedTask;

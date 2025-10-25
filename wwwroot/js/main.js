@@ -246,6 +246,15 @@ class RadegastWebClient {
 
             await this.connection.start();
             
+            // Perform deep cleanup on connection - especially important for long-running servers
+            try {
+                console.log("Performing deep connection cleanup on initial connect...");
+                await this.connection.invoke("PerformDeepConnectionCleanup");
+                console.log("✓ Deep connection cleanup completed");
+            } catch (cleanupError) {
+                console.warn("Deep connection cleanup failed (may not be supported by server):", cleanupError);
+            }
+            
             // Start periodic connection health check
             this.startConnectionHealthCheck();
         } catch (err) {
@@ -255,12 +264,29 @@ class RadegastWebClient {
     }
 
     startConnectionHealthCheck() {
+        let healthCheckCount = 0;
+        
         // Check connection health every 30 seconds
         setInterval(() => {
+            healthCheckCount++;
+            
             if (this.connection && this.connection.state === 'Connected' && this.currentAccountId) {
                 // Verify we're still in the correct account group by checking if we need to rejoin
                 // This is a safety measure to ensure proper group membership
-                console.debug(`Connection health check: state=${this.connection.state}, accountId=${this.currentAccountId}`);
+                console.debug(`Connection health check #${healthCheckCount}: state=${this.connection.state}, accountId=${this.currentAccountId}`);
+                
+                // Perform deep cleanup every 10 minutes (20 checks * 30 seconds = 600 seconds = 10 minutes)
+                // This helps prevent connection state drift in long-running sessions
+                if (healthCheckCount % 20 === 0) {
+                    console.log(`Performing periodic deep cleanup (check #${healthCheckCount})...`);
+                    this.connection.invoke("PerformDeepConnectionCleanup")
+                        .then(() => {
+                            console.log("✓ Periodic deep cleanup completed");
+                        })
+                        .catch(error => {
+                            console.warn("Periodic deep cleanup failed:", error);
+                        });
+                }
             } else if (this.connection && this.connection.state !== 'Connected') {
                 console.warn(`SignalR connection state issue: ${this.connection.state}`);
             }
@@ -1694,14 +1720,23 @@ class RadegastWebClient {
                         } catch (switchError) {
                             console.warn("SwitchAccountGroup not available or failed, using separate calls:", switchError);
                             
-                            // Fallback to separate calls with better error handling
+                            // First try complete cleanup using LeaveAllAccountGroups
                             try {
-                                console.log(`Attempting to leave account group for ${this.previousAccountId}`);
-                                await this.connection.invoke("LeaveAccountGroup", this.previousAccountId);
-                                console.log(`✓ Left account group for ${this.previousAccountId}`);
-                            } catch (leaveError) {
-                                console.error("Failed to leave previous account group:", leaveError);
-                                // Continue anyway, the server will clean up on reconnection
+                                console.log(`Attempting complete cleanup of all account groups for connection`);
+                                await this.connection.invoke("LeaveAllAccountGroups");
+                                console.log(`✓ Complete cleanup successful`);
+                            } catch (cleanupError) {
+                                console.warn("LeaveAllAccountGroups failed, falling back to individual leave:", cleanupError);
+                                
+                                // Fallback to individual leave
+                                try {
+                                    console.log(`Attempting to leave account group for ${this.previousAccountId}`);
+                                    await this.connection.invoke("LeaveAccountGroup", this.previousAccountId);
+                                    console.log(`✓ Left account group for ${this.previousAccountId}`);
+                                } catch (leaveError) {
+                                    console.error("Failed to leave previous account group:", leaveError);
+                                    // Continue anyway, the server will clean up on reconnection
+                                }
                             }
                             
                             try {

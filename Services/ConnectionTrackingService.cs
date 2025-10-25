@@ -287,6 +287,134 @@ namespace RadegastWeb.Services
             }
         }
 
+        public void PerformDeepCleanup()
+        {
+            if (_disposed) return;
+
+            _lock.EnterWriteLock();
+            try
+            {
+                var totalAccountsBefore = _accountConnections.Count;
+                var totalConnectionsBefore = _connectionAccounts.Count;
+                
+                _logger.LogInformation("Starting deep cleanup - Accounts: {AccountCount}, Connections: {ConnectionCount}", 
+                    totalAccountsBefore, totalConnectionsBefore);
+
+                // First pass: Remove all empty collections
+                var emptyAccounts = new List<Guid>();
+                foreach (var kvp in _accountConnections.ToList())
+                {
+                    if (kvp.Value.IsEmpty)
+                    {
+                        emptyAccounts.Add(kvp.Key);
+                    }
+                }
+
+                var emptyConnections = new List<string>();
+                foreach (var kvp in _connectionAccounts.ToList())
+                {
+                    if (kvp.Value.IsEmpty)
+                    {
+                        emptyConnections.Add(kvp.Key);
+                    }
+                }
+
+                // Remove empty entries
+                foreach (var accountId in emptyAccounts)
+                {
+                    _accountConnections.TryRemove(accountId, out _);
+                }
+
+                foreach (var connectionId in emptyConnections)
+                {
+                    _connectionAccounts.TryRemove(connectionId, out _);
+                }
+
+                // Second pass: Validate data consistency between both dictionaries
+                var inconsistentConnections = new List<string>();
+                
+                foreach (var connectionEntry in _connectionAccounts.ToList())
+                {
+                    var connectionId = connectionEntry.Key;
+                    var accountIds = connectionEntry.Value;
+                    
+                    foreach (var accountId in accountIds.Keys.ToList())
+                    {
+                        // Check if the reverse mapping exists
+                        if (!_accountConnections.TryGetValue(accountId, out var accountConnections) || 
+                            !accountConnections.ContainsKey(connectionId))
+                        {
+                            // Inconsistency detected - remove from connection mapping
+                            accountIds.TryRemove(accountId, out _);
+                            _logger.LogWarning("Removed inconsistent connection {ConnectionId} -> account {AccountId} mapping", 
+                                connectionId, accountId);
+                        }
+                    }
+                    
+                    // If connection has no accounts left, mark for removal
+                    if (accountIds.IsEmpty)
+                    {
+                        inconsistentConnections.Add(connectionId);
+                    }
+                }
+
+                // Remove connections with no accounts
+                foreach (var connectionId in inconsistentConnections)
+                {
+                    _connectionAccounts.TryRemove(connectionId, out _);
+                }
+
+                // Third pass: Clean up account mappings with invalid connections
+                var inconsistentAccounts = new List<Guid>();
+                
+                foreach (var accountEntry in _accountConnections.ToList())
+                {
+                    var accountId = accountEntry.Key;
+                    var connections = accountEntry.Value;
+                    
+                    foreach (var connectionId in connections.Keys.ToList())
+                    {
+                        // Check if the reverse mapping exists
+                        if (!_connectionAccounts.TryGetValue(connectionId, out var connectionAccounts) || 
+                            !connectionAccounts.ContainsKey(accountId))
+                        {
+                            // Inconsistency detected - remove from account mapping
+                            connections.TryRemove(connectionId, out _);
+                            _logger.LogWarning("Removed inconsistent account {AccountId} -> connection {ConnectionId} mapping", 
+                                accountId, connectionId);
+                        }
+                    }
+                    
+                    // If account has no connections left, mark for removal
+                    if (connections.IsEmpty)
+                    {
+                        inconsistentAccounts.Add(accountId);
+                    }
+                }
+
+                // Remove accounts with no connections
+                foreach (var accountId in inconsistentAccounts)
+                {
+                    _accountConnections.TryRemove(accountId, out _);
+                }
+
+                var totalAccountsAfter = _accountConnections.Count;
+                var totalConnectionsAfter = _connectionAccounts.Count;
+                
+                _logger.LogInformation("Deep cleanup completed - Before: {AccountsBefore} accounts, {ConnectionsBefore} connections | After: {AccountsAfter} accounts, {ConnectionsAfter} connections | Cleaned: {EmptyAccounts} empty accounts, {EmptyConnections} empty connections, {InconsistentAccounts} inconsistent accounts, {InconsistentConnections} inconsistent connections", 
+                    totalAccountsBefore, totalConnectionsBefore, totalAccountsAfter, totalConnectionsAfter,
+                    emptyAccounts.Count, emptyConnections.Count, inconsistentAccounts.Count, inconsistentConnections.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during deep cleanup");
+            }
+            finally
+            {
+                _lock.ExitWriteLock();
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
