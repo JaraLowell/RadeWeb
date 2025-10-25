@@ -225,9 +225,13 @@ class RadegastWebClient {
                 
                 // Rejoin the current account group after reconnection
                 if (this.currentAccountId) {
-                    this.connection.invoke("JoinAccountGroup", this.currentAccountId)
+                    this.ensureAccountGroupMembership(this.currentAccountId)
                         .then(() => {
                             console.log(`Rejoined account group ${this.currentAccountId} after reconnection`);
+                            // Also refresh nearby avatars to ensure we get updates
+                            if (this.accounts.find(a => a.accountId === this.currentAccountId)?.isConnected) {
+                                this.refreshNearbyAvatars();
+                            }
                         })
                         .catch(error => {
                             console.error("Failed to rejoin account group after reconnection:", error);
@@ -241,9 +245,42 @@ class RadegastWebClient {
             });
 
             await this.connection.start();
+            
+            // Start periodic connection health check
+            this.startConnectionHealthCheck();
         } catch (err) {
             console.error("SignalR Connection Error:", err);
             this.showAlert("Failed to connect to real-time service", "warning");
+        }
+    }
+
+    startConnectionHealthCheck() {
+        // Check connection health every 30 seconds
+        setInterval(() => {
+            if (this.connection && this.connection.state === 'Connected' && this.currentAccountId) {
+                // Verify we're still in the correct account group by checking if we need to rejoin
+                // This is a safety measure to ensure proper group membership
+                console.debug(`Connection health check: state=${this.connection.state}, accountId=${this.currentAccountId}`);
+            } else if (this.connection && this.connection.state !== 'Connected') {
+                console.warn(`SignalR connection state issue: ${this.connection.state}`);
+            }
+        }, 30000); // 30 seconds
+    }
+
+    async ensureAccountGroupMembership(accountId) {
+        if (!this.connection || this.connection.state !== 'Connected') {
+            console.warn('Cannot ensure group membership: SignalR not connected');
+            return false;
+        }
+
+        try {
+            console.log(`Ensuring group membership for account ${accountId}`);
+            await this.connection.invoke("JoinAccountGroup", accountId);
+            console.log(`✓ Ensured group membership for account ${accountId}`);
+            return true;
+        } catch (error) {
+            console.error(`Failed to ensure group membership for account ${accountId}:`, error);
+            return false;
         }
     }
 
@@ -1630,45 +1667,66 @@ class RadegastWebClient {
 
         // Manage SignalR account groups
         if (this.connection) {
-            try {
-                // Use the new atomic switch method if available, otherwise fall back to separate calls
-                if (this.previousAccountId && this.previousAccountId !== accountId) {
-                    try {
-                        await this.connection.invoke("SwitchAccountGroup", this.previousAccountId, accountId);
-                        console.log(`Switched account groups from ${this.previousAccountId} to ${accountId}`);
-                    } catch (switchError) {
-                        console.warn("SwitchAccountGroup not available or failed, using separate calls:", switchError);
-                        
-                        // Fallback to separate calls with better error handling
-                        try {
-                            await this.connection.invoke("LeaveAccountGroup", this.previousAccountId);
-                            console.log(`Left account group for ${this.previousAccountId}`);
-                        } catch (leaveError) {
-                            console.error("Failed to leave previous account group:", leaveError);
-                            // Continue anyway, the server will clean up on reconnection
-                        }
-                        
-                        try {
-                            await this.connection.invoke("JoinAccountGroup", accountId);
-                            console.log(`Joined account group for ${accountId}`);
-                        } catch (joinError) {
-                            console.error("Failed to join new account group:", joinError);
-                            throw joinError; // This is critical, so re-throw
-                        }
-                    }
-                } else {
-                    // First time joining or same account
-                    await this.connection.invoke("JoinAccountGroup", accountId);
-                    console.log(`Joined account group for ${accountId}`);
-                }
+            console.log(`SignalR connection state: ${this.connection.state}`);
+            console.log(`Previous account ID: ${this.previousAccountId}, New account ID: ${accountId}`);
+            
+            // Check if connection is in Connected state
+            if (this.connection.state !== 'Connected') {
+                console.warn(`SignalR connection not ready (state: ${this.connection.state}), will retry group management`);
                 
-                // Also call SetActiveAccount via SignalR for additional server-side notification
+                // Try to ensure group membership with a delay
+                setTimeout(() => {
+                    if (this.connection && this.connection.state === 'Connected') {
+                        console.log('Retrying group management after connection state change');
+                        this.ensureAccountGroupMembership(accountId);
+                    }
+                }, 2000);
+                
+                this.showAlert("Real-time connection not ready, retrying...", "warning");
+            } else {
                 try {
-                    await this.connection.invoke("SetActiveAccount", accountId);
-                    console.log(`Successfully notified server via SignalR of active account: ${accountId}`);
-                } catch (signalRError) {
-                    console.warn("SignalR SetActiveAccount failed (this is okay, REST API call should have worked):", signalRError);
-                }
+                    // Use the new atomic switch method if available, otherwise fall back to separate calls
+                    if (this.previousAccountId && this.previousAccountId !== accountId) {
+                        console.log(`Attempting to switch account groups from ${this.previousAccountId} to ${accountId}`);
+                        try {
+                            await this.connection.invoke("SwitchAccountGroup", this.previousAccountId, accountId);
+                            console.log(`✓ Switched account groups from ${this.previousAccountId} to ${accountId}`);
+                        } catch (switchError) {
+                            console.warn("SwitchAccountGroup not available or failed, using separate calls:", switchError);
+                            
+                            // Fallback to separate calls with better error handling
+                            try {
+                                console.log(`Attempting to leave account group for ${this.previousAccountId}`);
+                                await this.connection.invoke("LeaveAccountGroup", this.previousAccountId);
+                                console.log(`✓ Left account group for ${this.previousAccountId}`);
+                            } catch (leaveError) {
+                                console.error("Failed to leave previous account group:", leaveError);
+                                // Continue anyway, the server will clean up on reconnection
+                            }
+                            
+                            try {
+                                console.log(`Attempting to join account group for ${accountId}`);
+                                await this.connection.invoke("JoinAccountGroup", accountId);
+                                console.log(`✓ Joined account group for ${accountId}`);
+                            } catch (joinError) {
+                                console.error("Failed to join new account group:", joinError);
+                                throw joinError; // This is critical, so re-throw
+                            }
+                        }
+                    } else {
+                        // First time joining or same account
+                        console.log(`Attempting to join account group for ${accountId} (first time or same account)`);
+                        await this.connection.invoke("JoinAccountGroup", accountId);
+                        console.log(`✓ Joined account group for ${accountId}`);
+                    }
+                    
+                    // Also call SetActiveAccount via SignalR for additional server-side notification
+                    try {
+                        await this.connection.invoke("SetActiveAccount", accountId);
+                        console.log(`✓ Successfully notified server via SignalR of active account: ${accountId}`);
+                    } catch (signalRError) {
+                        console.warn("SignalR SetActiveAccount failed (this is okay, REST API call should have worked):", signalRError);
+                    }
                 
                 // Load recent chat sessions for this account
                 await this.connection.invoke("GetRecentSessions", accountId);
@@ -1687,15 +1745,18 @@ class RadegastWebClient {
                     }
                 }
                 
-                // Refresh nearby avatars for the new account (only if connected)
-                if (account.isConnected) {
-                    this.refreshNearbyAvatars();
-                    // Load groups for connected accounts
-                    this.loadGroups();
+                    // Refresh nearby avatars for the new account (only if connected)
+                    if (account.isConnected) {
+                        this.refreshNearbyAvatars();
+                        // Load groups for connected accounts
+                        this.loadGroups();
+                    }
+                } catch (error) {
+                    console.error("Error managing account groups:", error);
                 }
-            } catch (error) {
-                console.error("Error managing account groups:", error);
             }
+        } else {
+            console.warn("SignalR connection not available, skipping group management");
         }
 
         // Initialize presence status display with current account status
