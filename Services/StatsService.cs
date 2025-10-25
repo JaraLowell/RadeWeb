@@ -152,80 +152,151 @@ namespace RadegastWeb.Services
                 var regionX = (uint)(simHandle >> 32);
                 var regionY = (uint)(simHandle & 0xFFFFFFFF);
                 
-                using var context = _dbContextFactory.CreateDbContext();
-                
-                // Try to find existing record for this avatar/region/date
-                var existingRecord = await context.VisitorStats
-                    .FirstOrDefaultAsync(vs => vs.AvatarId == avatarId && 
-                        vs.RegionName == regionName && 
-                        vs.VisitDate == today);
-                
-                if (existingRecord != null)
+                // Retry mechanism for handling race conditions during bulk recording
+                const int maxRetries = 3;
+                for (int attempt = 0; attempt < maxRetries; attempt++)
                 {
-                    // Always update last seen time to keep it current
-                    existingRecord.LastSeenAt = now;
-                    
-                    // During cooldown period, only update LastSeenAt and skip name updates and cache management
-                    if (isWithinCooldown)
+                    try
                     {
+                        using var context = _dbContextFactory.CreateDbContext();
+                        
+                        // Try to find existing record for this avatar/region/date
+                        var existingRecord = await context.VisitorStats
+                            .FirstOrDefaultAsync(vs => vs.AvatarId == avatarId && 
+                                vs.RegionName == regionName && 
+                                vs.VisitDate == today);
+                        
+                        if (existingRecord != null)
+                        {
+                            // Always update last seen time to keep it current
+                            existingRecord.LastSeenAt = now;
+                            
+                            // During cooldown period, only update LastSeenAt and skip name updates and cache management
+                            if (isWithinCooldown)
+                            {
+                                await context.SaveChangesAsync();
+                                _logger.LogDebug("Updated LastSeenAt for {AvatarId} ({AvatarName}) in {RegionName} during cooldown", 
+                                    avatarId, avatarName ?? "Unknown", regionName);
+                                return; // Exit early during cooldown - we've updated LastSeenAt which was the main goal
+                            }
+                            
+                            // Outside cooldown period - also update names if we have better ones
+                            // Update avatar name if we have a better one (not null/empty and not generic)
+                            if (!string.IsNullOrEmpty(avatarName) && 
+                                avatarName != "Unknown User" && 
+                                avatarName != "Loading..." &&
+                                (string.IsNullOrEmpty(existingRecord.AvatarName) || 
+                                 existingRecord.AvatarName == "Unknown User" ||
+                                 existingRecord.AvatarName == "Loading..."))
+                            {
+                                existingRecord.AvatarName = avatarName;
+                            }
+                            
+                            // Update display name if we have a better one
+                            if (!string.IsNullOrEmpty(displayName) && 
+                                displayName != "Loading..." &&
+                                displayName != "???" &&
+                                (string.IsNullOrEmpty(existingRecord.DisplayName) || 
+                                 existingRecord.DisplayName == "Loading..." ||
+                                 existingRecord.DisplayName == "???"))
+                            {
+                                existingRecord.DisplayName = displayName;
+                            }
+                        }
+                        else
+                        {
+                            // During cooldown, don't create new records (this shouldn't happen for existing avatars but safety check)
+                            if (isWithinCooldown)
+                            {
+                                _logger.LogWarning("Attempted to create new visitor record during cooldown for {AvatarId} in {RegionName} - skipping", 
+                                    avatarId, regionName);
+                                return;
+                            }
+                            
+                            // Create new record
+                            var visitorStats = new VisitorStats
+                            {
+                                AvatarId = avatarId,
+                                RegionName = regionName,
+                                SimHandle = simHandle,
+                                VisitDate = today,
+                                FirstSeenAt = now,
+                                LastSeenAt = now,
+                                AvatarName = avatarName,
+                                DisplayName = displayName,
+                                RegionX = regionX,
+                                RegionY = regionY
+                            };
+                            
+                            context.VisitorStats.Add(visitorStats);
+                        }
+                        
                         await context.SaveChangesAsync();
-                        _logger.LogDebug("Updated LastSeenAt for {AvatarId} ({AvatarName}) in {RegionName} during cooldown", 
-                            avatarId, avatarName ?? "Unknown", regionName);
-                        return; // Exit early during cooldown - we've updated LastSeenAt which was the main goal
+                        
+                        // Success - break out of retry loop
+                        break;
                     }
-                    
-                    // Outside cooldown period - also update names if we have better ones
-                    // Update avatar name if we have a better one (not null/empty and not generic)
-                    if (!string.IsNullOrEmpty(avatarName) && 
-                        avatarName != "Unknown User" && 
-                        avatarName != "Loading..." &&
-                        (string.IsNullOrEmpty(existingRecord.AvatarName) || 
-                         existingRecord.AvatarName == "Unknown User" ||
-                         existingRecord.AvatarName == "Loading..."))
+                    catch (DbUpdateException dbEx) when (dbEx.InnerException?.Message?.Contains("UNIQUE constraint failed: VisitorStats.AvatarId, VisitorStats.RegionName, VisitorStats.VisitDate") == true)
                     {
-                        existingRecord.AvatarName = avatarName;
-                    }
-                    
-                    // Update display name if we have a better one
-                    if (!string.IsNullOrEmpty(displayName) && 
-                        displayName != "Loading..." &&
-                        displayName != "???" &&
-                        (string.IsNullOrEmpty(existingRecord.DisplayName) || 
-                         existingRecord.DisplayName == "Loading..." ||
-                         existingRecord.DisplayName == "???"))
-                    {
-                        existingRecord.DisplayName = displayName;
+                        // Handle race condition where another thread created the record between our check and insert
+                        _logger.LogDebug("Unique constraint violation for visitor {AvatarId} in {RegionName} on {Date} - attempt {Attempt}/{MaxAttempts}", 
+                            avatarId, regionName, today, attempt + 1, maxRetries);
+                        
+                        if (attempt == maxRetries - 1)
+                        {
+                            // Final attempt - try to update the existing record that another thread created
+                            _logger.LogWarning("Final attempt to handle unique constraint violation for visitor {AvatarId} in {RegionName} on {Date}", 
+                                avatarId, regionName, today);
+                            
+                            using var contextRetry = _dbContextFactory.CreateDbContext();
+                            var existingRecord = await contextRetry.VisitorStats
+                                .FirstOrDefaultAsync(vs => vs.AvatarId == avatarId && 
+                                    vs.RegionName == regionName && 
+                                    vs.VisitDate == today);
+                            
+                            if (existingRecord != null)
+                            {
+                                // Update the existing record
+                                existingRecord.LastSeenAt = now;
+                                
+                                // Update names if we have better ones
+                                if (!string.IsNullOrEmpty(avatarName) && 
+                                    avatarName != "Unknown User" && 
+                                    avatarName != "Loading..." &&
+                                    (string.IsNullOrEmpty(existingRecord.AvatarName) || 
+                                     existingRecord.AvatarName == "Unknown User" ||
+                                     existingRecord.AvatarName == "Loading..."))
+                                {
+                                    existingRecord.AvatarName = avatarName;
+                                }
+                                
+                                if (!string.IsNullOrEmpty(displayName) && 
+                                    displayName != "Loading..." &&
+                                    displayName != "???" &&
+                                    (string.IsNullOrEmpty(existingRecord.DisplayName) || 
+                                     existingRecord.DisplayName == "Loading..." ||
+                                     existingRecord.DisplayName == "???"))
+                                {
+                                    existingRecord.DisplayName = displayName;
+                                }
+                                
+                                await contextRetry.SaveChangesAsync();
+                                _logger.LogDebug("Successfully updated existing record for visitor {AvatarId} in {RegionName} after constraint violation", 
+                                    avatarId, regionName);
+                            }
+                            else
+                            {
+                                _logger.LogWarning("Could not find existing record to update for visitor {AvatarId} in {RegionName} after constraint violation", 
+                                    avatarId, regionName);
+                            }
+                        }
+                        else
+                        {
+                            // Wait a small random time before retrying to reduce collision probability
+                            await Task.Delay(new Random().Next(10, 50));
+                        }
                     }
                 }
-                else
-                {
-                    // During cooldown, don't create new records (this shouldn't happen for existing avatars but safety check)
-                    if (isWithinCooldown)
-                    {
-                        _logger.LogWarning("Attempted to create new visitor record during cooldown for {AvatarId} in {RegionName} - skipping", 
-                            avatarId, regionName);
-                        return;
-                    }
-                    
-                    // Create new record
-                    var visitorStats = new VisitorStats
-                    {
-                        AvatarId = avatarId,
-                        RegionName = regionName,
-                        SimHandle = simHandle,
-                        VisitDate = today,
-                        FirstSeenAt = now,
-                        LastSeenAt = now,
-                        AvatarName = avatarName,
-                        DisplayName = displayName,
-                        RegionX = regionX,
-                        RegionY = regionY
-                    };
-                    
-                    context.VisitorStats.Add(visitorStats);
-                }
-                
-                await context.SaveChangesAsync();
                 
                 // Update cache and clean up old entries periodically (only outside cooldown period)
                 if (!isWithinCooldown)
@@ -249,6 +320,11 @@ namespace RadegastWeb.Services
                     _logger.LogDebug("Updated LastSeenAt for existing visitor {AvatarId} ({AvatarName}) in {RegionName} at {SLTTime}", 
                         avatarId, avatarName ?? "Unknown", regionName, sltNow.ToString("yyyy-MM-dd HH:mm:ss"));
                 }
+            }
+            catch (DbUpdateException dbEx) when (dbEx.InnerException?.Message?.Contains("UNIQUE constraint failed") == true)
+            {
+                // This should not happen due to our retry logic above, but log it if it does
+                _logger.LogError(dbEx, "Unexpected unique constraint violation after retry logic for visitor {AvatarId} in {RegionName}", avatarId, regionName);
             }
             catch (Exception ex)
             {

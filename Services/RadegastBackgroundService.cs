@@ -596,8 +596,12 @@ namespace RadegastWeb.Services
                         {
                             try
                             {
+                                // Add small random delay to reduce race conditions during bulk recording
+                                var delay = new Random().Next(0, 2000); // 0-2 seconds
+                                await Task.Delay(delay, cancellationToken);
+                                
                                 await instance.RecordAllPresentAvatarsAsync();
-                                _logger.LogDebug("Triggered periodic avatar recording for account {AccountId}", account.Id);
+                                _logger.LogDebug("Triggered periodic avatar recording for account {AccountId} (delayed {Delay}ms)", account.Id, delay);
                             }
                             catch (Exception ex)
                             {

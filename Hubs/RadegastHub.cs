@@ -221,13 +221,13 @@ namespace RadegastWeb.Hubs
             return Task.CompletedTask;
         }
 
-        public async Task LeaveAllAccountGroups()
+        public Task LeaveAllAccountGroups()
         {
             if (!IsAuthenticated())
             {
                 _logger.LogWarning("Unauthenticated attempt to leave all account groups from {ConnectionId}", Context.ConnectionId);
                 Context.Abort();
-                return;
+                return Task.CompletedTask;
             }
 
             try
@@ -240,6 +240,8 @@ namespace RadegastWeb.Hubs
             {
                 _logger.LogError(ex, "Error leaving all account groups for connection {ConnectionId}", Context.ConnectionId);
             }
+            
+            return Task.CompletedTask;
         }
 
         public Task PerformDeepConnectionCleanup()

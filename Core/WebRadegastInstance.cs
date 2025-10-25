@@ -3174,7 +3174,8 @@ namespace RadegastWeb.Core
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "Error recording present detailed avatar {AvatarId}", kvp.Key);
+                    // Reduced log level to avoid spam during bulk operations
+                    _logger.LogTrace(ex, "Error recording present detailed avatar {AvatarId} during bulk recording", kvp.Key);
                 }
             }
 
@@ -3196,7 +3197,8 @@ namespace RadegastWeb.Core
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogDebug(ex, "Error recording present coarse avatar {AvatarId}", kvp.Key);
+                    // Reduced log level to avoid spam during bulk operations
+                    _logger.LogTrace(ex, "Error recording present coarse avatar {AvatarId} during bulk recording", kvp.Key);
                 }
             }
 
