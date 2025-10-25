@@ -47,5 +47,10 @@ namespace RadegastWeb.Services
         /// Use this after long periods of server uptime to prevent state drift
         /// </summary>
         void PerformDeepCleanup();
+        
+        /// <summary>
+        /// Replace old connections for an account with a new connection (handles browser refresh)
+        /// </summary>
+        void ReplaceConnectionForAccount(Guid accountId, string newConnectionId, IEnumerable<string> oldConnectionIds);
     }
 }

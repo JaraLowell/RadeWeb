@@ -254,6 +254,17 @@ class RadegastWebClient {
             } catch (cleanupError) {
                 console.warn("Deep connection cleanup failed (may not be supported by server):", cleanupError);
             }
+
+            // If we have a current account, validate and fix its connection state
+            if (this.currentAccountId) {
+                try {
+                    console.log(`Validating connection state for current account ${this.currentAccountId}...`);
+                    await this.connection.invoke("ValidateAndFixConnectionState", this.currentAccountId);
+                    console.log(`✓ Connection state validated for account ${this.currentAccountId}`);
+                } catch (validateError) {
+                    console.warn("Connection state validation failed:", validateError);
+                }
+            }
             
             // Start periodic connection health check
             this.startConnectionHealthCheck();
@@ -1743,6 +1754,14 @@ class RadegastWebClient {
                                 console.log(`Attempting to join account group for ${accountId}`);
                                 await this.connection.invoke("JoinAccountGroup", accountId);
                                 console.log(`✓ Joined account group for ${accountId}`);
+                                
+                                // Validate connection state after fallback join
+                                try {
+                                    await this.connection.invoke("ValidateAndFixConnectionState", accountId);
+                                    console.log(`✓ Connection state validated after fallback join for account ${accountId}`);
+                                } catch (validateError) {
+                                    console.warn("Connection state validation failed after fallback join:", validateError);
+                                }
                             } catch (joinError) {
                                 console.error("Failed to join new account group:", joinError);
                                 throw joinError; // This is critical, so re-throw
@@ -1753,6 +1772,15 @@ class RadegastWebClient {
                         console.log(`Attempting to join account group for ${accountId} (first time or same account)`);
                         await this.connection.invoke("JoinAccountGroup", accountId);
                         console.log(`✓ Joined account group for ${accountId}`);
+                    }
+                    
+                    // Validate and fix connection state to handle browser refresh scenarios
+                    try {
+                        console.log(`Validating connection state for account ${accountId}...`);
+                        await this.connection.invoke("ValidateAndFixConnectionState", accountId);
+                        console.log(`✓ Connection state validated for account ${accountId}`);
+                    } catch (validateError) {
+                        console.warn("Connection state validation failed:", validateError);
                     }
                     
                     // Also call SetActiveAccount via SignalR for additional server-side notification

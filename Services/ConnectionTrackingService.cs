@@ -415,6 +415,59 @@ namespace RadegastWeb.Services
             }
         }
 
+        public void ReplaceConnectionForAccount(Guid accountId, string newConnectionId, IEnumerable<string> oldConnectionIds)
+        {
+            if (_disposed) return;
+
+            _lock.EnterWriteLock();
+            try
+            {
+                // First remove all old connections for this account
+                foreach (var oldConnectionId in oldConnectionIds)
+                {
+                    if (oldConnectionId != newConnectionId)
+                    {
+                        // Remove from connection -> accounts mapping
+                        if (_connectionAccounts.TryGetValue(oldConnectionId, out var connectionAccounts))
+                        {
+                            connectionAccounts.TryRemove(accountId, out _);
+                            if (connectionAccounts.IsEmpty)
+                            {
+                                _connectionAccounts.TryRemove(oldConnectionId, out _);
+                            }
+                        }
+
+                        // Remove from account -> connections mapping
+                        if (_accountConnections.TryGetValue(accountId, out var accountConnections))
+                        {
+                            accountConnections.TryRemove(oldConnectionId, out _);
+                        }
+
+                        _logger.LogInformation("Removed old connection {OldConnectionId} from account {AccountId} during replacement", 
+                            oldConnectionId, accountId);
+                    }
+                }
+
+                // Add the new connection if it's not already there
+                var accountConnectionsForAdd = _accountConnections.GetOrAdd(accountId, _ => new ConcurrentDictionary<string, bool>());
+                var connectionAccountsForAdd = _connectionAccounts.GetOrAdd(newConnectionId, _ => new ConcurrentDictionary<Guid, bool>());
+                
+                accountConnectionsForAdd.TryAdd(newConnectionId, true);
+                connectionAccountsForAdd.TryAdd(accountId, true);
+
+                _logger.LogInformation("Replaced {OldCount} old connections with new connection {NewConnectionId} for account {AccountId}", 
+                    oldConnectionIds.Count(), newConnectionId, accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error replacing connections for account {AccountId}", accountId);
+            }
+            finally
+            {
+                _lock.ExitWriteLock();
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed) return;

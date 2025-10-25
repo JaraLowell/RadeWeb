@@ -57,13 +57,49 @@ namespace RadegastWeb.Hubs
                     // Clean up any potential stale connections first (especially important after long periods)
                     _connectionTrackingService.CleanupStaleConnections();
                     
-                    // Check if this connection is already in the account group to prevent duplicates
+                    // Get existing connections for this account to handle browser refresh scenario
                     var existingConnections = _connectionTrackingService.GetConnectionsForAccount(accountGuid);
+                    var currentConnectionCount = existingConnections.Count();
+                    
+                    _logger.LogDebug("Account {AccountId} currently has {Count} connections before join: [{Connections}]", 
+                        accountId, currentConnectionCount, string.Join(", ", existingConnections));
+
+                    // Check if this connection is already in the account group to prevent duplicates
                     if (existingConnections.Contains(Context.ConnectionId))
                     {
                         _logger.LogDebug("Connection {ConnectionId} already in account group {AccountId}, skipping duplicate join", 
                             Context.ConnectionId, accountId);
                         return;
+                    }
+
+                    // Handle browser refresh scenario: if there are multiple connections, clean up potentially stale ones
+                    if (currentConnectionCount > 0)
+                    {
+                        _logger.LogInformation("Detected {Count} existing connections for account {AccountId} during new join from {ConnectionId}. This may indicate a browser refresh scenario.", 
+                            currentConnectionCount, accountId, Context.ConnectionId);
+                        
+                        // Clean up potentially stale connections (this will be detected by the next SignalR ping)
+                        foreach (var existingConnectionId in existingConnections.ToList())
+                        {
+                            if (existingConnectionId != Context.ConnectionId)
+                            {
+                                _logger.LogDebug("Cleaning up potentially stale connection {ExistingConnectionId} for account {AccountId}", 
+                                    existingConnectionId, accountId);
+                                
+                                // Try to remove from SignalR group (may fail if connection is truly stale)
+                                try
+                                {
+                                    await Groups.RemoveFromGroupAsync(existingConnectionId, $"account_{accountId}");
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogDebug(ex, "Failed to remove potentially stale connection {ExistingConnectionId} from SignalR group (connection may already be dead)", existingConnectionId);
+                                }
+                                
+                                // Remove from tracking
+                                _connectionTrackingService.RemoveConnection(existingConnectionId, accountGuid);
+                            }
+                        }
                     }
 
                     // Force cleanup of this specific connection from all groups to prevent drift
@@ -72,9 +108,9 @@ namespace RadegastWeb.Hubs
                     await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
                     _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
                     
-                    var connectionCount = _connectionTrackingService.GetConnectionCount(accountGuid);
+                    var finalConnectionCount = _connectionTrackingService.GetConnectionCount(accountGuid);
                     _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}. Total connections: {Count}", 
-                        Context.ConnectionId, accountId, connectionCount);
+                        Context.ConnectionId, accountId, finalConnectionCount);
                 }
                 else
                 {
@@ -271,6 +307,86 @@ namespace RadegastWeb.Hubs
             }
             
             return Task.CompletedTask;
+        }
+
+        public async Task ValidateAndFixConnectionState(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to validate connection state from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            if (string.IsNullOrEmpty(accountId))
+            {
+                _logger.LogWarning("Empty account ID provided for ValidateAndFixConnectionState from {ConnectionId}", Context.ConnectionId);
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    var existingConnections = _connectionTrackingService.GetConnectionsForAccount(accountGuid).ToList();
+                    var connectionCount = existingConnections.Count;
+                    
+                    _logger.LogInformation("Validating connection state for account {AccountId}: {Count} tracked connections [{Connections}]", 
+                        accountId, connectionCount, string.Join(", ", existingConnections));
+
+                    if (connectionCount > 1)
+                    {
+                        _logger.LogWarning("Multiple connections detected for account {AccountId}, cleaning up potentially stale connections", accountId);
+                        
+                        // Remove all existing connections from SignalR groups and tracking
+                        foreach (var connectionId in existingConnections)
+                        {
+                            if (connectionId != Context.ConnectionId)
+                            {
+                                try
+                                {
+                                    await Groups.RemoveFromGroupAsync(connectionId, $"account_{accountId}");
+                                    _logger.LogDebug("Removed stale connection {ConnectionId} from SignalR group for account {AccountId}", connectionId, accountId);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogDebug(ex, "Expected failure removing stale connection {ConnectionId} from SignalR group", connectionId);
+                                }
+                            }
+                        }
+                        
+                        // Use the replacement method to clean up tracking
+                        _connectionTrackingService.ReplaceConnectionForAccount(accountGuid, Context.ConnectionId, existingConnections);
+                        
+                        // Re-join the current connection to the account group
+                        await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
+                        _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
+                        
+                        var finalCount = _connectionTrackingService.GetConnectionCount(accountGuid);
+                        _logger.LogInformation("Connection state fixed for account {AccountId}: reduced from {OldCount} to {NewCount} connections", 
+                            accountId, connectionCount, finalCount);
+                    }
+                    else if (!existingConnections.Contains(Context.ConnectionId))
+                    {
+                        _logger.LogInformation("Current connection {ConnectionId} not properly tracked for account {AccountId}, fixing...", Context.ConnectionId, accountId);
+                        
+                        // Clean up this connection and re-add properly
+                        _connectionTrackingService.ForceRemoveConnection(Context.ConnectionId);
+                        await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
+                        _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
+                        
+                        _logger.LogInformation("Fixed connection tracking for {ConnectionId} on account {AccountId}", Context.ConnectionId, accountId);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Connection state for account {AccountId} is already valid", accountId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error validating/fixing connection state for account {AccountId}, connection {ConnectionId}", accountId, Context.ConnectionId);
+            }
         }
 
         public async Task SendChat(SendChatRequest request)
