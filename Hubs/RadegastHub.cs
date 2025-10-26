@@ -660,7 +660,7 @@ namespace RadegastWeb.Hubs
             }
         }
 
-        public async Task DebugConnectionState()
+        public Task DebugConnectionState()
         {
             try
             {
@@ -676,12 +676,12 @@ namespace RadegastWeb.Hubs
                         Context.ConnectionId);
                 }
 
-                return;
+                return Task.CompletedTask;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error debugging connection state for {ConnectionId}", Context.ConnectionId);
-                return;
+                return Task.CompletedTask;
             }
         }
 
