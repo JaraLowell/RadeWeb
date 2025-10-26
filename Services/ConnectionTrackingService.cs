@@ -191,6 +191,30 @@ namespace RadegastWeb.Services
             }
         }
 
+        public IEnumerable<Guid> GetAllConnectionAccounts(string connectionId)
+        {
+            if (_disposed) return Enumerable.Empty<Guid>();
+
+            _lock.EnterReadLock();
+            try
+            {
+                if (_connectionAccounts.TryGetValue(connectionId, out var accounts))
+                {
+                    return accounts.Keys.ToList(); // Return a copy to avoid concurrent modification
+                }
+                return Enumerable.Empty<Guid>();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting accounts for connection {ConnectionId}", connectionId);
+                return Enumerable.Empty<Guid>();
+            }
+            finally
+            {
+                _lock.ExitReadLock();
+            }
+        }
+
         public void CleanupStaleConnections()
         {
             if (_disposed) return;

@@ -189,39 +189,56 @@ namespace RadegastWeb.Hubs
             // Clean up any stale connections before switching
             _connectionTrackingService.CleanupStaleConnections();
 
-            // First, completely clean up this connection from all existing groups to prevent duplicates
+            // Step 1: Remove from ALL existing SignalR groups first (comprehensive cleanup)
+            var allExistingConnections = _connectionTrackingService.GetAllConnectionAccounts(Context.ConnectionId);
+            foreach (var existingAccountId in allExistingConnections)
+            {
+                try
+                {
+                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"account_{existingAccountId}");
+                    _logger.LogDebug("Removed connection {ConnectionId} from SignalR group account_{ExistingAccountId}", 
+                        Context.ConnectionId, existingAccountId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to remove connection {ConnectionId} from SignalR group account_{ExistingAccountId} (may not exist)", 
+                        Context.ConnectionId, existingAccountId);
+                }
+            }
+
+            // Step 2: Clean up connection tracking AFTER SignalR group removal
             try
             {
                 _connectionTrackingService.ForceRemoveConnection(Context.ConnectionId);
-                _logger.LogDebug("Cleaned up all existing group memberships for connection {ConnectionId}", Context.ConnectionId);
+                _logger.LogInformation("Force removed connection {ConnectionId} from {AccountCount} accounts", 
+                    Context.ConnectionId, allExistingConnections.Count());
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during cleanup of existing group memberships for connection {ConnectionId}", Context.ConnectionId);
             }
 
-            // Leave the previous account group explicitly (in case SignalR groups weren't cleaned up properly)
-            if (!string.IsNullOrEmpty(fromAccountId) && Guid.TryParse(fromAccountId, out var fromGuid))
-            {
-                try
-                {
-                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"account_{fromAccountId}");
-                    _logger.LogDebug("Explicitly removed connection {ConnectionId} from SignalR group account_{FromAccountId}", 
-                        Context.ConnectionId, fromAccountId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error removing from SignalR group account_{FromAccountId} for connection {ConnectionId}", 
-                        fromAccountId, Context.ConnectionId);
-                }
-            }
-
-            // Join the new account group
+            // Step 3: Join the new account group (if specified)
             if (!string.IsNullOrEmpty(toAccountId))
             {
                 try
                 {
-                    await JoinAccountGroup(toAccountId);
+                    if (Guid.TryParse(toAccountId, out var toAccountGuid))
+                    {
+                        // Add to SignalR group
+                        await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{toAccountId}");
+                        
+                        // Add to connection tracking
+                        _connectionTrackingService.AddConnection(Context.ConnectionId, toAccountGuid);
+                        
+                        var connectionCount = _connectionTrackingService.GetConnectionCount(toAccountGuid);
+                        _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}. Total connections: {Count}", 
+                            Context.ConnectionId, toAccountId, connectionCount);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Invalid toAccountId format during switch: {ToAccountId}", toAccountId);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -640,6 +657,31 @@ namespace RadegastWeb.Hubs
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling browser return via SignalR");
+            }
+        }
+
+        public Task DebugConnectionState()
+        {
+            try
+            {
+                var allAccounts = _connectionTrackingService.GetAllConnectionAccounts(Context.ConnectionId);
+                var accountCount = allAccounts.Count();
+                
+                _logger.LogInformation("Debug: Connection {ConnectionId} is associated with {AccountCount} accounts: [{Accounts}]",
+                    Context.ConnectionId, accountCount, string.Join(", ", allAccounts));
+
+                if (accountCount > 1)
+                {
+                    _logger.LogWarning("Debug: Connection {ConnectionId} has multiple account associations - this may cause radar sync issues",
+                        Context.ConnectionId);
+                }
+
+                return Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error debugging connection state for {ConnectionId}", Context.ConnectionId);
+                return Task.CompletedTask;
             }
         }
 

@@ -33,6 +33,11 @@ namespace RadegastWeb.Services
         IEnumerable<string> GetConnectionsForAccount(Guid accountId);
         
         /// <summary>
+        /// Get all account IDs associated with a connection
+        /// </summary>
+        IEnumerable<Guid> GetAllConnectionAccounts(string connectionId);
+        
+        /// <summary>
         /// Clean up any stale connection tracking data
         /// </summary>
         void CleanupStaleConnections();

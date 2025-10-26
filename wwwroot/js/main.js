@@ -838,6 +838,12 @@ class RadegastWebClient {
     updateNearbyAvatars(avatars) {
         console.log('Updating nearby avatars:', avatars);
         
+        // Ignore updates during account switching to prevent stale data
+        if (this.isSwitchingAccounts) {
+            console.log(`Ignoring avatar update during account switching`);
+            return;
+        }
+        
         // Only update if avatars belong to the currently selected account
         if (!this.currentAccountId || avatars.length === 0) {
             this.nearbyAvatars = avatars;
@@ -874,6 +880,12 @@ class RadegastWebClient {
 
     updateSingleAvatar(avatar) {
         console.log('Updating single avatar:', avatar);
+        
+        // Ignore updates during account switching to prevent stale data
+        if (this.isSwitchingAccounts) {
+            console.log(`Ignoring single avatar update during account switching`);
+            return;
+        }
         
         // Only update if avatar belongs to the currently selected account
         if (!this.currentAccountId || avatar.accountId !== this.currentAccountId) {
@@ -1086,14 +1098,25 @@ class RadegastWebClient {
     }
 
     async refreshNearbyAvatars() {
-        if (!this.currentAccountId) return;
+        if (!this.currentAccountId) {
+            console.log("refreshNearbyAvatars: No current account ID");
+            return;
+        }
+
+        if (this.isSwitchingAccounts) {
+            console.log("refreshNearbyAvatars: Skipping refresh during account switching");
+            return;
+        }
 
         try {
             if (this.connection) {
+                console.log(`refreshNearbyAvatars: Requesting nearby avatars for account ${this.currentAccountId}`);
                 await this.connection.invoke("GetNearbyAvatars", this.currentAccountId);
+            } else {
+                console.warn("refreshNearbyAvatars: No SignalR connection available");
             }
         } catch (error) {
-            console.error("Error refreshing nearby avatars:", error);
+            console.error(`Error refreshing nearby avatars for account ${this.currentAccountId}:`, error);
         }
     }
 
@@ -1626,7 +1649,7 @@ class RadegastWebClient {
         
         // Show people panel when account is selected
         document.getElementById('peoplePanel').classList.remove('d-none');
-        // Stop any existing avatar refresh
+        // Stop any existing avatar refresh to prevent data from previous account
         this.stopAvatarRefresh();
         
         // Update chat interface
@@ -1645,8 +1668,6 @@ class RadegastWebClient {
             loginBtn.classList.add('d-none');
             logoutBtn.classList.remove('d-none');
             regionInfoBtn.classList.remove('d-none');
-            // Start avatar refresh for connected accounts
-            this.startAvatarRefresh();
             
             // Show minimap for connected accounts
             if (window.miniMap) {
@@ -1790,29 +1811,41 @@ class RadegastWebClient {
                     } catch (signalRError) {
                         console.warn("SignalR SetActiveAccount failed (this is okay, REST API call should have worked):", signalRError);
                     }
+
+                    // Wait a short moment for SignalR group membership changes to propagate
+                    console.log("Waiting for SignalR group membership changes to complete...");
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 
-                // Load recent chat sessions for this account
-                await this.connection.invoke("GetRecentSessions", accountId);
-                // Load local chat history
-                await this.connection.invoke("GetChatHistory", accountId, "local-chat", 50, 0);
-                // Load recent notices for this account
-                await this.loadAccountNotices(accountId);
-                
-                // Sync presence status for the newly active account
-                if (account.isConnected) {
-                    try {
-                        await this.connection.invoke("GetCurrentPresenceStatus", accountId);
-                        console.log(`Synced presence status for newly active account: ${accountId}`);
-                    } catch (presenceError) {
-                        console.warn("Failed to sync presence status for new account:", presenceError);
-                    }
-                }
-                
-                    // Refresh nearby avatars for the new account (only if connected)
+                    // Load recent chat sessions for this account
+                    await this.connection.invoke("GetRecentSessions", accountId);
+                    // Load local chat history
+                    await this.connection.invoke("GetChatHistory", accountId, "local-chat", 50, 0);
+                    // Load recent notices for this account
+                    await this.loadAccountNotices(accountId);
+                    
+                    // Sync presence status for the newly active account
                     if (account.isConnected) {
-                        this.refreshNearbyAvatars();
-                        // Load groups for connected accounts
-                        this.loadGroups();
+                        try {
+                            await this.connection.invoke("GetCurrentPresenceStatus", accountId);
+                            console.log(`Synced presence status for newly active account: ${accountId}`);
+                        } catch (presenceError) {
+                            console.warn("Failed to sync presence status for new account:", presenceError);
+                        }
+                    }
+                    
+                    // Refresh nearby avatars for the new account (only if connected)
+                    // Wait a bit more to ensure all SignalR group changes are complete
+                    if (account.isConnected) {
+                        console.log("Refreshing data for new account after group membership stabilization...");
+                        setTimeout(() => {
+                            if (this.currentAccountId === accountId && !this.isSwitchingAccounts) { // Double-check we're still on the same account
+                                this.refreshNearbyAvatars();
+                                // Load groups for connected accounts
+                                this.loadGroups();
+                                // Start avatar refresh timer for the new account
+                                this.startAvatarRefresh();
+                            }
+                        }, 200);
                     }
                 } catch (error) {
                     console.error("Error managing account groups:", error);
@@ -1828,8 +1861,8 @@ class RadegastWebClient {
         // Reset the switching flag after a short delay to allow all status updates to complete
         setTimeout(() => {
             this.isSwitchingAccounts = false;
-            console.log(`Account switch completed: ${accountId}`);
-        }, 1000); // Give 1 second for all presence updates to settle
+            console.log(`✓ Account switch completed: ${accountId} - All operations finished and switching flag cleared`);
+        }, 1500); // Give 1.5 seconds for all presence updates and data refreshes to settle
     }
 
     // Initialize the presence status display based on current account status
@@ -4263,6 +4296,27 @@ class RadegastWebClient {
         } catch (error) {
             console.error("Error checking account presence:", error);
         }
+    }
+
+    // Debug method to check SignalR connection state and account group membership
+    async debugConnectionState() {
+        console.log("=== DEBUG CONNECTION STATE ===");
+        console.log(`Current account ID: ${this.currentAccountId}`);
+        console.log(`Is switching accounts: ${this.isSwitchingAccounts}`);
+        console.log(`SignalR connection state: ${this.connection ? this.connection.state : 'No connection'}`);
+        console.log(`Nearby avatars count: ${this.nearbyAvatars.length}`);
+        console.log(`Avatar refresh interval active: ${this.avatarRefreshInterval ? 'Yes' : 'No'}`);
+        
+        if (this.connection && this.connection.state === 'Connected') {
+            try {
+                await this.connection.invoke("DebugConnectionState");
+                console.log("Server-side connection debug info logged");
+            } catch (error) {
+                console.error("Failed to get server-side connection debug info:", error);
+            }
+        }
+        
+        console.log("=== END DEBUG INFO ===");
     }
 }
 
