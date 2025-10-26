@@ -353,13 +353,20 @@ namespace RadegastWeb.Services
 
                 // Get all nearby avatars with display names and broadcast the updated list
                 var nearbyAvatars = (await instance.GetNearbyAvatarsAsync()).ToList();
+                
+                _logger.LogInformation("Broadcasting avatar added - Account: {AccountId}, Avatar: {AvatarName} ({AvatarId}), Total nearby: {Count}",
+                    instance.AccountId, avatar.Name, avatar.Id, nearbyAvatars.Count);
+                    
                 await _hubContext.Clients
                     .Group($"account_{instance.AccountId}")
                     .NearbyAvatarsUpdated(nearbyAvatars);
+                    
+                _logger.LogDebug("Broadcast completed for avatar added to group account_{AccountId}", instance.AccountId);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error broadcasting avatar added");
+                _logger.LogError(ex, "Error broadcasting avatar added for account {AccountId}", 
+                    sender is Core.WebRadegastInstance inst ? inst.AccountId : "unknown");
             }
         }
 
@@ -370,17 +377,20 @@ namespace RadegastWeb.Services
                 if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
+                _logger.LogInformation("Broadcasting avatar update - Account: {AccountId}, Avatar: {AvatarName} ({AvatarId})",
+                    instance.AccountId, avatar.Name, avatar.Id);
+
                 // Broadcast the individual avatar update (more efficient than full list)
                 await _hubContext.Clients
                     .Group($"account_{instance.AccountId}")
                     .AvatarUpdated(avatar);
                     
-                _logger.LogDebug("Broadcasted avatar update for {AvatarId} on account {AccountId}", 
-                    avatar.Id, instance.AccountId);
+                _logger.LogDebug("Broadcast completed for avatar update to group account_{AccountId}", instance.AccountId);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error broadcasting avatar update");
+                _logger.LogError(ex, "Error broadcasting avatar update for account {AccountId}", 
+                    sender is Core.WebRadegastInstance inst ? inst.AccountId : "unknown");
             }
         }
 
@@ -393,13 +403,20 @@ namespace RadegastWeb.Services
 
                 // Get all nearby avatars with display names and broadcast the updated list
                 var nearbyAvatars = (await instance.GetNearbyAvatarsAsync()).ToList();
+                
+                _logger.LogInformation("Broadcasting avatar removed - Account: {AccountId}, Avatar: {AvatarId}, Remaining nearby: {Count}",
+                    instance.AccountId, avatarId, nearbyAvatars.Count);
+                    
                 await _hubContext.Clients
                     .Group($"account_{instance.AccountId}")
                     .NearbyAvatarsUpdated(nearbyAvatars);
+                    
+                _logger.LogDebug("Broadcast completed for avatar removed to group account_{AccountId}", instance.AccountId);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error broadcasting avatar removed");
+                _logger.LogError(ex, "Error broadcasting avatar removed for account {AccountId}", 
+                    sender is Core.WebRadegastInstance inst ? inst.AccountId : "unknown");
             }
         }
 

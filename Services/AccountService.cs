@@ -696,13 +696,16 @@ namespace RadegastWeb.Services
         {
             if (!_instances.TryGetValue(accountId, out var instance))
             {
+                _logger.LogWarning("No instance found for account {AccountId} when getting nearby avatars", accountId);
                 return Enumerable.Empty<AvatarDto>();
             }
 
             try
             {
                 var avatars = await instance.GetNearbyAvatarsAsync();
-                return avatars;
+                var avatarList = avatars.ToList();
+                _logger.LogDebug("Retrieved {Count} nearby avatars for account {AccountId}", avatarList.Count, accountId);
+                return avatarList;
             }
             catch (Exception ex)
             {

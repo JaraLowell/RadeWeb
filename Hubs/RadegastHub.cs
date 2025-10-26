@@ -660,7 +660,7 @@ namespace RadegastWeb.Hubs
             }
         }
 
-        public Task DebugConnectionState()
+        public async Task DebugConnectionState()
         {
             try
             {
@@ -676,12 +676,87 @@ namespace RadegastWeb.Hubs
                         Context.ConnectionId);
                 }
 
-                return Task.CompletedTask;
+                return;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error debugging connection state for {ConnectionId}", Context.ConnectionId);
-                return Task.CompletedTask;
+                return;
+            }
+        }
+
+        public async Task DebugRadarSync(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to debug radar sync from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (!Guid.TryParse(accountId, out var accountGuid))
+                {
+                    _logger.LogError("Invalid account ID for radar debug: {AccountId}", accountId);
+                    await Clients.Caller.ChatError("Invalid account ID for radar debug");
+                    return;
+                }
+
+                _logger.LogInformation("=== RADAR SYNC DEBUG START for Account {AccountId} ===", accountId);
+                
+                // Check connection tracking
+                var trackedConnections = _connectionTrackingService.GetConnectionsForAccount(accountGuid);
+                var connectionCount = trackedConnections.Count();
+                _logger.LogInformation("Tracked connections for account {AccountId}: {Count} [{Connections}]",
+                    accountId, connectionCount, string.Join(", ", trackedConnections));
+
+                // Check if current connection is tracked
+                var isCurrentConnectionTracked = trackedConnections.Contains(Context.ConnectionId);
+                _logger.LogInformation("Is current connection {ConnectionId} tracked for account {AccountId}: {IsTracked}",
+                    Context.ConnectionId, accountId, isCurrentConnectionTracked);
+
+                // Get account instance and check its state
+                var instance = _accountService.GetInstance(accountGuid);
+                if (instance == null)
+                {
+                    _logger.LogError("No account instance found for {AccountId}", accountId);
+                    await Clients.Caller.ChatError($"No account instance found for {accountId}");
+                    return;
+                }
+
+                _logger.LogInformation("Account instance found for {AccountId}. Connected: {IsConnected}", 
+                    accountId, instance.IsConnected);
+
+                if (instance.IsConnected)
+                {
+                    // Try to get nearby avatars
+                    var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
+                    var avatarList = nearbyAvatars.ToList();
+                    _logger.LogInformation("Nearby avatars for account {AccountId}: {Count} avatars", 
+                        accountId, avatarList.Count);
+
+                    foreach (var avatar in avatarList.Take(5)) // Log first 5 for debugging
+                    {
+                        _logger.LogInformation("  Avatar: {Name} ({Id}) - AccountId: {AvatarAccountId}, Distance: {Distance}",
+                            avatar.Name, avatar.Id, avatar.AccountId, avatar.Distance);
+                    }
+
+                    // Test direct broadcast to this connection
+                    _logger.LogInformation("Testing direct broadcast to connection {ConnectionId}", Context.ConnectionId);
+                    await Clients.Caller.NearbyAvatarsUpdated(avatarList);
+                    
+                    // Test group broadcast
+                    _logger.LogInformation("Testing group broadcast to account_{AccountId}", accountId);
+                    await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(avatarList);
+                }
+
+                _logger.LogInformation("=== RADAR SYNC DEBUG END ===");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during radar sync debug for account {AccountId}", accountId);
+                await Clients.Caller.ChatError($"Error during radar sync debug: {ex.Message}");
             }
         }
 

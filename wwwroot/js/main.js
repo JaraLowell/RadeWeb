@@ -4318,6 +4318,49 @@ class RadegastWebClient {
         
         console.log("=== END DEBUG INFO ===");
     }
+
+    // Debug method specifically for radar sync issues
+    async debugRadarSync() {
+        console.log("=== DEBUG RADAR SYNC ===");
+        console.log(`Current account ID: ${this.currentAccountId}`);
+        console.log(`Nearby avatars count: ${this.nearbyAvatars.length}`);
+        
+        if (this.nearbyAvatars.length > 0) {
+            console.log("Current nearby avatars:");
+            this.nearbyAvatars.forEach((avatar, index) => {
+                console.log(`  ${index + 1}. ${avatar.name || avatar.Name} (${avatar.id || avatar.Id}) - Account: ${avatar.accountId || avatar.AccountId}`);
+            });
+        }
+        
+        if (this.connection && this.connection.state === 'Connected' && this.currentAccountId) {
+            try {
+                console.log("Requesting server-side radar debug...");
+                await this.connection.invoke("DebugRadarSync", this.currentAccountId);
+                console.log("Server-side radar debug completed (check server logs)");
+            } catch (error) {
+                console.error("Failed to get server-side radar debug info:", error);
+            }
+        } else {
+            console.warn("Cannot debug radar: connection not ready or no account selected");
+        }
+        
+        console.log("=== END RADAR DEBUG ===");
+    }
+
+    // Debug method to manually request nearby avatars
+    async debugForceAvatarUpdate() {
+        if (this.connection && this.connection.state === 'Connected' && this.currentAccountId) {
+            try {
+                console.log("Manually requesting nearby avatars...");
+                await this.connection.invoke("GetNearbyAvatars", this.currentAccountId);
+                console.log("Manual avatar request sent");
+            } catch (error) {
+                console.error("Failed to manually request avatars:", error);
+            }
+        } else {
+            console.warn("Cannot request avatars: connection not ready or no account selected");
+        }
+    }
 }
 
 // Initialize the client when the page loads
