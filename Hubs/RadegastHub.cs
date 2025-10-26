@@ -57,7 +57,7 @@ namespace RadegastWeb.Hubs
                     // Clean up any potential stale connections first (especially important after long periods)
                     _connectionTrackingService.CleanupStaleConnections();
                     
-                    // Get existing connections for this account to handle browser refresh scenario
+                    // Get existing connections for this account
                     var existingConnections = _connectionTrackingService.GetConnectionsForAccount(accountGuid);
                     var currentConnectionCount = existingConnections.Count();
                     
@@ -72,37 +72,44 @@ namespace RadegastWeb.Hubs
                         return;
                     }
 
-                    // Handle browser refresh scenario: if there are multiple connections, clean up potentially stale ones
-                    if (currentConnectionCount > 0)
+                    // Only clean up connections if we have an excessive number (likely indicates stale connections)
+                    // Allow up to 3 simultaneous connections per account for legitimate multi-tab usage
+                    const int maxAllowedConnections = 3;
+                    
+                    if (currentConnectionCount >= maxAllowedConnections)
                     {
-                        _logger.LogInformation("Detected {Count} existing connections for account {AccountId} during new join from {ConnectionId}. This may indicate a browser refresh scenario.", 
-                            currentConnectionCount, accountId, Context.ConnectionId);
+                        _logger.LogWarning("Account {AccountId} has {Count} connections (>= {Max}), cleaning up oldest connections to prevent memory leaks", 
+                            accountId, currentConnectionCount, maxAllowedConnections);
                         
-                        // Clean up potentially stale connections (this will be detected by the next SignalR ping)
-                        foreach (var existingConnectionId in existingConnections.ToList())
+                        // Remove oldest connections, keeping the most recent ones
+                        var connectionsToRemove = existingConnections.Take(currentConnectionCount - maxAllowedConnections + 1);
+                        
+                        foreach (var existingConnectionId in connectionsToRemove)
                         {
-                            if (existingConnectionId != Context.ConnectionId)
+                            _logger.LogDebug("Removing old connection {ExistingConnectionId} for account {AccountId} due to connection limit", 
+                                existingConnectionId, accountId);
+                            
+                            // Try to remove from SignalR group (may fail if connection is truly stale)
+                            try
                             {
-                                _logger.LogDebug("Cleaning up potentially stale connection {ExistingConnectionId} for account {AccountId}", 
-                                    existingConnectionId, accountId);
-                                
-                                // Try to remove from SignalR group (may fail if connection is truly stale)
-                                try
-                                {
-                                    await Groups.RemoveFromGroupAsync(existingConnectionId, $"account_{accountId}");
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogDebug(ex, "Failed to remove potentially stale connection {ExistingConnectionId} from SignalR group (connection may already be dead)", existingConnectionId);
-                                }
-                                
-                                // Remove from tracking
-                                _connectionTrackingService.RemoveConnection(existingConnectionId, accountGuid);
+                                await Groups.RemoveFromGroupAsync(existingConnectionId, $"account_{accountId}");
                             }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Failed to remove old connection {ExistingConnectionId} from SignalR group (connection may already be dead)", existingConnectionId);
+                            }
+                            
+                            // Remove from tracking
+                            _connectionTrackingService.RemoveConnection(existingConnectionId, accountGuid);
                         }
                     }
+                    else if (currentConnectionCount > 0)
+                    {
+                        _logger.LogDebug("Account {AccountId} has {Count} existing connections, allowing multiple connections for multi-tab usage", 
+                            accountId, currentConnectionCount);
+                    }
 
-                    // Force cleanup of this specific connection from all groups to prevent drift
+                    // Clean up this specific connection from any other groups to prevent cross-contamination
                     _connectionTrackingService.ForceRemoveConnection(Context.ConnectionId);
                     
                     await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
@@ -111,6 +118,37 @@ namespace RadegastWeb.Hubs
                     var finalConnectionCount = _connectionTrackingService.GetConnectionCount(accountGuid);
                     _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}. Total connections: {Count}", 
                         Context.ConnectionId, accountId, finalConnectionCount);
+
+                    // Force refresh avatar events to ensure data flows to web client
+                    // This fixes the issue where radar works but web client doesn't receive avatar updates
+                    try
+                    {
+                        var backgroundService = Context.GetHttpContext()?.RequestServices.GetService<RadegastBackgroundService>();
+                        if (backgroundService != null)
+                        {
+                            await backgroundService.RefreshAccountSubscriptionAsync(accountGuid);
+                            _logger.LogDebug("Refreshed avatar events for account {AccountId} after client join", accountId);
+
+                            // Immediately send current nearby avatars to the joining client
+                            var instance = _accountService.GetInstance(accountGuid);
+                            if (instance?.IsConnected == true)
+                            {
+                                var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
+                                var avatarList = nearbyAvatars.ToList();
+                                
+                                if (avatarList.Count > 0)
+                                {
+                                    await Clients.Caller.NearbyAvatarsUpdated(avatarList);
+                                    _logger.LogInformation("Sent {Count} nearby avatars to newly joined connection {ConnectionId} for account {AccountId}", 
+                                        avatarList.Count, Context.ConnectionId, accountId);
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to refresh avatar events for account {AccountId} - avatar updates may not flow properly", accountId);
+                    }
                 }
                 else
                 {
@@ -351,58 +389,167 @@ namespace RadegastWeb.Hubs
                     _logger.LogInformation("Validating connection state for account {AccountId}: {Count} tracked connections [{Connections}]", 
                         accountId, connectionCount, string.Join(", ", existingConnections));
 
-                    if (connectionCount > 1)
+                    // Validate each connection by sending a ping and checking for response
+                    var validConnections = new List<string>();
+                    var staleConnections = new List<string>();
+
+                    foreach (var connectionId in existingConnections)
                     {
-                        _logger.LogWarning("Multiple connections detected for account {AccountId}, cleaning up potentially stale connections", accountId);
-                        
-                        // Remove all existing connections from SignalR groups and tracking
-                        foreach (var connectionId in existingConnections)
+                        try
                         {
-                            if (connectionId != Context.ConnectionId)
+                            // Try to send a test message to see if connection is active
+                            await Clients.Client(connectionId).ReceiveChat(new ChatMessageDto
                             {
-                                try
-                                {
-                                    await Groups.RemoveFromGroupAsync(connectionId, $"account_{accountId}");
-                                    _logger.LogDebug("Removed stale connection {ConnectionId} from SignalR group for account {AccountId}", connectionId, accountId);
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogDebug(ex, "Expected failure removing stale connection {ConnectionId} from SignalR group", connectionId);
-                                }
-                            }
+                                ChatType = "system",
+                                SenderName = "System",
+                                Message = "Connection validation ping",
+                                Timestamp = DateTime.UtcNow,
+                                AccountId = accountGuid,
+                                SessionId = "system"
+                            });
+                            
+                            validConnections.Add(connectionId);
+                            _logger.LogDebug("Connection {ConnectionId} responded to ping - keeping", connectionId);
+                        }
+                        catch (Exception ex)
+                        {
+                            staleConnections.Add(connectionId);
+                            _logger.LogDebug(ex, "Connection {ConnectionId} failed ping test - marking as stale", connectionId);
+                        }
+                    }
+
+                    // Clean up stale connections
+                    foreach (var staleConnectionId in staleConnections)
+                    {
+                        try
+                        {
+                            await Groups.RemoveFromGroupAsync(staleConnectionId, $"account_{accountId}");
+                            _logger.LogDebug("Removed stale connection {ConnectionId} from SignalR group for account {AccountId}", staleConnectionId, accountId);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Expected failure removing stale connection {ConnectionId} from SignalR group", staleConnectionId);
                         }
                         
-                        // Use the replacement method to clean up tracking
-                        _connectionTrackingService.ReplaceConnectionForAccount(accountGuid, Context.ConnectionId, existingConnections);
-                        
-                        // Re-join the current connection to the account group
-                        await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
-                        _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
-                        
-                        var finalCount = _connectionTrackingService.GetConnectionCount(accountGuid);
-                        _logger.LogInformation("Connection state fixed for account {AccountId}: reduced from {OldCount} to {NewCount} connections", 
-                            accountId, connectionCount, finalCount);
+                        _connectionTrackingService.RemoveConnection(staleConnectionId, accountGuid);
                     }
-                    else if (!existingConnections.Contains(Context.ConnectionId))
+
+                    // Ensure current connection is properly tracked
+                    if (!existingConnections.Contains(Context.ConnectionId))
                     {
-                        _logger.LogInformation("Current connection {ConnectionId} not properly tracked for account {AccountId}, fixing...", Context.ConnectionId, accountId);
+                        _logger.LogInformation("Current connection {ConnectionId} not properly tracked for account {AccountId}, adding...", Context.ConnectionId, accountId);
                         
-                        // Clean up this connection and re-add properly
-                        _connectionTrackingService.ForceRemoveConnection(Context.ConnectionId);
                         await Groups.AddToGroupAsync(Context.ConnectionId, $"account_{accountId}");
                         _connectionTrackingService.AddConnection(Context.ConnectionId, accountGuid);
                         
-                        _logger.LogInformation("Fixed connection tracking for {ConnectionId} on account {AccountId}", Context.ConnectionId, accountId);
+                        _logger.LogInformation("Added connection tracking for {ConnectionId} on account {AccountId}", Context.ConnectionId, accountId);
+                    }
+
+                    var finalCount = _connectionTrackingService.GetConnectionCount(accountGuid);
+                    
+                    if (staleConnections.Count > 0)
+                    {
+                        _logger.LogInformation("Connection validation for account {AccountId}: cleaned up {StaleCount} stale connections, {ValidCount} valid connections remain", 
+                            accountId, staleConnections.Count, finalCount);
                     }
                     else
                     {
-                        _logger.LogDebug("Connection state for account {AccountId} is already valid", accountId);
+                        _logger.LogDebug("Connection state for account {AccountId} is valid - {Count} active connections", accountId, finalCount);
                     }
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error validating/fixing connection state for account {AccountId}, connection {ConnectionId}", accountId, Context.ConnectionId);
+            }
+        }
+
+        /// <summary>
+        /// Heartbeat method for clients to indicate they are still active
+        /// </summary>
+        public Task Heartbeat()
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return Task.CompletedTask;
+            }
+
+            // Just receiving this call indicates the connection is alive
+            _logger.LogDebug("Heartbeat received from connection {ConnectionId}", Context.ConnectionId);
+            
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Force refresh avatar event subscriptions and immediately broadcast current avatar data
+        /// Call this when radar data stops flowing to the web client despite working radar
+        /// </summary>
+        public async Task RefreshAvatarEvents(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to refresh avatar events from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (!Guid.TryParse(accountId, out var accountGuid))
+                {
+                    _logger.LogError("Invalid account ID for avatar event refresh: {AccountId}", accountId);
+                    await Clients.Caller.ChatError("Invalid account ID");
+                    return;
+                }
+
+                _logger.LogInformation("Refreshing avatar events for account {AccountId} requested by connection {ConnectionId}", accountId, Context.ConnectionId);
+                
+                var instance = _accountService.GetInstance(accountGuid);
+                if (instance == null)
+                {
+                    _logger.LogError("No account instance found for {AccountId}", accountId);
+                    await Clients.Caller.ChatError($"Account instance not found for {accountId}");
+                    return;
+                }
+
+                if (!instance.IsConnected)
+                {
+                    _logger.LogWarning("Account {AccountId} is not connected to SL during avatar event refresh", accountId);
+                    await Clients.Caller.ChatError($"Account {accountId} is not connected to Second Life");
+                    return;
+                }
+
+                // Get the background service to force re-subscription of events
+                var backgroundService = Context.GetHttpContext()?.RequestServices.GetService<RadegastBackgroundService>();
+                if (backgroundService != null)
+                {
+                    // Force refresh of event subscriptions for this account
+                    await backgroundService.RefreshAccountSubscriptionAsync(accountGuid);
+                    _logger.LogInformation("Refreshed background service event subscriptions for account {AccountId}", accountId);
+                }
+
+                // Force refresh of nearby avatars and display names
+                await instance.RefreshNearbyAvatarDisplayNamesAsync();
+                
+                // Get current nearby avatars and broadcast them immediately
+                var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
+                var avatarList = nearbyAvatars.ToList();
+                
+                _logger.LogInformation("Broadcasting {Count} avatars after event refresh for account {AccountId}", avatarList.Count, accountId);
+                
+                // Broadcast to both caller and group to ensure delivery
+                await Clients.Caller.NearbyAvatarsUpdated(avatarList);
+                await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(avatarList);
+                
+                await Clients.Caller.ChatError($"Avatar events refreshed - broadcasting {avatarList.Count} nearby avatars");
+                
+                _logger.LogInformation("Avatar event refresh completed for account {AccountId} - sent {Count} avatars to web client", accountId, avatarList.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error refreshing avatar events for account {AccountId}", accountId);
+                await Clients.Caller.ChatError($"Error refreshing avatar events: {ex.Message}");
             }
         }
 
@@ -725,21 +872,63 @@ namespace RadegastWeb.Hubs
                     return;
                 }
 
-                _logger.LogInformation("Account instance found for {AccountId}. Connected: {IsConnected}", 
-                    accountId, instance.IsConnected);
+                _logger.LogInformation("Account instance found for {AccountId}. Connected: {IsConnected}, Status: {Status}", 
+                    accountId, instance.IsConnected, instance.Status);
 
                 if (instance.IsConnected)
                 {
+                    // Get detailed radar statistics first
+                    var radarStats = instance.GetRadarStats();
+                    _logger.LogInformation("Radar Stats for {AccountId}: DetailedAvatars={Detailed}, CoarseAvatars={Coarse}, SimAvatars={Sim}, TotalUnique={Unique}",
+                        accountId, radarStats.DetailedAvatarCount, radarStats.CoarseLocationAvatarCount, 
+                        radarStats.SimAvatarCount, radarStats.TotalUniqueAvatars);
+
+                    // Check if SL client network events are working
+                    var clientConnected = instance.Client.Network.Connected;
+                    var currentSim = instance.Client.Network.CurrentSim;
+                    _logger.LogInformation("SL Client Status for {AccountId}: NetworkConnected={NetworkConnected}, CurrentSim={SimName}, SimAvatars={SimAvatarCount}",
+                        accountId, clientConnected, currentSim?.Name ?? "null", currentSim?.AvatarPositions?.Count ?? 0);
+
+                    // Check region info from current sim
+                    if (currentSim != null)
+                    {
+                        _logger.LogInformation("Current Region for {AccountId}: {RegionName} at {X},{Y}",
+                            accountId, currentSim.Name, currentSim.Handle >> 32, currentSim.Handle & 0xFFFF);
+                    }
+
                     // Try to get nearby avatars
                     var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
                     var avatarList = nearbyAvatars.ToList();
-                    _logger.LogInformation("Nearby avatars for account {AccountId}: {Count} avatars", 
-                        accountId, avatarList.Count);
+                    _logger.LogInformation("GetNearbyAvatarsAsync returned {Count} avatars for account {AccountId}", 
+                        avatarList.Count, accountId);
 
-                    foreach (var avatar in avatarList.Take(5)) // Log first 5 for debugging
+                    if (avatarList.Count > 0)
                     {
-                        _logger.LogInformation("  Avatar: {Name} ({Id}) - AccountId: {AvatarAccountId}, Distance: {Distance}",
-                            avatar.Name, avatar.Id, avatar.AccountId, avatar.Distance);
+                        foreach (var avatar in avatarList.Take(5)) // Log first 5 for debugging
+                        {
+                            _logger.LogInformation("  Avatar: {Name} ({Id}) - AccountId: {AvatarAccountId}, Distance: {Distance}m",
+                                avatar.Name, avatar.Id, avatar.AccountId, avatar.Distance);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("No nearby avatars returned - checking raw SL client data...");
+                        
+                        // Check raw SL client data
+                        if (currentSim != null)
+                        {
+                            var simAvatars = currentSim.ObjectsAvatars.Values.Where(a => a.ID != instance.Client.Self.AgentID);
+                            _logger.LogInformation("Raw SL Client ObjectsAvatars count: {Count}", simAvatars.Count());
+                            
+                            foreach (var rawAvatar in simAvatars.Take(3))
+                            {
+                                _logger.LogInformation("  Raw Avatar: {Name} ({Id}) - Pos: {Position}",
+                                    rawAvatar.Name ?? "Unknown", rawAvatar.ID, rawAvatar.Position);
+                            }
+                            
+                            var coarseAvatars = currentSim.AvatarPositions;
+                            _logger.LogInformation("Raw SL Client AvatarPositions (coarse) count: {Count}", coarseAvatars?.Count ?? 0);
+                        }
                     }
 
                     // Test direct broadcast to this connection
@@ -749,6 +938,29 @@ namespace RadegastWeb.Hubs
                     // Test group broadcast
                     _logger.LogInformation("Testing group broadcast to account_{AccountId}", accountId);
                     await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(avatarList);
+                    
+                    // Force refresh of display names and try again
+                    _logger.LogInformation("Forcing display name refresh and avatar update...");
+                    await instance.RefreshNearbyAvatarDisplayNamesAsync();
+                    
+                    // Get updated list after refresh
+                    var refreshedAvatars = await instance.GetNearbyAvatarsAsync();
+                    var refreshedList = refreshedAvatars.ToList();
+                    _logger.LogInformation("After refresh: {Count} avatars", refreshedList.Count);
+                    
+                    if (refreshedList.Count != avatarList.Count)
+                    {
+                        _logger.LogWarning("Avatar count changed after refresh: {Before} -> {After}", 
+                            avatarList.Count, refreshedList.Count);
+                        
+                        // Broadcast the updated list
+                        await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(refreshedList);
+                    }
+                }
+                else
+                {
+                    _logger.LogError("Account {AccountId} is not connected to Second Life - radar cannot work without SL connection", accountId);
+                    await Clients.Caller.ChatError($"Account {accountId} is not connected to Second Life");
                 }
 
                 _logger.LogInformation("=== RADAR SYNC DEBUG END ===");

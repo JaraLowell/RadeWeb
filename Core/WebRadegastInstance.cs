@@ -1400,9 +1400,18 @@ namespace RadegastWeb.Core
 
         private async void Objects_AvatarUpdate(object? sender, AvatarUpdateEventArgs e)
         {
+            if (_disposed || !_client.Network.Connected)
+            {
+                _logger.LogDebug("Skipping avatar update - disposed: {Disposed}, connected: {Connected}", _disposed, _client.Network.Connected);
+                return;
+            }
+
             if (e.Avatar.ID == _client.Self.AgentID) return; // Skip self
 
             var isNewAvatar = !_nearbyAvatars.ContainsKey(e.Avatar.ID);
+            
+            _logger.LogDebug("Avatar update received for {AccountId}: {AvatarId} ({AvatarName}) - New: {IsNew}", 
+                _accountId, e.Avatar.ID, e.Avatar.Name ?? "Unknown", isNewAvatar);
             _nearbyAvatars.AddOrUpdate(e.Avatar.ID, e.Avatar, (key, oldValue) => e.Avatar);
 
             // Mark corresponding coarse location avatar as detailed if it exists
@@ -1510,6 +1519,9 @@ namespace RadegastWeb.Core
                 _proximityAlertedAvatars.TryRemove(e.Avatar.ID, out _);
             }
 
+            _logger.LogDebug("Invoking AvatarAdded event for {AccountId}: {AvatarId} ({AvatarName}) - Distance: {Distance}m, Subscribers: {SubscriberCount}", 
+                _accountId, e.Avatar.ID, avatarDto.Name, distance, AvatarAdded?.GetInvocationList().Length ?? 0);
+            
             AvatarAdded?.Invoke(this, avatarDto);
             UpdateRegionInfo();
             

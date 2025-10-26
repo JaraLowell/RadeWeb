@@ -202,6 +202,79 @@ namespace RadegastWeb.Services
             }
         }
 
+        /// <summary>
+        /// Force refresh event subscriptions for a specific account
+        /// This helps when avatar events stop flowing to the web client despite radar working
+        /// </summary>
+        public Task RefreshAccountSubscriptionAsync(Guid accountId)
+        {
+            try
+            {
+                _logger.LogInformation("Forcing event subscription refresh for account {AccountId}", accountId);
+                
+                using var scope = _serviceProvider.CreateScope();
+                var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+                
+                var instance = accountService.GetInstance(accountId);
+                if (instance == null)
+                {
+                    _logger.LogWarning("Cannot refresh events for account {AccountId} - instance not found", accountId);
+                    return Task.CompletedTask;
+                }
+
+                // Remove from subscription tracking to force re-subscription
+                if (_subscribedInstances.ContainsKey(accountId))
+                {
+                    _logger.LogDebug("Removing existing event subscriptions for account {AccountId}", accountId);
+                    
+                    // Unsubscribe from all events on the actual instance
+                    instance.ChatReceived -= OnChatReceived;
+                    instance.StatusChanged -= OnStatusChanged;
+                    instance.ConnectionChanged -= OnConnectionChanged;
+                    instance.ChatSessionUpdated -= OnChatSessionUpdated;
+                    instance.AvatarAdded -= OnAvatarAdded;
+                    instance.AvatarRemoved -= OnAvatarRemoved;
+                    instance.AvatarUpdated -= OnAvatarUpdated;
+                    instance.RegionChanged -= OnRegionChanged;
+                    instance.NoticeReceived -= OnNoticeReceived;
+                    instance.ScriptDialogReceived -= OnScriptDialogReceived;
+                    instance.ScriptPermissionReceived -= OnScriptPermissionReceived;
+                    instance.TeleportRequestReceived -= OnTeleportRequestReceived;
+                    
+                    // Remove from tracking
+                    _subscribedInstances.TryRemove(accountId, out _);
+                }
+
+                // Re-subscribe to all events
+                _logger.LogInformation("Re-subscribing to events for account {AccountId}", accountId);
+                
+                instance.ChatReceived += OnChatReceived;
+                instance.StatusChanged += OnStatusChanged;
+                instance.ConnectionChanged += OnConnectionChanged;
+                instance.ChatSessionUpdated += OnChatSessionUpdated;
+                instance.AvatarAdded += OnAvatarAdded;
+                instance.AvatarRemoved += OnAvatarRemoved;
+                instance.AvatarUpdated += OnAvatarUpdated;
+                instance.RegionChanged += OnRegionChanged;
+                instance.NoticeReceived += OnNoticeReceived;
+                instance.ScriptDialogReceived += OnScriptDialogReceived;
+                instance.ScriptPermissionReceived += OnScriptPermissionReceived;
+                instance.TeleportRequestReceived += OnTeleportRequestReceived;
+                
+                // Track the subscription
+                _subscribedInstances.TryAdd(accountId, true);
+                
+                _logger.LogInformation("Event subscription refresh completed for account {AccountId} - avatar events should now flow to web client", accountId);
+                
+                return Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error refreshing event subscriptions for account {AccountId}", accountId);
+                return Task.FromException(ex);
+            }
+        }
+
         private void OnChatReceived(object? sender, ChatMessageDto chatMessage)
         {
             try

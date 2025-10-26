@@ -180,22 +180,56 @@ namespace RadegastWeb.Services
                     return healthStatus;
                 }
 
-                // Check radar functionality
+                // Get comprehensive radar statistics
+                var radarStats = instance.GetRadarStats();
                 var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
                 var avatarList = nearbyAvatars.ToList();
                 healthStatus.AvatarCount = avatarList.Count;
 
-                // Check if avatar updates are flowing
-                var timeSinceLastAvatarUpdate = now - healthStatus.LastAvatarUpdate;
-                if (healthStatus.LastAvatarUpdate != DateTime.MinValue && 
-                    timeSinceLastAvatarUpdate > AvatarUpdateTimeout)
+                // Enhanced radar functionality checks
+                var currentSim = instance.Client.Network.CurrentSim;
+                var simAvatarCount = currentSim?.ObjectsAvatars?.Count ?? 0;
+                var coarseAvatarCount = currentSim?.AvatarPositions?.Count ?? 0;
+
+                // Check if SL client has avatar data but we're not processing it
+                if (simAvatarCount > 0 && healthStatus.AvatarCount == 0)
                 {
                     healthStatus.RadarWorking = false;
-                    healthStatus.Issues.Add($"No avatar updates for {timeSinceLastAvatarUpdate.TotalMinutes:F1} minutes");
+                    healthStatus.Issues.Add($"SL client detects {simAvatarCount} avatars but radar shows 0 - data flow problem");
+                }
+                else if (coarseAvatarCount > healthStatus.AvatarCount + 5) // Allow some variance for position differences
+                {
+                    healthStatus.RadarWorking = false;
+                    healthStatus.Issues.Add($"SL coarse location shows {coarseAvatarCount} avatars but radar shows {healthStatus.AvatarCount} - potential detection issue");
+                }
+                else if (healthStatus.LastAvatarUpdate != DateTime.MinValue)
+                {
+                    // Check if avatar updates are flowing
+                    var timeSinceLastAvatarUpdate = now - healthStatus.LastAvatarUpdate;
+                    if (timeSinceLastAvatarUpdate > AvatarUpdateTimeout)
+                    {
+                        healthStatus.RadarWorking = false;
+                        healthStatus.Issues.Add($"No avatar updates for {timeSinceLastAvatarUpdate.TotalMinutes:F1} minutes");
+                    }
+                    else
+                    {
+                        healthStatus.RadarWorking = true;
+                    }
                 }
                 else
                 {
-                    healthStatus.RadarWorking = true;
+                    // No avatar update recorded yet - check if we should have had one by now
+                    var uptime = DateTime.UtcNow - Process.GetCurrentProcess().StartTime;
+                    if (uptime > TimeSpan.FromMinutes(5) && (simAvatarCount > 0 || coarseAvatarCount > 0))
+                    {
+                        healthStatus.RadarWorking = false;
+                        healthStatus.Issues.Add("No avatar updates recorded despite SL client having avatar data");
+                    }
+                    else
+                    {
+                        // Still early in startup or truly no avatars around
+                        healthStatus.RadarWorking = true;
+                    }
                 }
 
                 // Check presence functionality
@@ -221,15 +255,31 @@ namespace RadegastWeb.Services
                 }
 
                 // Additional checks for extended runtime issues
-                var uptime = DateTime.UtcNow - Process.GetCurrentProcess().StartTime;
-                if (uptime > ExtendedRuntimeThreshold)
+                var serverUptime = DateTime.UtcNow - Process.GetCurrentProcess().StartTime;
+                if (serverUptime > ExtendedRuntimeThreshold)
                 {
                     // Check for signs of degradation specific to long-running instances
-                    if (healthStatus.AvatarCount == 0 && instance.Client.Network.CurrentSim?.AvatarPositions.Count > 0)
+                    
+                    // Check if event subscriptions might have been lost
+                    if (healthStatus.RadarWorking && healthStatus.AvatarCount == 0 && 
+                        serverUptime > TimeSpan.FromHours(6) && coarseAvatarCount > 0)
                     {
-                        healthStatus.Issues.Add("Radar not detecting avatars despite sim having avatars");
+                        healthStatus.Issues.Add($"Long runtime ({serverUptime.TotalHours:F1}h) with no radar data despite coarse location data - possible event subscription loss");
+                    }
+
+                    // Check for memory leaks or performance degradation
+                    if (connections.Count() > 10)
+                    {
+                        healthStatus.Issues.Add($"Excessive SignalR connections ({connections.Count()}) - possible connection leak");
                     }
                 }
+
+                _logger.LogDebug("Health check for account {AccountId}: Connected={Connected}, Radar={Radar}, " +
+                    "AvatarCount={AvatarCount}, SimAvatars={SimAvatars}, CoarseAvatars={CoarseAvatars}, " +
+                    "LastUpdate={LastUpdate}, Issues={IssueCount}",
+                    accountId, healthStatus.IsConnected, healthStatus.RadarWorking, 
+                    healthStatus.AvatarCount, simAvatarCount, coarseAvatarCount, 
+                    healthStatus.LastAvatarUpdate, healthStatus.Issues.Count);
             }
             catch (Exception ex)
             {
@@ -254,6 +304,20 @@ namespace RadegastWeb.Services
                 {
                     _logger.LogWarning("Attempting radar recovery for account {AccountId}", accountId);
                     
+                    // Check if this might be an event subscription issue
+                    var currentSim = instance.Client.Network.CurrentSim;
+                    var simHasAvatars = currentSim?.ObjectsAvatars?.Count > 0 || currentSim?.AvatarPositions?.Count > 0;
+                    
+                    if (simHasAvatars && healthStatus.AvatarCount == 0)
+                    {
+                        _logger.LogWarning("Detected potential event subscription loss for account {AccountId} - attempting to refresh", accountId);
+                        
+                        // Log the detection for diagnostic purposes
+                        _logger.LogWarning("Account {AccountId} has {SimAvatars} sim avatars but radar shows {RadarAvatars} - potential event subscription issue", 
+                            accountId, currentSim?.ObjectsAvatars?.Count ?? 0, healthStatus.AvatarCount);
+                        actions.Add($"Detected event subscription issue for {accountId}");
+                    }
+                    
                     // Force refresh of nearby avatars
                     try
                     {
@@ -267,6 +331,9 @@ namespace RadegastWeb.Services
                             .NearbyAvatarsUpdated(nearbyAvatars.ToList());
                         
                         actions.Add($"Broadcasted avatar update for {accountId}");
+                        
+                        // Record that we attempted recovery
+                        _lastAvatarUpdates[accountId] = DateTime.UtcNow;
                     }
                     catch (Exception ex)
                     {

@@ -43,6 +43,25 @@ Added detailed logging to:
 3. If offline, click the LOGIN button (green arrow) next to the account
 4. Wait for connection and check server logs for login messages
 
+### Step 0.5: NEW FIX - Avatar Events Not Flowing to Web Client
+**If radar is working (you see avatars in stats) but web client doesn't receive updates:**
+
+This is a common issue where the radar itself works fine (avatars detected in sim stats) but the SignalR event broadcasting to the web client has stopped working. This typically happens after logging back in and selecting an account.
+
+**Quick Fix:**
+```javascript
+// Run in browser console to force refresh avatar events
+window.radegastClient.connection.invoke('RefreshAvatarEvents', 'YOUR_ACCOUNT_ID');
+```
+
+**What this does:**
+- Forces re-subscription of avatar events in the background service
+- Immediately broadcasts current nearby avatars to the web client
+- Restores the data flow from SL radar to web interface
+
+**Automatic Fix:**
+The `JoinAccountGroup` method now automatically refreshes avatar events when you select an account, so this should happen automatically when switching accounts.
+
 ### Step 1: Check Basic Connection
 Open browser console and run:
 ```javascript
