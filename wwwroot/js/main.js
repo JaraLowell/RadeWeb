@@ -837,6 +837,8 @@ class RadegastWebClient {
 
     updateNearbyAvatars(avatars) {
         console.log('Updating nearby avatars:', avatars);
+        console.log('Current account ID:', this.currentAccountId);
+        console.log('Is switching accounts:', this.isSwitchingAccounts);
         
         // Ignore updates during account switching to prevent stale data
         if (this.isSwitchingAccounts) {
@@ -857,13 +859,29 @@ class RadegastWebClient {
             return;
         }
         
+        // Log avatar details for debugging
+        console.log('Avatar filtering debug:');
+        avatars.forEach((avatar, index) => {
+            console.log(`  Avatar ${index}:`, {
+                name: avatar.name || avatar.Name,
+                id: avatar.id || avatar.Id,
+                accountId: avatar.accountId || avatar.AccountId,
+                distance: avatar.distance || avatar.Distance
+            });
+            console.log(`    Avatar accountId "${avatar.accountId}" === current "${this.currentAccountId}": ${avatar.accountId === this.currentAccountId}`);
+        });
+        
         // Filter avatars to only include those from the current account
-        const currentAccountAvatars = avatars.filter(avatar => 
-            avatar.accountId === this.currentAccountId
-        );
+        // Handle both uppercase (AccountId) and lowercase (accountId) property names
+        const currentAccountAvatars = avatars.filter(avatar => {
+            const avatarAccountId = avatar.accountId || avatar.AccountId;
+            return avatarAccountId === this.currentAccountId;
+        });
+        
+        console.log(`Filtered ${avatars.length} avatars down to ${currentAccountAvatars.length} for current account`);
         
         // Only update if these avatars are for the current account
-        if (currentAccountAvatars.length > 0 && currentAccountAvatars[0].accountId === this.currentAccountId) {
+        if (currentAccountAvatars.length > 0) {
             this.nearbyAvatars = currentAccountAvatars;
             this.renderPeopleList();
             
@@ -872,9 +890,10 @@ class RadegastWebClient {
                 console.log('Main: Checking if minimap needs redraw after avatar update');
                 window.miniMap.safeRedraw();
             }
-        } else if (avatars.length > 0 && avatars[0].accountId !== this.currentAccountId) {
+        } else if (avatars.length > 0) {
             // Don't update if avatars are for a different account
-            console.log(`Ignoring avatar update for account ${avatars[0].accountId}, current account is ${this.currentAccountId}`);
+            const firstAvatarAccountId = avatars[0].accountId || avatars[0].AccountId;
+            console.log(`Ignoring avatar update for account ${firstAvatarAccountId}, current account is ${this.currentAccountId}`);
         }
     }
 
@@ -887,14 +906,18 @@ class RadegastWebClient {
             return;
         }
         
+        // Handle both uppercase and lowercase property names
+        const avatarAccountId = avatar.accountId || avatar.AccountId;
+        const avatarId = avatar.id || avatar.Id;
+        
         // Only update if avatar belongs to the currently selected account
-        if (!this.currentAccountId || avatar.accountId !== this.currentAccountId) {
-            console.log(`Ignoring single avatar update for account ${avatar.accountId}, current account is ${this.currentAccountId}`);
+        if (!this.currentAccountId || avatarAccountId !== this.currentAccountId) {
+            console.log(`Ignoring single avatar update for account ${avatarAccountId}, current account is ${this.currentAccountId}`);
             return;
         }
         
         // Find and update the avatar in our list
-        const existingIndex = this.nearbyAvatars.findIndex(a => a.id === avatar.id);
+        const existingIndex = this.nearbyAvatars.findIndex(a => (a.id || a.Id) === avatarId);
         if (existingIndex >= 0) {
             this.nearbyAvatars[existingIndex] = avatar;
         } else {
@@ -918,22 +941,32 @@ class RadegastWebClient {
             return;
         }
 
-        // Sort avatars by distance (closest first)
-        const sortedAvatars = [...this.nearbyAvatars].sort((a, b) => a.distance - b.distance);
+        // Sort avatars by distance (closest first) - handle both property name cases
+        const sortedAvatars = [...this.nearbyAvatars].sort((a, b) => {
+            const distanceA = a.distance || a.Distance || 0;
+            const distanceB = b.distance || b.Distance || 0;
+            return distanceA - distanceB;
+        });
 
-        peopleList.innerHTML = sortedAvatars.map(avatar => `
-            <div class="people-item d-flex justify-content-between align-items-center" data-avatar-id="${avatar.id}">
-                <div class="people-info">
-                    <div class="people-name">${avatar.displayName || avatar.name}</div>
-                    <div class="people-distance">${avatar.distance.toFixed(1)}m</div>
+        peopleList.innerHTML = sortedAvatars.map(avatar => {
+            const avatarId = avatar.id || avatar.Id;
+            const avatarName = avatar.displayName || avatar.DisplayName || avatar.name || avatar.Name;
+            const avatarDistance = avatar.distance || avatar.Distance || 0;
+            
+            return `
+                <div class="people-item d-flex justify-content-between align-items-center" data-avatar-id="${avatarId}">
+                    <div class="people-info">
+                        <div class="people-name">${avatarName}</div>
+                        <div class="people-distance">${avatarDistance.toFixed(1)}m</div>
+                    </div>
+                    <div class="people-actions">
+                        <button class="btn btn-sm btn-outline-primary" onclick="radegastClient.startIM('${avatarId}', '${avatarName}')">
+                            <i class="fas fa-comment"></i>
+                        </button>
+                    </div>
                 </div>
-                <div class="people-actions">
-                    <button class="btn btn-sm btn-outline-primary" onclick="radegastClient.startIM('${avatar.id}', '${avatar.displayName || avatar.name}')">
-                        <i class="fas fa-comment"></i>
-                    </button>
-                </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
         
         // Update radar statistics if the debug panel is visible
         this.updateRadarStats();
@@ -4324,19 +4357,23 @@ class RadegastWebClient {
         console.log("=== DEBUG RADAR SYNC ===");
         console.log(`Current account ID: ${this.currentAccountId}`);
         console.log(`Nearby avatars count: ${this.nearbyAvatars.length}`);
+        console.log(`Is switching accounts: ${this.isSwitchingAccounts}`);
         
         if (this.nearbyAvatars.length > 0) {
             console.log("Current nearby avatars:");
             this.nearbyAvatars.forEach((avatar, index) => {
                 console.log(`  ${index + 1}. ${avatar.name || avatar.Name} (${avatar.id || avatar.Id}) - Account: ${avatar.accountId || avatar.AccountId}`);
             });
+        } else {
+            console.log("No avatars in local nearbyAvatars array");
         }
         
         if (this.connection && this.connection.state === 'Connected' && this.currentAccountId) {
             try {
                 console.log("Requesting server-side radar debug...");
                 await this.connection.invoke("DebugRadarSync", this.currentAccountId);
-                console.log("Server-side radar debug completed (check server logs)");
+                console.log("Server-side radar debug completed - avatars should have been broadcast to client");
+                console.log("Check console for 'Updating nearby avatars:' messages");
             } catch (error) {
                 console.error("Failed to get server-side radar debug info:", error);
             }

@@ -3,6 +3,7 @@ using RadegastWeb.Core;
 using RadegastWeb.Hubs;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
+using System.Collections.Concurrent;
 
 namespace RadegastWeb.Services
 {
@@ -15,8 +16,13 @@ namespace RadegastWeb.Services
         private IPresenceService? _presenceService;
         private IRegionInfoService? _regionInfoService;
         private IGroupService? _groupService;
+        private IHealthCheckService? _healthCheckService;
         private volatile bool _isShuttingDown = false;
         private DateTime _lastDayCheck = DateTime.MinValue; // Will be initialized properly in ExecuteAsync
+        
+        // Track which instances we've already subscribed to avoid multiple subscriptions
+        private readonly ConcurrentDictionary<Guid, bool> _subscribedInstances = new();
+        private readonly object _subscriptionLock = new();
 
         public RadegastBackgroundService(
             IServiceProvider serviceProvider,
@@ -36,18 +42,19 @@ namespace RadegastWeb.Services
 
             try
             {
-                // Initialize presence service
+                // Initialize services
                 using var scope = _serviceProvider.CreateScope();
                 _presenceService = scope.ServiceProvider.GetRequiredService<IPresenceService>();
                 _presenceService.PresenceStatusChanged += OnPresenceStatusChanged;
 
-                // Initialize region info service
                 _regionInfoService = scope.ServiceProvider.GetRequiredService<IRegionInfoService>();
                 _regionInfoService.RegionStatsUpdated += OnRegionStatsUpdated;
 
-                // Initialize group service
                 _groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
                 _groupService.GroupsUpdated += OnGroupsUpdated;
+
+                _healthCheckService = scope.ServiceProvider.GetRequiredService<IHealthCheckService>();
+                await _healthCheckService.StartHealthChecksAsync();
 
                 // Initialize _lastDayCheck with current SLT date
                 var sltTimeService = scope.ServiceProvider.GetRequiredService<ISLTimeService>();
@@ -113,6 +120,13 @@ namespace RadegastWeb.Services
                 {
                     _groupService.GroupsUpdated -= OnGroupsUpdated;
                 }
+                if (_healthCheckService != null)
+                {
+                    await _healthCheckService.StopHealthChecksAsync();
+                }
+                
+                // Clear subscription tracking
+                _subscribedInstances.Clear();
                 
                 _logger.LogInformation("Radegast Background Service stopped");
             }
@@ -124,6 +138,18 @@ namespace RadegastWeb.Services
             var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
 
             var accounts = await accountService.GetAccountsAsync();
+            var currentAccountIds = accounts.Select(a => a.Id).ToHashSet();
+            
+            // Clean up subscriptions for instances that no longer exist
+            var obsoleteInstances = _subscribedInstances.Keys
+                .Where(id => !currentAccountIds.Contains(id))
+                .ToList();
+            
+            foreach (var obsoleteId in obsoleteInstances)
+            {
+                _subscribedInstances.TryRemove(obsoleteId, out _);
+                _logger.LogDebug("Cleaned up obsolete instance subscription for account {AccountId}", obsoleteId);
+            }
             
             foreach (var account in accounts)
             {
@@ -133,32 +159,45 @@ namespace RadegastWeb.Services
                 var instance = accountService.GetInstance(account.Id);
                 if (instance != null)
                 {
-                    // Subscribe to events if not already subscribed
-                    instance.ChatReceived -= OnChatReceived;
-                    instance.StatusChanged -= OnStatusChanged;
-                    instance.ConnectionChanged -= OnConnectionChanged;
-                    instance.ChatSessionUpdated -= OnChatSessionUpdated;
-                    instance.AvatarAdded -= OnAvatarAdded;
-                    instance.AvatarRemoved -= OnAvatarRemoved;
-                    instance.AvatarUpdated -= OnAvatarUpdated;
-                    instance.RegionChanged -= OnRegionChanged;
-                    instance.NoticeReceived -= OnNoticeReceived;
-                    instance.ScriptDialogReceived -= OnScriptDialogReceived;
-                    instance.ScriptPermissionReceived -= OnScriptPermissionReceived;
-                    instance.TeleportRequestReceived -= OnTeleportRequestReceived;
-                    
-                    instance.ChatReceived += OnChatReceived;
-                    instance.StatusChanged += OnStatusChanged;
-                    instance.ConnectionChanged += OnConnectionChanged;
-                    instance.ChatSessionUpdated += OnChatSessionUpdated;
-                    instance.AvatarAdded += OnAvatarAdded;
-                    instance.AvatarRemoved += OnAvatarRemoved;
-                    instance.AvatarUpdated += OnAvatarUpdated;
-                    instance.RegionChanged += OnRegionChanged;
-                    instance.NoticeReceived += OnNoticeReceived;
-                    instance.ScriptDialogReceived += OnScriptDialogReceived;
-                    instance.ScriptPermissionReceived += OnScriptPermissionReceived;
-                    instance.TeleportRequestReceived += OnTeleportRequestReceived;
+                    // Only subscribe if we haven't already subscribed to this instance
+                    if (_subscribedInstances.TryAdd(account.Id, true))
+                    {
+                        _logger.LogDebug("Subscribing to events for new account instance {AccountId}", account.Id);
+                        
+                        // First unsubscribe to ensure we don't have duplicates
+                        instance.ChatReceived -= OnChatReceived;
+                        instance.StatusChanged -= OnStatusChanged;
+                        instance.ConnectionChanged -= OnConnectionChanged;
+                        instance.ChatSessionUpdated -= OnChatSessionUpdated;
+                        instance.AvatarAdded -= OnAvatarAdded;
+                        instance.AvatarRemoved -= OnAvatarRemoved;
+                        instance.AvatarUpdated -= OnAvatarUpdated;
+                        instance.RegionChanged -= OnRegionChanged;
+                        instance.NoticeReceived -= OnNoticeReceived;
+                        instance.ScriptDialogReceived -= OnScriptDialogReceived;
+                        instance.ScriptPermissionReceived -= OnScriptPermissionReceived;
+                        instance.TeleportRequestReceived -= OnTeleportRequestReceived;
+                        
+                        // Now subscribe
+                        instance.ChatReceived += OnChatReceived;
+                        instance.StatusChanged += OnStatusChanged;
+                        instance.ConnectionChanged += OnConnectionChanged;
+                        instance.ChatSessionUpdated += OnChatSessionUpdated;
+                        instance.AvatarAdded += OnAvatarAdded;
+                        instance.AvatarRemoved += OnAvatarRemoved;
+                        instance.AvatarUpdated += OnAvatarUpdated;
+                        instance.RegionChanged += OnRegionChanged;
+                        instance.NoticeReceived += OnNoticeReceived;
+                        instance.ScriptDialogReceived += OnScriptDialogReceived;
+                        instance.ScriptPermissionReceived += OnScriptPermissionReceived;
+                        instance.TeleportRequestReceived += OnTeleportRequestReceived;
+                    }
+                }
+                else if (_subscribedInstances.ContainsKey(account.Id))
+                {
+                    // Instance no longer exists but we have it tracked - clean up
+                    _subscribedInstances.TryRemove(account.Id, out _);
+                    _logger.LogDebug("Cleaned up subscription for disappeared instance {AccountId}", account.Id);
                 }
             }
         }
@@ -377,6 +416,12 @@ namespace RadegastWeb.Services
                 if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
+                // Record avatar activity for health monitoring
+                if (Guid.TryParse(instance.AccountId, out var accountGuid))
+                {
+                    _healthCheckService?.RecordAvatarUpdate(accountGuid);
+                }
+
                 _logger.LogInformation("Broadcasting avatar update - Account: {AccountId}, Avatar: {AvatarName} ({AvatarId})",
                     instance.AccountId, avatar.Name, avatar.Id);
 
@@ -496,6 +541,10 @@ namespace RadegastWeb.Services
             {
                 if (_isShuttingDown)
                     return;
+
+                // Record presence activity for health monitoring
+                _healthCheckService?.RecordPresenceUpdate(e.AccountId);
+
                 await _hubContext.Clients
                     .Group($"account_{e.AccountId}")
                     .PresenceStatusChanged(e.AccountId.ToString(), e.Status.ToString(), e.StatusText);

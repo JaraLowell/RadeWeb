@@ -816,6 +816,147 @@ namespace RadegastWeb.Hubs
             }
         }
 
+        /// <summary>
+        /// Diagnostic method to test and recover presence functionality
+        /// </summary>
+        public async Task DiagnosePresenceStatus(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to diagnose presence from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    _logger.LogInformation("Running presence diagnostics for account {AccountId}", accountId);
+                    
+                    // Get current status
+                    var currentStatus = _presenceService.GetAccountStatus(accountGuid);
+                    _logger.LogInformation("Account {AccountId} current presence status: {Status}", 
+                        accountId, currentStatus);
+                    
+                    // Get instance status
+                    var instance = _accountService.GetInstance(accountGuid);
+                    if (instance != null)
+                    {
+                        _logger.LogInformation("Account {AccountId} instance status - Connected: {IsConnected}, IsAway: {IsAway}",
+                            accountId, instance.IsConnected, instance.IsAway);
+                        
+                        // Force a fresh status broadcast
+                        await Clients.Group($"account_{accountId}")
+                            .PresenceStatusChanged(accountId, currentStatus.ToString(), currentStatus.ToString());
+                        
+                        _logger.LogInformation("Sent fresh presence status broadcast for account {AccountId}", accountId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("No instance found for account {AccountId} during presence diagnostics", accountId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during presence diagnostics for account {AccountId}", accountId);
+            }
+        }
+
+        /// <summary>
+        /// Diagnostic method to test and recover radar functionality
+        /// </summary>
+        public async Task DiagnoseRadarStatus(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to diagnose radar from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    _logger.LogInformation("Running radar diagnostics for account {AccountId}", accountId);
+                    
+                    var instance = _accountService.GetInstance(accountGuid);
+                    if (instance != null && instance.IsConnected)
+                    {
+                        // Get radar stats
+                        var radarStats = instance.GetRadarStats();
+                        _logger.LogInformation("Account {AccountId} radar stats: Detailed={DetailedCount}, " +
+                            "Coarse={CoarseCount}, Sim={SimCount}, Unique={UniqueCount}",
+                            accountId, radarStats.DetailedAvatarCount, radarStats.CoarseLocationAvatarCount,
+                            radarStats.SimAvatarCount, radarStats.TotalUniqueAvatars);
+                        
+                        // Force refresh nearby avatars
+                        await instance.RefreshNearbyAvatarDisplayNamesAsync();
+                        
+                        // Get and broadcast fresh avatar list
+                        var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
+                        var avatarList = nearbyAvatars.ToList();
+                        
+                        await Clients.Group($"account_{accountId}")
+                            .NearbyAvatarsUpdated(avatarList);
+                        
+                        _logger.LogInformation("Sent fresh avatar list with {Count} avatars for account {AccountId}", 
+                            avatarList.Count, accountId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Account {AccountId} not connected during radar diagnostics", accountId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during radar diagnostics for account {AccountId}", accountId);
+            }
+        }
+
+        /// <summary>
+        /// Comprehensive health check for all account services
+        /// </summary>
+        public async Task RunHealthCheck(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to run health check from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    _logger.LogInformation("Running comprehensive health check for account {AccountId}", accountId);
+                    
+                    var healthService = Context.GetHttpContext()?.RequestServices.GetService<IHealthCheckService>();
+                    if (healthService != null)
+                    {
+                        await healthService.RunDiagnosticsAsync(accountGuid);
+                        _logger.LogInformation("Health check completed for account {AccountId}", accountId);
+                    }
+                    else
+                    {
+                        _logger.LogWarning("HealthCheckService not available");
+                        
+                        // Run basic diagnostics manually
+                        await DiagnosePresenceStatus(accountId);
+                        await DiagnoseRadarStatus(accountId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during health check for account {AccountId}", accountId);
+            }
+        }
+
         public async Task GetUnreadNoticesCount(string accountId)
         {
             try

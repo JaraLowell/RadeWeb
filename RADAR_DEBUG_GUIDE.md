@@ -8,6 +8,8 @@ The logs show:
 - Client successfully joins account group 
 - But radar doesn't show avatars and busy/afk status isn't working
 
+**COMMON CAUSE**: Account not logged into Second Life! Check for "No account instance found" errors in server logs.
+
 ## Enhanced Debugging Features Added
 
 ### Server-Side Debug Methods
@@ -32,6 +34,14 @@ Added detailed logging to:
 - `AccountService.cs` - Avatar data retrieval
 
 ## Debugging Steps
+
+### Step 0: FIRST CHECK - Is the account logged into Second Life?
+**Most radar/sit issues are caused by accounts not being logged into SL:**
+
+1. Check the account status in the web interface - it should show "Online"
+2. Look for "No account instance found" errors in server logs
+3. If offline, click the LOGIN button (green arrow) next to the account
+4. Wait for connection and check server logs for login messages
 
 ### Step 1: Check Basic Connection
 Open browser console and run:
@@ -80,11 +90,17 @@ Look for these new log messages:
 
 ## Common Issues to Check
 
-### 1. SignalR Group Membership
+### 1. **MOST COMMON: Account Not Logged Into Second Life**
+- Check server logs for "No account instance found for {accountId}" errors
+- Verify account shows "Online" status in web interface  
+- Use LOGIN button to connect account to Second Life
+- **This fixes 90% of radar/movement issues**
+
+### 2. SignalR Group Membership
 - Verify connection is actually in SignalR group `account_{accountId}`
 - Check for connection ID mismatches
 
-### 2. Account Instance State
+### 3. Account Instance State  
 - Verify account instance exists and is connected to SL
 - Check if avatar events are being fired from the SL client
 
