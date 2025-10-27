@@ -881,6 +881,10 @@ class RadegastWebClient {
             return;
         }
         
+        // Add timestamp for debugging
+        const timestamp = new Date().toLocaleTimeString();
+        console.log(`[${timestamp}] Avatar update received: ${avatars.length} avatars for account ${this.currentAccountId}`);
+        
         // Only update if avatars belong to the currently selected account
         if (!this.currentAccountId || avatars.length === 0) {
             this.nearbyAvatars = avatars;
@@ -1185,6 +1189,49 @@ class RadegastWebClient {
             }
         } catch (error) {
             console.error(`Error refreshing nearby avatars for account ${this.currentAccountId}:`, error);
+        }
+    }
+
+    async forceRefreshAvatarEvents(accountId) {
+        if (!this.connection || !accountId) {
+            console.warn("forceRefreshAvatarEvents: No connection or account ID");
+            return;
+        }
+
+        try {
+            console.log(`forceRefreshAvatarEvents: Forcing avatar event refresh for account ${accountId}`);
+            await this.connection.invoke("RefreshAvatarEvents", accountId);
+        } catch (error) {
+            console.warn(`Failed to force refresh avatar events for account ${accountId}:`, error);
+        }
+    }
+
+    // Debug method - can be called from browser console
+    async debugAccountSwitching(accountId) {
+        console.log("=== ACCOUNT SWITCHING DEBUG ===");
+        console.log(`Current account ID: ${this.currentAccountId}`);
+        console.log(`Target account ID: ${accountId}`);
+        console.log(`Is switching accounts: ${this.isSwitchingAccounts}`);
+        console.log(`SignalR connection state: ${this.connection?.state}`);
+        
+        if (this.connection && accountId) {
+            try {
+                console.log("Step 1: Validating connection state...");
+                await this.connection.invoke("ValidateAndFixConnectionState", accountId);
+                
+                console.log("Step 2: Force refreshing avatar events...");
+                await this.connection.invoke("RefreshAvatarEvents", accountId);
+                
+                console.log("Step 3: Getting nearby avatars...");
+                await this.connection.invoke("GetNearbyAvatars", accountId);
+                
+                console.log("Step 4: Diagnosing and fixing avatar events...");
+                await this.connection.invoke("DiagnoseAndFixAvatarEvents", accountId);
+                
+                console.log("Debug steps completed - check nearby avatars list");
+            } catch (error) {
+                console.error("Error during debug:", error);
+            }
         }
     }
 
@@ -2030,8 +2077,19 @@ class RadegastWebClient {
                                 this.loadGroups();
                                 // Start avatar refresh timer for the new account
                                 this.startAvatarRefresh();
+                                
+                                // Force refresh avatar events on the server to ensure proper event flow
+                                this.forceRefreshAvatarEvents(accountId);
+                                
+                                // Additional refresh after a longer delay to catch any slow avatar data
+                                setTimeout(() => {
+                                    if (this.currentAccountId === accountId && !this.isSwitchingAccounts) {
+                                        console.log("Secondary avatar refresh for account switching");
+                                        this.refreshNearbyAvatars();
+                                    }
+                                }, 2000); // Increased to 2 seconds
                             }
-                        }, 200);
+                        }, 500); // Increased delay from 200ms to 500ms
                     }
                 } catch (error) {
                     console.error("Error managing account groups:", error);
@@ -4559,5 +4617,12 @@ document.addEventListener('DOMContentLoaded', () => {
     radegastClient = new RadegastWebClient();
     // Make it globally available for other components
     window.radegastClient = radegastClient;
+    
+    // Expose debug methods globally for console debugging
+    window.debugAccountSwitching = (accountId) => radegastClient.debugAccountSwitching(accountId);
+    window.forceRefreshAvatarEvents = (accountId) => radegastClient.forceRefreshAvatarEvents(accountId);
+    window.refreshNearbyAvatars = () => radegastClient.refreshNearbyAvatars();
+    
     console.log('RadegastWebClient initialized and made globally available');
+    console.log('Debug methods available: window.debugAccountSwitching(accountId), window.forceRefreshAvatarEvents(accountId), window.refreshNearbyAvatars()');
 });

@@ -315,6 +315,18 @@ namespace RadegastWeb.Hubs
                         var connectionCount = _connectionTrackingService.GetConnectionCount(toAccountGuid);
                         _logger.LogInformation("Client {ConnectionId} joined account group {AccountId}. Total connections: {Count}", 
                             Context.ConnectionId, toAccountId, connectionCount);
+                        
+                        // Immediately send current data to the newly joined connection to prevent delays
+                        try
+                        {
+                            await RefreshEventSubscriptionsForReconnection(toAccountGuid);
+                            _logger.LogInformation("Sent immediate data refresh to connection {ConnectionId} for account {AccountId}", 
+                                Context.ConnectionId, toAccountId);
+                        }
+                        catch (Exception refreshEx)
+                        {
+                            _logger.LogWarning(refreshEx, "Failed to send immediate data refresh during account switch");
+                        }
                     }
                     else
                     {
@@ -657,6 +669,17 @@ namespace RadegastWeb.Hubs
                 
                 _logger.LogInformation("Broadcasting {Count} avatars after event refresh for account {AccountId}", avatarList.Count, accountId);
                 
+                // Validate and fix connection state first
+                try
+                {
+                    await ValidateAndFixConnectionState(accountId);
+                    _logger.LogDebug("Validated connection state for account {AccountId} during avatar event refresh", accountId);
+                }
+                catch (Exception validateEx)
+                {
+                    _logger.LogWarning(validateEx, "Connection state validation failed during avatar event refresh");
+                }
+                
                 // Broadcast to both caller and group to ensure delivery
                 await Clients.Caller.NearbyAvatarsUpdated(avatarList);
                 await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(avatarList);
@@ -752,15 +775,39 @@ namespace RadegastWeb.Hubs
         {
             try
             {
+                _logger.LogInformation("GetNearbyAvatars called for account {AccountId} by connection {ConnectionId}", accountId, Context.ConnectionId);
+                
                 if (Guid.TryParse(accountId, out var accountGuid))
                 {
+                    // Check if the connection is in the right group
+                    var connectionAccounts = _connectionTrackingService.GetAllConnectionAccounts(Context.ConnectionId);
+                    var isInGroup = connectionAccounts.Contains(accountGuid);
+                    _logger.LogInformation("Connection {ConnectionId} in account group {AccountId}: {IsInGroup}", Context.ConnectionId, accountId, isInGroup);
+                    
                     var avatars = await _accountService.GetNearbyAvatarsAsync(accountGuid);
-                    await Clients.Caller.NearbyAvatarsUpdated(avatars.ToList());
+                    var avatarList = avatars.ToList();
+                    
+                    _logger.LogInformation("Retrieved {Count} nearby avatars for account {AccountId}, sending to connection {ConnectionId}", 
+                        avatarList.Count, accountId, Context.ConnectionId);
+                    
+                    // Send to both caller and the group to ensure delivery during account switching scenarios
+                    await Clients.Caller.NearbyAvatarsUpdated(avatarList);
+                    
+                    // Also broadcast to the group if this connection is properly in the group
+                    if (isInGroup)
+                    {
+                        await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(avatarList);
+                        _logger.LogDebug("Also broadcasted to group account_{AccountId}", accountId);
+                    }
+                }
+                else
+                {
+                    _logger.LogWarning("Invalid accountId format in GetNearbyAvatars: {AccountId}", accountId);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error getting nearby avatars via SignalR");
+                _logger.LogError(ex, "Error getting nearby avatars via SignalR for account {AccountId}, connection {ConnectionId}", accountId, Context.ConnectionId);
             }
         }
 
