@@ -69,6 +69,9 @@ namespace RadegastWeb.Hubs
                     {
                         _logger.LogDebug("Connection {ConnectionId} already in account group {AccountId}, skipping duplicate join", 
                             Context.ConnectionId, accountId);
+                        
+                        // Even if already joined, still refresh the event subscriptions to ensure they're working
+                        await RefreshEventSubscriptionsForReconnection(accountGuid);
                         return;
                     }
 
@@ -120,35 +123,7 @@ namespace RadegastWeb.Hubs
                         Context.ConnectionId, accountId, finalConnectionCount);
 
                     // Force refresh avatar events to ensure data flows to web client
-                    // This fixes the issue where radar works but web client doesn't receive avatar updates
-                    try
-                    {
-                        var backgroundService = Context.GetHttpContext()?.RequestServices.GetService<RadegastBackgroundService>();
-                        if (backgroundService != null)
-                        {
-                            await backgroundService.RefreshAccountSubscriptionAsync(accountGuid);
-                            _logger.LogDebug("Refreshed avatar events for account {AccountId} after client join", accountId);
-
-                            // Immediately send current nearby avatars to the joining client
-                            var instance = _accountService.GetInstance(accountGuid);
-                            if (instance?.IsConnected == true)
-                            {
-                                var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
-                                var avatarList = nearbyAvatars.ToList();
-                                
-                                if (avatarList.Count > 0)
-                                {
-                                    await Clients.Caller.NearbyAvatarsUpdated(avatarList);
-                                    _logger.LogInformation("Sent {Count} nearby avatars to newly joined connection {ConnectionId} for account {AccountId}", 
-                                        avatarList.Count, Context.ConnectionId, accountId);
-                                }
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to refresh avatar events for account {AccountId} - avatar updates may not flow properly", accountId);
-                    }
+                    await RefreshEventSubscriptionsForReconnection(accountGuid);
                 }
                 else
                 {
@@ -159,6 +134,74 @@ namespace RadegastWeb.Hubs
             {
                 _logger.LogError(ex, "Error joining account group {AccountId} for connection {ConnectionId}", accountId, Context.ConnectionId);
                 // Don't re-throw, just log the error to prevent client disconnection
+            }
+        }
+
+        /// <summary>
+        /// Helper method to refresh event subscriptions and send current data when a client (re)connects
+        /// This addresses the core issue where events stop flowing after reconnection
+        /// </summary>
+        private async Task RefreshEventSubscriptionsForReconnection(Guid accountGuid)
+        {
+            try
+            {
+                var backgroundService = Context.GetHttpContext()?.RequestServices.GetService<RadegastBackgroundService>();
+                if (backgroundService != null)
+                {
+                    await backgroundService.RefreshAccountSubscriptionAsync(accountGuid);
+                    _logger.LogInformation("Refreshed event subscriptions for account {AccountId} after client connection", accountGuid);
+
+                    // Immediately send current data to the (re)connected client
+                    var instance = _accountService.GetInstance(accountGuid);
+                    if (instance?.IsConnected == true)
+                    {
+                        // Send nearby avatars
+                        var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
+                        var avatarList = nearbyAvatars.ToList();
+                        
+                        if (avatarList.Count > 0)
+                        {
+                            await Clients.Caller.NearbyAvatarsUpdated(avatarList);
+                            _logger.LogInformation("Sent {Count} nearby avatars to (re)connected client {ConnectionId} for account {AccountId}", 
+                                avatarList.Count, Context.ConnectionId, accountGuid);
+                        }
+
+                        // Send current presence status
+                        var presenceStatus = _presenceService.GetAccountStatus(accountGuid);
+                        var statusText = presenceStatus switch
+                        {
+                            PresenceStatus.Away => "Away",
+                            PresenceStatus.Busy => "Busy",
+                            _ => "Online"
+                        };
+                        
+                        await Clients.Caller.PresenceStatusChanged(accountGuid.ToString(), presenceStatus.ToString(), statusText);
+                        
+                        // Request fresh groups data
+                        await Clients.Caller.GroupsUpdated(accountGuid.ToString(), new List<GroupDto>());
+                        
+                        // Trigger a fresh groups load
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var groups = await instance.GetGroupsAsync();
+                                if (groups.Any())
+                                {
+                                    await Clients.Caller.GroupsUpdated(accountGuid.ToString(), groups.ToList());
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to send groups data to reconnected client");
+                            }
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to refresh event subscriptions for account {AccountId} - avatar updates may not flow properly", accountGuid);
             }
         }
 
@@ -482,6 +525,82 @@ namespace RadegastWeb.Hubs
         }
 
         /// <summary>
+        /// Enhanced method to diagnose and fix avatar event flow issues
+        /// This combines multiple recovery strategies to ensure avatar data reaches the web client
+        /// </summary>
+        public async Task DiagnoseAndFixAvatarEvents(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to diagnose avatar events from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (!Guid.TryParse(accountId, out var accountGuid))
+                {
+                    _logger.LogError("Invalid account ID for avatar event diagnosis: {AccountId}", accountId);
+                    await Clients.Caller.ChatError("Invalid account ID");
+                    return;
+                }
+
+                _logger.LogInformation("Starting comprehensive avatar events diagnosis and fix for account {AccountId} requested by connection {ConnectionId}", accountId, Context.ConnectionId);
+                
+                var instance = _accountService.GetInstance(accountGuid);
+                if (instance == null)
+                {
+                    _logger.LogError("No account instance found for {AccountId}", accountId);
+                    await Clients.Caller.ChatError($"Account instance not found for {accountId}");
+                    return;
+                }
+
+                if (!instance.IsConnected)
+                {
+                    _logger.LogWarning("Account {AccountId} is not connected to SL during avatar event diagnosis", accountId);
+                    await Clients.Caller.ChatError($"Account {accountId} is not connected to Second Life");
+                    return;
+                }
+
+                // Step 1: Force refresh of event subscriptions
+                var backgroundService = Context.GetHttpContext()?.RequestServices.GetService<RadegastBackgroundService>();
+                if (backgroundService != null)
+                {
+                    await backgroundService.RefreshAccountSubscriptionAsync(accountGuid);
+                    _logger.LogInformation("Refreshed background service event subscriptions for account {AccountId}", accountId);
+                }
+
+                // Step 2: Validate and fix connection state
+                await ValidateAndFixConnectionState(accountId);
+
+                // Step 3: Force refresh of nearby avatars and display names
+                await instance.RefreshNearbyAvatarDisplayNamesAsync();
+                
+                // Step 4: Get current nearby avatars and broadcast them immediately
+                var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
+                var avatarList = nearbyAvatars.ToList();
+                
+                _logger.LogInformation("Broadcasting {Count} avatars after comprehensive diagnosis for account {AccountId}", avatarList.Count, accountId);
+                
+                // Step 5: Broadcast to both caller and group to ensure delivery
+                await Clients.Caller.NearbyAvatarsUpdated(avatarList);
+                await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(avatarList);
+                
+                // Step 6: Send diagnostic summary
+                var diagnosticMessage = $"Avatar events diagnosed and fixed - broadcasting {avatarList.Count} nearby avatars. Event subscriptions refreshed.";
+                await Clients.Caller.ChatError(diagnosticMessage);
+                
+                _logger.LogInformation("Comprehensive avatar event diagnosis completed for account {AccountId} - sent {Count} avatars to web client", accountId, avatarList.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during comprehensive avatar events diagnosis for account {AccountId}", accountId);
+                await Clients.Caller.ChatError($"Error during avatar events diagnosis: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Force refresh avatar event subscriptions and immediately broadcast current avatar data
         /// Call this when radar data stops flowing to the web client despite working radar
         /// </summary>
@@ -721,41 +840,95 @@ namespace RadegastWeb.Hubs
 
         public async Task SetAwayStatus(string accountId, bool away)
         {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to set away status from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
             try
             {
                 if (Guid.TryParse(accountId, out var accountGuid))
                 {
+                    _logger.LogInformation("Setting away status for account {AccountId} to {Away} via SignalR", accountId, away);
+                    
+                    // Verify the account instance exists and is connected
+                    var instance = _accountService.GetInstance(accountGuid);
+                    if (instance == null)
+                    {
+                        _logger.LogError("Cannot set away status - account instance not found for {AccountId}", accountId);
+                        await Clients.Caller.PresenceError("Account not found or not connected");
+                        return;
+                    }
+                    
+                    if (!instance.IsConnected)
+                    {
+                        _logger.LogError("Cannot set away status - account {AccountId} is not connected to SL", accountId);
+                        await Clients.Caller.PresenceError("Account is not connected to Second Life");
+                        return;
+                    }
+                    
                     await _presenceService.SetAwayAsync(accountGuid, away);
+                    _logger.LogInformation("Successfully set away status for account {AccountId} to {Away}", accountId, away);
                 }
                 else
                 {
+                    _logger.LogError("Invalid account ID format for SetAwayStatus: {AccountId}", accountId);
                     await Clients.Caller.PresenceError("Invalid account ID");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error setting away status via SignalR");
-                await Clients.Caller.PresenceError("Error setting away status");
+                _logger.LogError(ex, "Error setting away status for account {AccountId} to {Away} via SignalR", accountId, away);
+                await Clients.Caller.PresenceError($"Error setting away status: {ex.Message}");
             }
         }
 
         public async Task SetBusyStatus(string accountId, bool busy)
         {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to set busy status from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
             try
             {
                 if (Guid.TryParse(accountId, out var accountGuid))
                 {
+                    _logger.LogInformation("Setting busy status for account {AccountId} to {Busy} via SignalR", accountId, busy);
+                    
+                    // Verify the account instance exists and is connected
+                    var instance = _accountService.GetInstance(accountGuid);
+                    if (instance == null)
+                    {
+                        _logger.LogError("Cannot set busy status - account instance not found for {AccountId}", accountId);
+                        await Clients.Caller.PresenceError("Account not found or not connected");
+                        return;
+                    }
+                    
+                    if (!instance.IsConnected)
+                    {
+                        _logger.LogError("Cannot set busy status - account {AccountId} is not connected to SL", accountId);
+                        await Clients.Caller.PresenceError("Account is not connected to Second Life");
+                        return;
+                    }
+                    
                     await _presenceService.SetBusyAsync(accountGuid, busy);
+                    _logger.LogInformation("Successfully set busy status for account {AccountId} to {Busy}", accountId, busy);
                 }
                 else
                 {
+                    _logger.LogError("Invalid account ID format for SetBusyStatus: {AccountId}", accountId);
                     await Clients.Caller.PresenceError("Invalid account ID");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error setting busy status via SignalR");
-                await Clients.Caller.PresenceError("Error setting busy status");
+                _logger.LogError(ex, "Error setting busy status for account {AccountId} to {Busy} via SignalR", accountId, busy);
+                await Clients.Caller.PresenceError($"Error setting busy status: {ex.Message}");
             }
         }
 
@@ -1394,6 +1567,43 @@ namespace RadegastWeb.Hubs
             {
                 _logger.LogError(ex, "Error getting sitting status via SignalR");
                 await Clients.Caller.SitStandError("Error retrieving sitting status");
+            }
+        }
+
+        /// <summary>
+        /// Comprehensive recovery method for when SignalR connections are restored after network issues
+        /// This should be called by the web client after reconnection to ensure all data flows properly
+        /// </summary>
+        public async Task RecoverConnection()
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to recover connection from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                _logger.LogInformation("Starting connection recovery for {ConnectionId}", Context.ConnectionId);
+                
+                // Get the background service to refresh all event subscriptions
+                var backgroundService = Context.GetHttpContext()?.RequestServices.GetService<RadegastBackgroundService>();
+                if (backgroundService != null)
+                {
+                    // Force refresh of ALL account subscriptions to ensure nothing is missed
+                    await backgroundService.RefreshAllAccountSubscriptionsAsync();
+                    _logger.LogInformation("Refreshed all account event subscriptions during connection recovery for {ConnectionId}", Context.ConnectionId);
+                }
+                
+                // Clean up any stale connection tracking
+                _connectionTrackingService.CleanupStaleConnections();
+                
+                _logger.LogInformation("Connection recovery completed for {ConnectionId}", Context.ConnectionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during connection recovery for {ConnectionId}", Context.ConnectionId);
             }
         }
 

@@ -86,6 +86,41 @@ class RadegastWebClient {
                 .withAutomaticReconnect()
                 .build();
 
+            // Handle reconnection events to fix the avatar events issue
+            this.connection.onreconnected(async (connectionId) => {
+                console.log('SignalR reconnected with connection ID:', connectionId);
+                
+                try {
+                    // Perform comprehensive connection recovery
+                    console.log('Performing connection recovery...');
+                    await this.connection.invoke("RecoverConnection");
+                    console.log('✓ Connection recovery completed');
+                    
+                    // If we have a current account, rejoin its group and refresh data
+                    if (this.currentAccountId) {
+                        console.log(`Re-establishing connection for account ${this.currentAccountId}...`);
+                        
+                        // Rejoin the account group
+                        await this.connection.invoke("JoinAccountGroup", this.currentAccountId);
+                        console.log(`✓ Rejoined account group for ${this.currentAccountId}`);
+                        
+                        // Refresh all data for the current account
+                        await this.refreshAllAccountData();
+                        console.log(`✓ Refreshed all data for account ${this.currentAccountId}`);
+                        
+                        this.showAlert("Connection restored and data refreshed", "success");
+                    }
+                } catch (error) {
+                    console.error('Error during SignalR reconnection recovery:', error);
+                    this.showAlert("Connection restored but data refresh failed - try switching accounts", "warning");
+                }
+            });
+
+            this.connection.onreconnecting((error) => {
+                console.log('SignalR reconnecting due to error:', error);
+                this.showAlert("Connection lost, reconnecting...", "warning");
+            });
+
             this.connection.on("ReceiveChat", (chatMessage) => {
                 this.displayChatMessage(chatMessage);
             });
@@ -1150,6 +1185,124 @@ class RadegastWebClient {
             }
         } catch (error) {
             console.error(`Error refreshing nearby avatars for account ${this.currentAccountId}:`, error);
+        }
+    }
+
+    async refreshAllAccountData() {
+        if (!this.currentAccountId || !this.connection) {
+            console.log("refreshAllAccountData: No current account ID or SignalR connection");
+            return;
+        }
+
+        try {
+            console.log(`Refreshing all data for account ${this.currentAccountId}...`);
+            
+            // Refresh nearby avatars
+            await this.connection.invoke("GetNearbyAvatars", this.currentAccountId);
+            
+            // Refresh recent chat sessions
+            await this.connection.invoke("GetRecentSessions", this.currentAccountId);
+            
+            // Refresh local chat history
+            await this.connection.invoke("GetChatHistory", this.currentAccountId, "local-chat", 50, 0);
+            
+            // Refresh presence status
+            await this.connection.invoke("GetCurrentPresenceStatus", this.currentAccountId);
+            
+            // Refresh notices
+            await this.loadAccountNotices(this.currentAccountId);
+            
+            console.log(`✓ Completed data refresh for account ${this.currentAccountId}`);
+        } catch (error) {
+            console.error(`Error refreshing all account data for ${this.currentAccountId}:`, error);
+        }
+    }
+
+    // Diagnostic methods for troubleshooting - can be called from browser console
+    async diagnoseProblem() {
+        if (!this.currentAccountId) {
+            console.log("❌ No account selected - please select an account first");
+            return;
+        }
+
+        console.log("🔍 RadegastWeb Connection Diagnostics");
+        console.log("=====================================");
+        
+        // Check SignalR connection
+        if (this.connection) {
+            console.log(`✅ SignalR Connection State: ${this.connection.state}`);
+            console.log(`✅ SignalR Connection ID: ${this.connection.connectionId || 'Unknown'}`);
+        } else {
+            console.log("❌ SignalR connection is null");
+        }
+
+        // Check current account
+        console.log(`✅ Current Account ID: ${this.currentAccountId}`);
+        const account = this.accounts.find(a => a.accountId === this.currentAccountId);
+        if (account) {
+            console.log(`✅ Account Status: ${account.status} (Connected: ${account.isConnected})`);
+            console.log(`✅ Account Region: ${account.currentRegion || 'Unknown'}`);
+        } else {
+            console.log("❌ Current account not found in accounts list");
+        }
+
+        // Check nearby avatars
+        console.log(`📊 Nearby Avatars Count: ${this.nearbyAvatars.length}`);
+        if (this.nearbyAvatars.length > 0) {
+            console.log("Sample avatars:", this.nearbyAvatars.slice(0, 3).map(a => a.name));
+        }
+
+        // Test SignalR communication
+        if (this.connection && this.connection.state === 'Connected') {
+            try {
+                console.log("🔄 Testing SignalR communication...");
+                await this.connection.invoke("Heartbeat");
+                console.log("✅ SignalR communication working");
+
+                // Test avatar events fix
+                console.log("🔄 Running comprehensive avatar events diagnosis...");
+                await this.connection.invoke("DiagnoseAndFixAvatarEvents", this.currentAccountId);
+                console.log("✅ Avatar events diagnosis completed");
+
+            } catch (error) {
+                console.log("❌ SignalR communication failed:", error);
+            }
+        }
+
+        console.log("=====================================");
+        console.log("If problems persist, try: window.radegastClient.forceRecovery()");
+    }
+
+    async forceRecovery() {
+        console.log("🚨 Forcing complete connection recovery...");
+        
+        try {
+            if (this.connection && this.connection.state === 'Connected') {
+                // Force complete recovery
+                await this.connection.invoke("RecoverConnection");
+                console.log("✅ Server-side recovery completed");
+
+                // Rejoin current account group
+                if (this.currentAccountId) {
+                    await this.connection.invoke("JoinAccountGroup", this.currentAccountId);
+                    console.log("✅ Rejoined account group");
+
+                    // Refresh all data
+                    await this.refreshAllAccountData();
+                    console.log("✅ Refreshed all account data");
+
+                    this.showAlert("Complete recovery performed - please check if issues are resolved", "success");
+                } else {
+                    console.log("⚠️ No account selected for recovery");
+                    this.showAlert("Recovery completed but no account selected", "warning");
+                }
+            } else {
+                console.log("❌ SignalR connection not ready for recovery");
+                this.showAlert("Cannot perform recovery - connection not ready", "danger");
+            }
+        } catch (error) {
+            console.error("❌ Recovery failed:", error);
+            this.showAlert(`Recovery failed: ${error.message}`, "danger");
         }
     }
 

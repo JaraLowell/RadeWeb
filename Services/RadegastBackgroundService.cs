@@ -159,10 +159,42 @@ namespace RadegastWeb.Services
                 var instance = accountService.GetInstance(account.Id);
                 if (instance != null)
                 {
-                    // Only subscribe if we haven't already subscribed to this instance
-                    if (_subscribedInstances.TryAdd(account.Id, true))
+                    // Always ensure proper subscription - check if we need to (re)subscribe
+                    var needsSubscription = false;
+                    
+                    if (!_subscribedInstances.ContainsKey(account.Id))
                     {
-                        _logger.LogDebug("Subscribing to events for new account instance {AccountId}", account.Id);
+                        needsSubscription = true;
+                        _logger.LogDebug("New instance detected for account {AccountId}, subscribing to events", account.Id);
+                    }
+                    else
+                    {
+                        // Verify the subscription is actually working by checking if we have active web connections
+                        // If we have connections but this is a long-running session, refresh the subscription periodically
+                        var hasActiveConnections = _connectionTrackingService.HasActiveConnections(account.Id);
+                        
+                        if (hasActiveConnections && instance.IsConnected)
+                        {
+                            // For long-running sessions, periodically refresh event subscriptions to prevent stale connections
+                            // This helps when SignalR reconnects but event subscriptions aren't properly restored
+                            var random = new Random();
+                            
+                            // Randomly refresh subscriptions (1 in 60 chance per processing cycle = ~once per minute average)
+                            // This prevents all accounts from refreshing at the same time
+                            if (random.Next(60) == 0)
+                            {
+                                needsSubscription = true;
+                                _logger.LogInformation("Performing periodic event subscription refresh for account {AccountId}", account.Id);
+                                
+                                // Remove from tracking to force refresh
+                                _subscribedInstances.TryRemove(account.Id, out _);
+                            }
+                        }
+                    }
+                    
+                    if (needsSubscription)
+                    {
+                        _logger.LogInformation("Subscribing to events for account instance {AccountId}", account.Id);
                         
                         // First unsubscribe to ensure we don't have duplicates
                         instance.ChatReceived -= OnChatReceived;
@@ -191,6 +223,9 @@ namespace RadegastWeb.Services
                         instance.ScriptDialogReceived += OnScriptDialogReceived;
                         instance.ScriptPermissionReceived += OnScriptPermissionReceived;
                         instance.TeleportRequestReceived += OnTeleportRequestReceived;
+                        
+                        // Mark as subscribed
+                        _subscribedInstances.TryAdd(account.Id, true);
                     }
                 }
                 else if (_subscribedInstances.ContainsKey(account.Id))
@@ -199,6 +234,30 @@ namespace RadegastWeb.Services
                     _subscribedInstances.TryRemove(account.Id, out _);
                     _logger.LogDebug("Cleaned up subscription for disappeared instance {AccountId}", account.Id);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Force refresh all event subscriptions for all active accounts
+        /// This helps when SignalR reconnects but subscriptions are lost
+        /// </summary>
+        public Task RefreshAllAccountSubscriptionsAsync()
+        {
+            try
+            {
+                _logger.LogInformation("Forcing refresh of all account event subscriptions");
+                
+                // Clear all existing subscriptions to force complete refresh
+                _subscribedInstances.Clear();
+                
+                _logger.LogInformation("Cleared all existing event subscription tracking - next ProcessAccountEvents cycle will re-subscribe all active accounts");
+                
+                return Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error refreshing all account event subscriptions");
+                return Task.FromException(ex);
             }
         }
 
