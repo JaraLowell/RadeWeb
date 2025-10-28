@@ -11,196 +11,111 @@ namespace RadegastWeb.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.CreateTable(
-                name: "Accounts",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    FirstName = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
-                    LastName = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
-                    Password = table.Column<string>(type: "TEXT", nullable: false),
-                    DisplayName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
-                    GridUrl = table.Column<string>(type: "TEXT", nullable: false),
-                    IsConnected = table.Column<bool>(type: "INTEGER", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    LastLoginAt = table.Column<DateTime>(type: "TEXT", nullable: true),
-                    AvatarUuid = table.Column<string>(type: "TEXT", maxLength: 36, nullable: true),
-                    CurrentRegion = table.Column<string>(type: "TEXT", maxLength: 200, nullable: true),
-                    Status = table.Column<string>(type: "TEXT", maxLength: 50, nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_Accounts", x => x.Id);
-                });
+            // Use raw SQL with IF NOT EXISTS to prevent "table already exists" errors
+            migrationBuilder.Sql(@"
+                CREATE TABLE IF NOT EXISTS ""Accounts"" (
+                    ""Id"" TEXT NOT NULL CONSTRAINT ""PK_Accounts"" PRIMARY KEY,
+                    ""FirstName"" TEXT NOT NULL,
+                    ""LastName"" TEXT NOT NULL,
+                    ""Password"" TEXT NOT NULL,
+                    ""DisplayName"" TEXT NOT NULL,
+                    ""GridUrl"" TEXT NOT NULL,
+                    ""IsConnected"" INTEGER NOT NULL,
+                    ""CreatedAt"" TEXT NOT NULL,
+                    ""LastLoginAt"" TEXT NULL,
+                    ""AvatarUuid"" TEXT NULL,
+                    ""CurrentRegion"" TEXT NULL,
+                    ""Status"" TEXT NOT NULL
+                );
+            ");
 
-            migrationBuilder.CreateTable(
-                name: "GlobalDisplayNames",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    AvatarId = table.Column<string>(type: "TEXT", maxLength: 36, nullable: false),
-                    DisplayNameValue = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
-                    UserName = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
-                    LegacyFirstName = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
-                    LegacyLastName = table.Column<string>(type: "TEXT", maxLength: 100, nullable: false),
-                    IsDefaultDisplayName = table.Column<bool>(type: "INTEGER", nullable: false),
-                    NextUpdate = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    LastUpdated = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    CachedAt = table.Column<DateTime>(type: "TEXT", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_GlobalDisplayNames", x => x.Id);
-                });
+            migrationBuilder.Sql(@"
+                CREATE TABLE IF NOT EXISTS ""GlobalDisplayNames"" (
+                    ""Id"" TEXT NOT NULL CONSTRAINT ""PK_GlobalDisplayNames"" PRIMARY KEY,
+                    ""AvatarId"" TEXT NOT NULL,
+                    ""DisplayNameValue"" TEXT NOT NULL,
+                    ""UserName"" TEXT NOT NULL,
+                    ""LegacyFirstName"" TEXT NOT NULL,
+                    ""LegacyLastName"" TEXT NOT NULL,
+                    ""IsDefaultDisplayName"" INTEGER NOT NULL,
+                    ""NextUpdate"" TEXT NOT NULL,
+                    ""LastUpdated"" TEXT NOT NULL,
+                    ""CachedAt"" TEXT NOT NULL
+                );
+            ");
 
-            migrationBuilder.CreateTable(
-                name: "VisitorStats",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    AvatarId = table.Column<string>(type: "TEXT", maxLength: 36, nullable: false),
-                    RegionName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
-                    SimHandle = table.Column<ulong>(type: "INTEGER", nullable: false),
-                    VisitDate = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    FirstSeenAt = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    LastSeenAt = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    AvatarName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: true),
-                    DisplayName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: true),
-                    RegionX = table.Column<uint>(type: "INTEGER", nullable: false),
-                    RegionY = table.Column<uint>(type: "INTEGER", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_VisitorStats", x => x.Id);
-                });
+            migrationBuilder.Sql(@"
+                CREATE TABLE IF NOT EXISTS ""VisitorStats"" (
+                    ""Id"" TEXT NOT NULL CONSTRAINT ""PK_VisitorStats"" PRIMARY KEY,
+                    ""AvatarId"" TEXT NOT NULL,
+                    ""RegionName"" TEXT NOT NULL,
+                    ""SimHandle"" INTEGER NOT NULL,
+                    ""VisitDate"" TEXT NOT NULL,
+                    ""FirstSeenAt"" TEXT NOT NULL,
+                    ""LastSeenAt"" TEXT NOT NULL,
+                    ""AvatarName"" TEXT NULL,
+                    ""DisplayName"" TEXT NULL,
+                    ""RegionX"" INTEGER NOT NULL,
+                    ""RegionY"" INTEGER NOT NULL
+                );
+            ");
 
-            migrationBuilder.CreateTable(
-                name: "ChatMessages",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    AccountId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    SenderName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
-                    Message = table.Column<string>(type: "TEXT", nullable: false),
-                    ChatType = table.Column<string>(type: "TEXT", maxLength: 50, nullable: false),
-                    Channel = table.Column<string>(type: "TEXT", nullable: true),
-                    Timestamp = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    SenderUuid = table.Column<string>(type: "TEXT", nullable: true),
-                    SenderId = table.Column<string>(type: "TEXT", maxLength: 36, nullable: true),
-                    TargetId = table.Column<string>(type: "TEXT", maxLength: 36, nullable: true),
-                    SessionId = table.Column<string>(type: "TEXT", maxLength: 100, nullable: true),
-                    SessionName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: true),
-                    RegionName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_ChatMessages", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_ChatMessages_Accounts_AccountId",
-                        column: x => x.AccountId,
-                        principalTable: "Accounts",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
+            migrationBuilder.Sql(@"
+                CREATE TABLE IF NOT EXISTS ""ChatMessages"" (
+                    ""Id"" TEXT NOT NULL CONSTRAINT ""PK_ChatMessages"" PRIMARY KEY,
+                    ""AccountId"" TEXT NOT NULL,
+                    ""SenderName"" TEXT NOT NULL,
+                    ""Message"" TEXT NOT NULL,
+                    ""ChatType"" TEXT NOT NULL,
+                    ""Channel"" TEXT NULL,
+                    ""Timestamp"" TEXT NOT NULL,
+                    ""SenderUuid"" TEXT NULL,
+                    ""SenderId"" TEXT NULL,
+                    ""TargetId"" TEXT NULL,
+                    ""SessionId"" TEXT NULL,
+                    ""SessionName"" TEXT NULL,
+                    ""RegionName"" TEXT NULL,
+                    CONSTRAINT ""FK_ChatMessages_Accounts_AccountId"" FOREIGN KEY (""AccountId"") REFERENCES ""Accounts"" (""Id"") ON DELETE CASCADE
+                );
+            ");
 
-            migrationBuilder.CreateTable(
-                name: "Notices",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    AccountId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    Title = table.Column<string>(type: "TEXT", maxLength: 500, nullable: false),
-                    Message = table.Column<string>(type: "TEXT", nullable: false),
-                    FromName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: false),
-                    FromId = table.Column<string>(type: "TEXT", maxLength: 36, nullable: false),
-                    GroupId = table.Column<string>(type: "TEXT", maxLength: 36, nullable: true),
-                    GroupName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: true),
-                    Timestamp = table.Column<DateTime>(type: "TEXT", nullable: false),
-                    Type = table.Column<string>(type: "TEXT", maxLength: 50, nullable: false),
-                    HasAttachment = table.Column<bool>(type: "INTEGER", nullable: false),
-                    AttachmentName = table.Column<string>(type: "TEXT", maxLength: 200, nullable: true),
-                    AttachmentType = table.Column<string>(type: "TEXT", maxLength: 100, nullable: true),
-                    RequiresAcknowledgment = table.Column<bool>(type: "INTEGER", nullable: false),
-                    IsAcknowledged = table.Column<bool>(type: "INTEGER", nullable: false),
-                    IsRead = table.Column<bool>(type: "INTEGER", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_Notices", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_Notices_Accounts_AccountId",
-                        column: x => x.AccountId,
-                        principalTable: "Accounts",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
+            migrationBuilder.Sql(@"
+                CREATE TABLE IF NOT EXISTS ""Notices"" (
+                    ""Id"" TEXT NOT NULL CONSTRAINT ""PK_Notices"" PRIMARY KEY,
+                    ""AccountId"" TEXT NOT NULL,
+                    ""Title"" TEXT NOT NULL,
+                    ""Message"" TEXT NOT NULL,
+                    ""FromName"" TEXT NOT NULL,
+                    ""FromId"" TEXT NOT NULL,
+                    ""GroupId"" TEXT NULL,
+                    ""GroupName"" TEXT NULL,
+                    ""Timestamp"" TEXT NOT NULL,
+                    ""Type"" TEXT NOT NULL,
+                    ""HasAttachment"" INTEGER NOT NULL,
+                    ""AttachmentName"" TEXT NULL,
+                    ""AttachmentType"" TEXT NULL,
+                    ""RequiresAcknowledgment"" INTEGER NOT NULL,
+                    ""IsAcknowledged"" INTEGER NOT NULL,
+                    ""IsRead"" INTEGER NOT NULL,
+                    CONSTRAINT ""FK_Notices_Accounts_AccountId"" FOREIGN KEY (""AccountId"") REFERENCES ""Accounts"" (""Id"") ON DELETE CASCADE
+                );
+            ");
 
-            migrationBuilder.CreateIndex(
-                name: "IX_ChatMessage_Account_Session_Time",
-                table: "ChatMessages",
-                columns: new[] { "AccountId", "SessionId", "Timestamp" });
+            // Create indexes only if they don't exist
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_ChatMessage_Account_Session_Time"" ON ""ChatMessages"" (""AccountId"", ""SessionId"", ""Timestamp"");");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_ChatMessage_Account_Type_Time"" ON ""ChatMessages"" (""AccountId"", ""ChatType"", ""Timestamp"");");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_ChatMessage_SessionId"" ON ""ChatMessages"" (""SessionId"");");
+            migrationBuilder.Sql(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_GlobalDisplayName_Avatar"" ON ""GlobalDisplayNames"" (""AvatarId"");");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_GlobalDisplayName_CachedAt"" ON ""GlobalDisplayNames"" (""CachedAt"");");
 
-            migrationBuilder.CreateIndex(
-                name: "IX_ChatMessage_Account_Type_Time",
-                table: "ChatMessages",
-                columns: new[] { "AccountId", "ChatType", "Timestamp" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_ChatMessage_SessionId",
-                table: "ChatMessages",
-                column: "SessionId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_GlobalDisplayName_Avatar",
-                table: "GlobalDisplayNames",
-                column: "AvatarId",
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_GlobalDisplayName_CachedAt",
-                table: "GlobalDisplayNames",
-                column: "CachedAt");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_GlobalDisplayName_LastUpdated",
-                table: "GlobalDisplayNames",
-                column: "LastUpdated");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Notice_Account_Read_Time",
-                table: "Notices",
-                columns: new[] { "AccountId", "IsRead", "Timestamp" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Notice_Account_Time",
-                table: "Notices",
-                columns: new[] { "AccountId", "Timestamp" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Notice_Account_Type_Time",
-                table: "Notices",
-                columns: new[] { "AccountId", "Type", "Timestamp" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_VisitorStats_Avatar_Region_Date",
-                table: "VisitorStats",
-                columns: new[] { "AvatarId", "RegionName", "VisitDate" },
-                unique: true);
-
-            migrationBuilder.CreateIndex(
-                name: "IX_VisitorStats_FirstSeenAt",
-                table: "VisitorStats",
-                column: "FirstSeenAt");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_VisitorStats_Region_Date",
-                table: "VisitorStats",
-                columns: new[] { "RegionName", "VisitDate" });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_VisitorStats_VisitDate",
-                table: "VisitorStats",
-                column: "VisitDate");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_GlobalDisplayName_LastUpdated"" ON ""GlobalDisplayNames"" (""LastUpdated"");");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_Notice_Account_Read_Time"" ON ""Notices"" (""AccountId"", ""IsRead"", ""Timestamp"");");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_Notice_Account_Time"" ON ""Notices"" (""AccountId"", ""Timestamp"");");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_Notice_Account_Type_Time"" ON ""Notices"" (""AccountId"", ""Type"", ""Timestamp"");");
+            migrationBuilder.Sql(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_VisitorStats_Avatar_Region_Date"" ON ""VisitorStats"" (""AvatarId"", ""RegionName"", ""VisitDate"");");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_VisitorStats_FirstSeenAt"" ON ""VisitorStats"" (""FirstSeenAt"");");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_VisitorStats_Region_Date"" ON ""VisitorStats"" (""RegionName"", ""VisitDate"");");
+            migrationBuilder.Sql(@"CREATE INDEX IF NOT EXISTS ""IX_VisitorStats_VisitDate"" ON ""VisitorStats"" (""VisitDate"");");
         }
 
         /// <inheritdoc />
