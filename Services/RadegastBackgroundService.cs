@@ -21,6 +21,7 @@ namespace RadegastWeb.Services
         
         // Track which instances we've already subscribed to avoid multiple subscriptions
         private readonly ConcurrentDictionary<Guid, bool> _subscribedInstances = new();
+        private readonly ConcurrentDictionary<Guid, DateTime> _lastSubscriptionTime = new();
         private readonly object _subscriptionLock = new();
 
         public RadegastBackgroundService(
@@ -78,6 +79,12 @@ namespace RadegastWeb.Services
                         // Periodic cleanup of disconnected accounts (every 5 minutes) to ensure proper status
                         await CleanupDisconnectedAccountsAsync(stoppingToken);
                         
+                        // Periodic avatar state broadcast (every 10 minutes) to ensure all clients have current data
+                        await PeriodicAvatarStateBroadcastAsync(stoppingToken);
+                        
+                        // More frequent stale connection cleanup (every 2 minutes)
+                        await PeriodicStaleConnectionCleanupAsync(stoppingToken);
+                        
                         await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
                     }
                     catch (OperationCanceledException)
@@ -122,6 +129,7 @@ namespace RadegastWeb.Services
                 
                 // Clear subscription tracking
                 _subscribedInstances.Clear();
+                _lastSubscriptionTime.Clear();
                 
                 _logger.LogInformation("Radegast Background Service stopped");
             }
@@ -143,6 +151,7 @@ namespace RadegastWeb.Services
             foreach (var obsoleteId in obsoleteInstances)
             {
                 _subscribedInstances.TryRemove(obsoleteId, out _);
+                _lastSubscriptionTime.TryRemove(obsoleteId, out _);
                 _logger.LogDebug("Cleaned up obsolete instance subscription for account {AccountId}", obsoleteId);
             }
             
@@ -164,22 +173,44 @@ namespace RadegastWeb.Services
                     }
                     else
                     {
-                        // Verify the subscription is actually working by checking if we have active web connections
-                        // If we have connections but this is a long-running session, refresh the subscription periodically
+                        // Check if subscription needs refresh based on time and connection activity
                         var hasActiveConnections = _connectionTrackingService.HasActiveConnections(account.Id);
+                        var now = DateTime.UtcNow;
                         
                         if (hasActiveConnections && instance.IsConnected)
                         {
-                            // For long-running sessions, periodically refresh event subscriptions to prevent stale connections
-                            // This helps when SignalR reconnects but event subscriptions aren't properly restored
-                            var random = new Random();
+                            // Get last subscription time for this account
+                            var lastSubscriptionTime = _lastSubscriptionTime.GetValueOrDefault(account.Id, DateTime.MinValue);
+                            var timeSinceLastSubscription = now - lastSubscriptionTime;
                             
-                            // Randomly refresh subscriptions (1 in 60 chance per processing cycle = ~once per minute average)
-                            // This prevents all accounts from refreshing at the same time
-                            if (random.Next(60) == 0)
+                            // Refresh subscriptions less aggressively to avoid interference:
+                            // - Every 15 minutes for accounts with active web connections
+                            // - Every 10 minutes if we've never recorded a subscription time (safety net)
+                            var refreshInterval = lastSubscriptionTime == DateTime.MinValue 
+                                ? TimeSpan.FromMinutes(10) 
+                                : TimeSpan.FromMinutes(15);
+                            
+                            if (timeSinceLastSubscription >= refreshInterval)
                             {
                                 needsSubscription = true;
-                                _logger.LogInformation("Performing periodic event subscription refresh for account {AccountId}", account.Id);
+                                _logger.LogInformation("Performing scheduled event subscription refresh for account {AccountId} (last refresh: {LastRefresh:yyyy-MM-dd HH:mm:ss} UTC, interval: {Interval})", 
+                                    account.Id, lastSubscriptionTime, refreshInterval);
+                                
+                                // Remove from tracking to force refresh
+                                _subscribedInstances.TryRemove(account.Id, out _);
+                            }
+                        }
+                        else if (!hasActiveConnections)
+                        {
+                            // For accounts without active connections, refresh much less frequently (every 30 minutes)
+                            // This keeps the subscriptions alive but doesn't waste resources
+                            var lastSubscriptionTime = _lastSubscriptionTime.GetValueOrDefault(account.Id, DateTime.MinValue);
+                            var timeSinceLastSubscription = now - lastSubscriptionTime;
+                            
+                            if (timeSinceLastSubscription >= TimeSpan.FromMinutes(30))
+                            {
+                                needsSubscription = true;
+                                _logger.LogDebug("Performing low-priority event subscription refresh for account {AccountId} (no active connections)", account.Id);
                                 
                                 // Remove from tracking to force refresh
                                 _subscribedInstances.TryRemove(account.Id, out _);
@@ -219,8 +250,9 @@ namespace RadegastWeb.Services
                         instance.ScriptPermissionReceived += OnScriptPermissionReceived;
                         instance.TeleportRequestReceived += OnTeleportRequestReceived;
                         
-                        // Mark as subscribed
+                        // Mark as subscribed and record the time
                         _subscribedInstances.TryAdd(account.Id, true);
+                        _lastSubscriptionTime.AddOrUpdate(account.Id, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
                     }
                 }
                 else if (_subscribedInstances.ContainsKey(account.Id))
@@ -244,6 +276,7 @@ namespace RadegastWeb.Services
                 
                 // Clear all existing subscriptions to force complete refresh
                 _subscribedInstances.Clear();
+                _lastSubscriptionTime.Clear();
                 
                 _logger.LogInformation("Cleared all existing event subscription tracking - next ProcessAccountEvents cycle will re-subscribe all active accounts");
                 
@@ -317,6 +350,7 @@ namespace RadegastWeb.Services
                 
                 // Track the subscription
                 _subscribedInstances.TryAdd(accountId, true);
+                _lastSubscriptionTime.AddOrUpdate(accountId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
                 
                 _logger.LogInformation("Event subscription refresh completed for account {AccountId} - avatar events should now flow to web client", accountId);
                 
@@ -816,6 +850,8 @@ namespace RadegastWeb.Services
         }
 
         private DateTime _lastAccountCleanup = DateTime.MinValue;
+        private DateTime _lastAvatarBroadcast = DateTime.MinValue;
+        private DateTime _lastStaleConnectionCleanup = DateTime.MinValue;
 
         /// <summary>
         /// Periodic cleanup of accounts that may have disconnected unexpectedly
@@ -844,6 +880,117 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during periodic cleanup of disconnected accounts");
+            }
+        }
+
+        /// <summary>
+        /// Periodically broadcast complete avatar state to all connected clients
+        /// This ensures clients eventually get the correct state even if they missed individual updates
+        /// </summary>
+        private async Task PeriodicAvatarStateBroadcastAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                
+                // Only run avatar state broadcast every 10 minutes to avoid excessive traffic
+                if (now - _lastAvatarBroadcast < TimeSpan.FromMinutes(10))
+                {
+                    return; // Skip this broadcast cycle
+                }
+                
+                _lastAvatarBroadcast = now;
+                
+                using var scope = _serviceProvider.CreateScope();
+                var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+                
+                var accounts = await accountService.GetAccountsAsync();
+                var broadcastTasks = new List<Task>();
+                
+                foreach (var account in accounts)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
+
+                    // Only broadcast for accounts that have active web connections
+                    var hasActiveConnections = _connectionTrackingService.HasActiveConnections(account.Id);
+                    if (!hasActiveConnections)
+                        continue;
+                    
+                    var instance = accountService.GetInstance(account.Id);
+                    if (instance?.IsConnected == true)
+                    {
+                        broadcastTasks.Add(Task.Run(async () =>
+                        {
+                            try
+                            {
+                                // Get current avatar state
+                                var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
+                                var avatarList = nearbyAvatars.ToList();
+                                
+                                // Broadcast to all connections for this account
+                                await _hubContext.Clients
+                                    .Group($"account_{account.Id}")
+                                    .NearbyAvatarsUpdated(avatarList);
+                                
+                                _logger.LogDebug("Periodic broadcast: sent {Count} avatars to group account_{AccountId}", 
+                                    avatarList.Count, account.Id);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Error during periodic avatar broadcast for account {AccountId}", account.Id);
+                            }
+                        }, cancellationToken));
+                    }
+                }
+                
+                // Wait for all broadcast tasks to complete (with timeout)
+                if (broadcastTasks.Count > 0)
+                {
+                    try
+                    {
+                        await Task.WhenAll(broadcastTasks).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                        _logger.LogDebug("Completed periodic avatar state broadcast for {Count} accounts with active connections", 
+                            broadcastTasks.Count);
+                    }
+                    catch (TimeoutException)
+                    {
+                        _logger.LogWarning("Periodic avatar state broadcast timed out after 10 seconds");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during periodic avatar state broadcast");
+            }
+        }
+
+        /// <summary>
+        /// Periodically clean up stale connections that haven't sent heartbeats
+        /// </summary>
+        private Task PeriodicStaleConnectionCleanupAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                
+                // Only run stale connection cleanup every 2 minutes
+                if (now - _lastStaleConnectionCleanup < TimeSpan.FromMinutes(2))
+                {
+                    return Task.CompletedTask; // Skip this cleanup cycle
+                }
+                
+                _lastStaleConnectionCleanup = now;
+                
+                _logger.LogDebug("Running periodic stale connection cleanup");
+                _connectionTrackingService.CleanupStaleConnections();
+                
+                return Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during periodic stale connection cleanup");
+                return Task.CompletedTask;
             }
         }
 

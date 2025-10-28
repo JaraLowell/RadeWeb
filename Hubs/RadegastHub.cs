@@ -155,16 +155,18 @@ namespace RadegastWeb.Hubs
                     var instance = _accountService.GetInstance(accountGuid);
                     if (instance?.IsConnected == true)
                     {
-                        // Send nearby avatars
+                        // Send nearby avatars - ALWAYS send the update, even if empty
+                        // This ensures the client gets a consistent state and clears old data
                         var nearbyAvatars = await instance.GetNearbyAvatarsAsync();
                         var avatarList = nearbyAvatars.ToList();
                         
-                        if (avatarList.Count > 0)
-                        {
-                            await Clients.Caller.NearbyAvatarsUpdated(avatarList);
-                            _logger.LogInformation("Sent {Count} nearby avatars to (re)connected client {ConnectionId} for account {AccountId}", 
-                                avatarList.Count, Context.ConnectionId, accountGuid);
-                        }
+                        await Clients.Caller.NearbyAvatarsUpdated(avatarList);
+                        _logger.LogInformation("Sent {Count} nearby avatars to (re)connected client {ConnectionId} for account {AccountId}", 
+                            avatarList.Count, Context.ConnectionId, accountGuid);
+                        
+                        // Also broadcast to the group to ensure all connections for this account get the update
+                        await Clients.Group($"account_{accountGuid}").NearbyAvatarsUpdated(avatarList);
+                        _logger.LogDebug("Also broadcasted {Count} avatars to group account_{AccountId}", avatarList.Count, accountGuid);
 
                         // Send current presence status
                         var presenceStatus = _presenceService.GetAccountStatus(accountGuid);
@@ -444,50 +446,9 @@ namespace RadegastWeb.Hubs
                     _logger.LogInformation("Validating connection state for account {AccountId}: {Count} tracked connections [{Connections}]", 
                         accountId, connectionCount, string.Join(", ", existingConnections));
 
-                    // Validate each connection by sending a ping and checking for response
-                    var validConnections = new List<string>();
-                    var staleConnections = new List<string>();
-
-                    foreach (var connectionId in existingConnections)
-                    {
-                        try
-                        {
-                            // Try to send a test message to see if connection is active
-                            await Clients.Client(connectionId).ReceiveChat(new ChatMessageDto
-                            {
-                                ChatType = "system",
-                                SenderName = "System",
-                                Message = "Connection validation ping",
-                                Timestamp = DateTime.UtcNow,
-                                AccountId = accountGuid,
-                                SessionId = "system"
-                            });
-                            
-                            validConnections.Add(connectionId);
-                            _logger.LogDebug("Connection {ConnectionId} responded to ping - keeping", connectionId);
-                        }
-                        catch (Exception ex)
-                        {
-                            staleConnections.Add(connectionId);
-                            _logger.LogDebug(ex, "Connection {ConnectionId} failed ping test - marking as stale", connectionId);
-                        }
-                    }
-
-                    // Clean up stale connections
-                    foreach (var staleConnectionId in staleConnections)
-                    {
-                        try
-                        {
-                            await Groups.RemoveFromGroupAsync(staleConnectionId, $"account_{accountId}");
-                            _logger.LogDebug("Removed stale connection {ConnectionId} from SignalR group for account {AccountId}", staleConnectionId, accountId);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug(ex, "Expected failure removing stale connection {ConnectionId} from SignalR group", staleConnectionId);
-                        }
-                        
-                        _connectionTrackingService.RemoveConnection(staleConnectionId, accountGuid);
-                    }
+                    // Skip the ping test - it may be causing interference with normal operations
+                    // Instead, just ensure the current connection is properly tracked
+                    _logger.LogDebug("Skipping connection ping test to avoid interference with avatar data flow");
 
                     // Ensure current connection is properly tracked
                     if (!existingConnections.Contains(Context.ConnectionId))
@@ -501,16 +462,7 @@ namespace RadegastWeb.Hubs
                     }
 
                     var finalCount = _connectionTrackingService.GetConnectionCount(accountGuid);
-                    
-                    if (staleConnections.Count > 0)
-                    {
-                        _logger.LogInformation("Connection validation for account {AccountId}: cleaned up {StaleCount} stale connections, {ValidCount} valid connections remain", 
-                            accountId, staleConnections.Count, finalCount);
-                    }
-                    else
-                    {
-                        _logger.LogDebug("Connection state for account {AccountId} is valid - {Count} active connections", accountId, finalCount);
-                    }
+                    _logger.LogDebug("Connection state validation completed for account {AccountId} - {Count} active connections", accountId, finalCount);
                 }
             }
             catch (Exception ex)
@@ -531,9 +483,91 @@ namespace RadegastWeb.Hubs
             }
 
             // Just receiving this call indicates the connection is alive
-            _logger.LogDebug("Heartbeat received from connection {ConnectionId}", Context.ConnectionId);
+            // Update the connection activity timestamp to prevent stale cleanup
+            _connectionTrackingService.UpdateConnectionActivity(Context.ConnectionId);
+            // Reduced logging to avoid spam
+            //_logger.LogDebug("Heartbeat received from connection {ConnectionId}", Context.ConnectionId);
             
             return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Force a complete state synchronization for the specified account
+        /// This sends all current data (avatars, groups, presence, etc.) to the client
+        /// Use this when the client suspects it has stale data
+        /// </summary>
+        public async Task ForceStateSynchronization(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to force state sync from {ConnectionId}", Context.ConnectionId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (!Guid.TryParse(accountId, out var accountGuid))
+                {
+                    _logger.LogError("Invalid account ID for state sync: {AccountId}", accountId);
+                    await Clients.Caller.ChatError("Invalid account ID");
+                    return;
+                }
+
+                _logger.LogInformation("Force state synchronization requested for account {AccountId} by connection {ConnectionId}", accountId, Context.ConnectionId);
+                
+                var instance = _accountService.GetInstance(accountGuid);
+                if (instance == null)
+                {
+                    _logger.LogError("No account instance found for state sync: {AccountId}", accountId);
+                    await Clients.Caller.ChatError($"Account instance not found for {accountId}");
+                    return;
+                }
+
+                // Send current avatar state (always send, even if empty)
+                var nearbyAvatars = instance.IsConnected ? await instance.GetNearbyAvatarsAsync() : Enumerable.Empty<AvatarDto>();
+                var avatarList = nearbyAvatars.ToList();
+                await Clients.Caller.NearbyAvatarsUpdated(avatarList);
+                _logger.LogInformation("State sync: sent {Count} nearby avatars for account {AccountId}", avatarList.Count, accountId);
+
+                if (instance.IsConnected)
+                {
+                    // Send current presence status
+                    var presenceStatus = _presenceService.GetAccountStatus(accountGuid);
+                    var statusText = presenceStatus switch
+                    {
+                        PresenceStatus.Away => "Away",
+                        PresenceStatus.Busy => "Busy",
+                        _ => "Online"
+                    };
+                    await Clients.Caller.PresenceStatusChanged(accountId, presenceStatus.ToString(), statusText);
+                    
+                    // Send groups data
+                    var groups = await instance.GetGroupsAsync();
+                    await Clients.Caller.GroupsUpdated(accountId, groups.ToList());
+                    
+                    // Send region stats if available
+                    try
+                    {
+                        var regionStats = await _accountService.GetRegionStatsAsync(accountGuid);
+                        if (regionStats != null)
+                        {
+                            await Clients.Caller.RegionStatsUpdated(regionStats);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Could not get region stats during state sync for account {AccountId}", accountId);
+                    }
+                }
+                
+                _logger.LogInformation("Force state synchronization completed for account {AccountId}", accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during force state synchronization for account {AccountId}", accountId);
+                await Clients.Caller.ChatError($"Error during state synchronization: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -777,37 +811,104 @@ namespace RadegastWeb.Hubs
             {
                 _logger.LogInformation("GetNearbyAvatars called for account {AccountId} by connection {ConnectionId}", accountId, Context.ConnectionId);
                 
-                if (Guid.TryParse(accountId, out var accountGuid))
-                {
-                    // Check if the connection is in the right group
-                    var connectionAccounts = _connectionTrackingService.GetAllConnectionAccounts(Context.ConnectionId);
-                    var isInGroup = connectionAccounts.Contains(accountGuid);
-                    _logger.LogInformation("Connection {ConnectionId} in account group {AccountId}: {IsInGroup}", Context.ConnectionId, accountId, isInGroup);
-                    
-                    var avatars = await _accountService.GetNearbyAvatarsAsync(accountGuid);
-                    var avatarList = avatars.ToList();
-                    
-                    _logger.LogInformation("Retrieved {Count} nearby avatars for account {AccountId}, sending to connection {ConnectionId}", 
-                        avatarList.Count, accountId, Context.ConnectionId);
-                    
-                    // Send to both caller and the group to ensure delivery during account switching scenarios
-                    await Clients.Caller.NearbyAvatarsUpdated(avatarList);
-                    
-                    // Also broadcast to the group if this connection is properly in the group
-                    if (isInGroup)
-                    {
-                        await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(avatarList);
-                        _logger.LogDebug("Also broadcasted to group account_{AccountId}", accountId);
-                    }
-                }
-                else
+                if (!Guid.TryParse(accountId, out var accountGuid))
                 {
                     _logger.LogWarning("Invalid accountId format in GetNearbyAvatars: {AccountId}", accountId);
+                    return;
                 }
+
+                // Check if the connection is in the right group
+                var connectionAccounts = _connectionTrackingService.GetAllConnectionAccounts(Context.ConnectionId);
+                var isInGroup = connectionAccounts.Contains(accountGuid);
+                _logger.LogInformation("Connection {ConnectionId} in account group {AccountId}: {IsInGroup}", Context.ConnectionId, accountId, isInGroup);
+                
+                // Get account instance first
+                _logger.LogDebug("Getting account instance for {AccountId}...", accountId);
+                var instance = _accountService.GetInstance(accountGuid);
+                if (instance == null)
+                {
+                    _logger.LogWarning("No account instance found for {AccountId} in GetNearbyAvatars", accountId);
+                    await Clients.Caller.NearbyAvatarsUpdated(new List<AvatarDto>());
+                    return;
+                }
+                
+                _logger.LogDebug("Account instance found for {AccountId}, connected: {IsConnected}", accountId, instance.IsConnected);
+                
+                if (!instance.IsConnected)
+                {
+                    _logger.LogInformation("Account {AccountId} is not connected to SL, sending empty avatar list", accountId);
+                    await Clients.Caller.NearbyAvatarsUpdated(new List<AvatarDto>());
+                    return;
+                }
+                
+                // Get avatars with timeout and detailed logging to identify bottlenecks
+                _logger.LogDebug("Requesting nearby avatars for account {AccountId}...", accountId);
+                List<AvatarDto> avatarList;
+                
+                try
+                {
+                    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                    
+                    // Try direct instance method first to bypass AccountService layer
+                    var avatars = await instance.GetNearbyAvatarsAsync().WaitAsync(TimeSpan.FromSeconds(3)); // 3 second timeout
+                    
+                    stopwatch.Stop();
+                    avatarList = avatars.ToList();
+                    _logger.LogInformation("Retrieved {Count} nearby avatars for account {AccountId} in {ElapsedMs}ms", 
+                        avatarList.Count, accountId, stopwatch.ElapsedMilliseconds);
+                }
+                catch (TimeoutException)
+                {
+                    _logger.LogWarning("GetNearbyAvatarsAsync timed out after 3 seconds for account {AccountId}, trying simple fallback", accountId);
+                    
+                    // Fallback: try to get avatars without display name processing
+                    try
+                    {
+                        var simpleAvatars = instance.GetNearbyAvatars(); // Synchronous version
+                        avatarList = simpleAvatars.ToList();
+                        _logger.LogInformation("Fallback: Retrieved {Count} nearby avatars for account {AccountId} using simple method", 
+                            avatarList.Count, accountId);
+                    }
+                    catch (Exception fallbackEx)
+                    {
+                        _logger.LogError(fallbackEx, "Fallback avatar retrieval also failed for account {AccountId}", accountId);
+                        avatarList = new List<AvatarDto>();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error retrieving avatars for account {AccountId}", accountId);
+                    avatarList = new List<AvatarDto>();
+                }
+                
+                // Always send the response, even if empty
+                _logger.LogInformation("Sending {Count} nearby avatars to connection {ConnectionId} for account {AccountId}", 
+                    avatarList.Count, Context.ConnectionId, accountId);
+                
+                await Clients.Caller.NearbyAvatarsUpdated(avatarList);
+                
+                // Also broadcast to the group if this connection is properly in the group
+                if (isInGroup)
+                {
+                    await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(avatarList);
+                    _logger.LogDebug("Also broadcasted {Count} avatars to group account_{AccountId}", avatarList.Count, accountId);
+                }
+                
+                _logger.LogInformation("✓ GetNearbyAvatars completed successfully for account {AccountId}, sent {Count} avatars", 
+                    accountId, avatarList.Count);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting nearby avatars via SignalR for account {AccountId}, connection {ConnectionId}", accountId, Context.ConnectionId);
+                // Send empty list on error to prevent client hanging
+                try
+                {
+                    await Clients.Caller.NearbyAvatarsUpdated(new List<AvatarDto>());
+                }
+                catch (Exception sendEx)
+                {
+                    _logger.LogError(sendEx, "Failed to send empty avatar list after error for account {AccountId}", accountId);
+                }
             }
         }
 

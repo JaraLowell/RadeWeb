@@ -48,6 +48,11 @@ namespace RadegastWeb.Services
         void ForceRemoveConnection(string connectionId);
         
         /// <summary>
+        /// Updates the last activity timestamp for a connection to prevent it from being cleaned up as stale
+        /// </summary>
+        void UpdateConnectionActivity(string connectionId);
+        
+        /// <summary>
         /// Perform deep validation and cleanup of connection tracking state
         /// Use this after long periods of server uptime to prevent state drift
         /// </summary>

@@ -9,6 +9,9 @@ class RadegastWebClient {
         this.chatSessions = {};
         this.currentChatSession = 'local';
         this.avatarRefreshInterval = null;
+        this.heartbeatInterval = null;
+        this.connectionValidationInterval = null;
+        this.lastHeartbeatTime = null;
         this.closedGroupSessions = new Set(); // Track closed group sessions during this account session
         this.groups = []; // Store groups for the current account
         this.notices = []; // Store notices for the current account
@@ -314,8 +317,9 @@ class RadegastWebClient {
                 }
             }
             
-            // Start periodic connection health check
+            // Start periodic connection health check and heartbeat
             this.startConnectionHealthCheck();
+            this.startHeartbeat();
         } catch (err) {
             console.error("SignalR Connection Error:", err);
             this.showAlert("Failed to connect to real-time service", "warning");
@@ -1390,6 +1394,92 @@ class RadegastWebClient {
         }
     }
 
+    startHeartbeat() {
+        // Stop existing heartbeat if any
+        this.stopHeartbeat();
+        
+        if (!this.connection || this.connection.state !== 'Connected') {
+            console.log('Heartbeat not started - no active connection');
+            return;
+        }
+        
+        console.log('Starting SignalR heartbeat');
+        this.lastHeartbeatTime = Date.now();
+        
+        // Send heartbeat every 2 minutes (reduced frequency)
+        this.heartbeatInterval = setInterval(async () => {
+            if (this.connection && this.connection.state === 'Connected') {
+                try {
+                    await this.connection.invoke("Heartbeat");
+                    this.lastHeartbeatTime = Date.now();
+                    console.log('Heartbeat sent');
+                } catch (error) {
+                    console.warn('Heartbeat failed:', error);
+                }
+            }
+        }, 120000);
+        
+        // Start connection validation timer - checks every 10 minutes (reduced frequency)
+        this.connectionValidationInterval = setInterval(() => {
+            this.validateConnection();
+        }, 600000);
+    }
+    
+    stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            console.log('Stopping SignalR heartbeat');
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+        }
+        
+        if (this.connectionValidationInterval) {
+            clearInterval(this.connectionValidationInterval);
+            this.connectionValidationInterval = null;
+        }
+    }
+    
+    async validateConnection() {
+        if (!this.connection || this.connection.state !== 'Connected') {
+            console.log('Connection validation skipped - no active connection');
+            return;
+        }
+        
+        if (!this.currentAccountId) {
+            console.log('Connection validation skipped - no current account');
+            return;
+        }
+        
+        // Check if heartbeat is working (should have received response within last 5 minutes)
+        const now = Date.now();
+        const timeSinceLastHeartbeat = now - (this.lastHeartbeatTime || 0);
+        
+        if (timeSinceLastHeartbeat > 300000) { // 5 minutes
+            console.warn(`Heartbeat appears stale (${Math.round(timeSinceLastHeartbeat/1000)}s ago), forcing connection validation`);
+        }
+        
+        try {
+            console.log('Validating connection state and group membership...');
+            await this.connection.invoke("ValidateAndFixConnectionState", this.currentAccountId);
+            console.log('✓ Connection validation completed successfully');
+            
+            // Also force a state synchronization to ensure we have current data
+            await this.connection.invoke("ForceStateSynchronization", this.currentAccountId);
+            console.log('✓ State synchronization completed');
+            
+        } catch (error) {
+            console.error('Connection validation failed:', error);
+            
+            // If validation fails completely, try to recover by rejoining the account group
+            try {
+                console.log('Attempting connection recovery...');
+                await this.connection.invoke("JoinAccountGroup", this.currentAccountId);
+                console.log('✓ Connection recovery successful');
+            } catch (recoveryError) {
+                console.error('Connection recovery also failed:', recoveryError);
+            }
+        }
+    }
+
     bindEvents() {
         // Page unload cleanup
         window.addEventListener('beforeunload', () => {
@@ -2058,9 +2148,18 @@ class RadegastWebClient {
                         console.warn("SignalR SetActiveAccount failed (this is okay, REST API call should have worked):", signalRError);
                     }
 
-                    // Wait a short moment for SignalR group membership changes to propagate
+                    // Wait for SignalR group membership changes to propagate and validate them
                     console.log("Waiting for SignalR group membership changes to complete...");
                     await new Promise(resolve => setTimeout(resolve, 500));
+                    
+                    // Simple validation - just ensure we're properly joined (reduced complexity)
+                    try {
+                        console.log("Performing simple validation after account switch...");
+                        await this.connection.invoke("ValidateAndFixConnectionState", accountId);
+                        console.log("✓ Account switch validation completed");
+                    } catch (validationError) {
+                        console.warn("Account switch validation failed (but continuing):", validationError);
+                    }
                 
                     // Load recent chat sessions for this account
                     await this.connection.invoke("GetRecentSessions", accountId);
@@ -2082,27 +2181,39 @@ class RadegastWebClient {
                     // Refresh nearby avatars for the new account (only if connected)
                     // Wait a bit more to ensure all SignalR group changes are complete
                     if (account.isConnected) {
-                        console.log("Refreshing data for new account after group membership stabilization...");
-                        setTimeout(() => {
-                            if (this.currentAccountId === accountId && !this.isSwitchingAccounts) { // Double-check we're still on the same account
-                                this.refreshNearbyAvatars();
-                                // Load groups for connected accounts
+                        console.log("Starting coordinated data refresh for new account...");
+                        
+                        // Use async/await to ensure proper sequencing
+                        const refreshAccountData = async () => {
+                            // Double-check we're still on the same account before each step
+                            if (this.currentAccountId !== accountId || this.isSwitchingAccounts) {
+                                console.log("Account changed during refresh, aborting");
+                                return;
+                            }
+                            
+                            try {
+                                // Simplified refresh approach to reduce interference
+                                console.log("Step 1: Requesting current avatar data...");
+                                await this.refreshNearbyAvatars();
+                                
+                                console.log("Step 2: Loading groups and other account data...");
                                 this.loadGroups();
-                                // Start avatar refresh timer for the new account
+                                
+                                console.log("Step 3: Starting periodic refresh timer...");
                                 this.startAvatarRefresh();
                                 
-                                // Force refresh avatar events on the server to ensure proper event flow
-                                this.forceRefreshAvatarEvents(accountId);
+                                console.log("✓ Simplified data refresh completed successfully");
                                 
-                                // Additional refresh after a longer delay to catch any slow avatar data
-                                setTimeout(() => {
-                                    if (this.currentAccountId === accountId && !this.isSwitchingAccounts) {
-                                        console.log("Secondary avatar refresh for account switching");
-                                        this.refreshNearbyAvatars();
-                                    }
-                                }, 2000); // Increased to 2 seconds
+                            } catch (refreshError) {
+                                console.error("Error during data refresh:", refreshError);
+                                // Minimal fallback
+                                this.refreshNearbyAvatars();
+                                this.startAvatarRefresh();
                             }
-                        }, 500); // Increased delay from 200ms to 500ms
+                        };
+                        
+                        // Start the refresh process after a short delay to ensure group membership is stable
+                        setTimeout(refreshAccountData, 800);
                     }
                 } catch (error) {
                     console.error("Error managing account groups:", error);
@@ -3622,6 +3733,9 @@ class RadegastWebClient {
 
     async cleanup() {
         console.log("Starting cleanup process...");
+        
+        // Stop heartbeat and connection validation
+        this.stopHeartbeat();
         
         // Clean up any stray modal backdrops
         this.cleanupModalBackdrops();

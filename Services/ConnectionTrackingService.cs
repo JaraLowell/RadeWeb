@@ -6,6 +6,7 @@ namespace RadegastWeb.Services
     {
         private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, bool>> _accountConnections = new();
         private readonly ConcurrentDictionary<string, ConcurrentDictionary<Guid, bool>> _connectionAccounts = new();
+        private readonly ConcurrentDictionary<string, DateTime> _connectionTimestamps = new();
         private readonly ILogger<ConnectionTrackingService> _logger;
         private readonly ReaderWriterLockSlim _lock = new ReaderWriterLockSlim();
         private volatile bool _disposed = false;
@@ -29,6 +30,9 @@ namespace RadegastWeb.Services
                 // Add to connection -> accounts mapping
                 var connectionAccounts = _connectionAccounts.GetOrAdd(connectionId, _ => new ConcurrentDictionary<Guid, bool>());
                 connectionAccounts.TryAdd(accountId, true);
+
+                // Track connection timestamp
+                _connectionTimestamps.AddOrUpdate(connectionId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
 
                 _logger.LogDebug("Added connection {ConnectionId} to account {AccountId}. Total connections for account: {Count}",
                     connectionId, accountId, accountConnections.Count);
@@ -73,6 +77,7 @@ namespace RadegastWeb.Services
                     if (connectionAccounts.IsEmpty)
                     {
                         _connectionAccounts.TryRemove(connectionId, out _);
+                        _connectionTimestamps.TryRemove(connectionId, out _);
                     }
                 }
 
@@ -222,6 +227,7 @@ namespace RadegastWeb.Services
             _lock.EnterWriteLock();
             try
             {
+                // Step 1: Clean up empty collections (existing logic)
                 var staleAccounts = new List<Guid>();
                 
                 foreach (var kvp in _accountConnections)
@@ -251,11 +257,54 @@ namespace RadegastWeb.Services
                 {
                     _connectionAccounts.TryRemove(connectionId, out _);
                 }
+
+                // Step 2: Clean up connections that are older than 5 minutes without activity
+                var now = DateTime.UtcNow;
+                var oldConnections = new List<string>();
                 
-                if (staleAccounts.Count > 0 || staleConnections.Count > 0)
+                foreach (var kvp in _connectionTimestamps)
                 {
-                    _logger.LogDebug("Cleaned up {AccountCount} stale account entries and {ConnectionCount} stale connection entries",
-                        staleAccounts.Count, staleConnections.Count);
+                    if (now - kvp.Value > TimeSpan.FromMinutes(5))
+                    {
+                        oldConnections.Add(kvp.Key);
+                        _logger.LogInformation("Marking connection {ConnectionId} as stale - last activity: {LastActivity:yyyy-MM-dd HH:mm:ss} UTC", 
+                            kvp.Key, kvp.Value);
+                    }
+                }
+                
+                // Force remove old connections (inline to avoid recursion)
+                foreach (var connectionId in oldConnections)
+                {
+                    // Remove from timestamp tracking
+                    _connectionTimestamps.TryRemove(connectionId, out _);
+                    
+                    // Get all accounts this connection was associated with
+                    if (_connectionAccounts.TryRemove(connectionId, out var accountIds))
+                    {
+                        // Remove this connection from all account mappings
+                        foreach (var accountId in accountIds.Keys)
+                        {
+                            if (_accountConnections.TryGetValue(accountId, out var accountConnections))
+                            {
+                                accountConnections.TryRemove(connectionId, out _);
+                                
+                                // Clean up empty account entries
+                                if (accountConnections.IsEmpty)
+                                {
+                                    _accountConnections.TryRemove(accountId, out _);
+                                }
+                            }
+                        }
+                        
+                        _logger.LogDebug("Cleaned up old connection {ConnectionId} from {AccountCount} accounts",
+                            connectionId, accountIds.Count);
+                    }
+                }
+                
+                if (staleAccounts.Count > 0 || staleConnections.Count > 0 || oldConnections.Count > 0)
+                {
+                    _logger.LogInformation("Cleaned up {AccountCount} stale account entries, {ConnectionCount} stale connection entries, and {OldCount} old connections",
+                        staleAccounts.Count, staleConnections.Count, oldConnections.Count);
                 }
             }
             catch (Exception ex)
@@ -275,6 +324,9 @@ namespace RadegastWeb.Services
             _lock.EnterWriteLock();
             try
             {
+                // Remove from timestamp tracking
+                _connectionTimestamps.TryRemove(connectionId, out _);
+                
                 // Get all accounts this connection was associated with
                 if (_connectionAccounts.TryRemove(connectionId, out var accountIds))
                 {
@@ -490,6 +542,18 @@ namespace RadegastWeb.Services
             {
                 _lock.ExitWriteLock();
             }
+        }
+
+        /// <summary>
+        /// Updates the last activity timestamp for a connection to prevent it from being cleaned up as stale
+        /// </summary>
+        public void UpdateConnectionActivity(string connectionId)
+        {
+            if (_disposed) return;
+
+            _connectionTimestamps.AddOrUpdate(connectionId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
+            // Reduced logging to avoid spam
+            //_logger.LogDebug("Updated activity timestamp for connection {ConnectionId}", connectionId);
         }
 
         public void Dispose()
