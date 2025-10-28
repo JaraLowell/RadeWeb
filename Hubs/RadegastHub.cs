@@ -1742,6 +1742,148 @@ namespace RadegastWeb.Hubs
             }
         }
 
+        public async Task RespondToFriendshipRequest(FriendshipRequestResponseRequest request)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                var friendshipService = Context.GetHttpContext()?.RequestServices.GetService<IFriendshipRequestService>();
+                if (friendshipService == null)
+                {
+                    await Clients.Caller.FriendshipRequestError("Service not available");
+                    return;
+                }
+
+                var success = await friendshipService.RespondToFriendshipRequestAsync(request);
+                if (!success)
+                {
+                    await Clients.Caller.FriendshipRequestError("Failed to respond to friendship request");
+                }
+                else
+                {
+                    await Clients.Caller.FriendshipRequestClosed(request.AccountId.ToString(), request.RequestId);
+                    _logger.LogInformation("Friendship request response sent for account {AccountId}, request {RequestId}: {Accept}", 
+                        request.AccountId, request.RequestId, request.Accept ? "Accepted" : "Declined");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error responding to friendship request via SignalR");
+                await Clients.Caller.FriendshipRequestError("Error responding to friendship request");
+            }
+        }
+
+        public async Task GetActiveFriendshipRequests(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    var friendshipService = Context.GetHttpContext()?.RequestServices.GetService<IFriendshipRequestService>();
+                    if (friendshipService != null)
+                    {
+                        var requests = await friendshipService.GetActiveFriendshipRequestsAsync(accountGuid);
+                        
+                        foreach (var request in requests)
+                        {
+                            await Clients.Caller.FriendshipRequestReceived(request);
+                        }
+                    }
+                }
+                else
+                {
+                    await Clients.Caller.FriendshipRequestError("Invalid account ID");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting active friendship requests via SignalR");
+                await Clients.Caller.FriendshipRequestError("Error retrieving friendship requests");
+            }
+        }
+
+        public async Task RespondToGroupInvitation(GroupInvitationResponseRequest request)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                var groupInvitationService = Context.GetHttpContext()?.RequestServices.GetService<IGroupInvitationService>();
+                if (groupInvitationService == null)
+                {
+                    await Clients.Caller.GroupInvitationError("Service not available");
+                    return;
+                }
+
+                var success = await groupInvitationService.RespondToGroupInvitationAsync(request);
+                if (!success)
+                {
+                    await Clients.Caller.GroupInvitationError("Failed to respond to group invitation");
+                }
+                else
+                {
+                    await Clients.Caller.GroupInvitationClosed(request.AccountId.ToString(), request.InvitationId);
+                    _logger.LogInformation("Group invitation response sent for account {AccountId}, invitation {InvitationId}: {Accept}", 
+                        request.AccountId, request.InvitationId, request.Accept ? "Accepted" : "Declined");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error responding to group invitation via SignalR");
+                await Clients.Caller.GroupInvitationError("Error responding to group invitation");
+            }
+        }
+
+        public async Task GetActiveGroupInvitations(string accountId)
+        {
+            if (!IsAuthenticated())
+            {
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    var groupInvitationService = Context.GetHttpContext()?.RequestServices.GetService<IGroupInvitationService>();
+                    if (groupInvitationService != null)
+                    {
+                        var invitations = await groupInvitationService.GetActiveGroupInvitationsAsync(accountGuid);
+                        
+                        foreach (var invitation in invitations)
+                        {
+                            await Clients.Caller.GroupInvitationReceived(invitation);
+                        }
+                    }
+                }
+                else
+                {
+                    await Clients.Caller.GroupInvitationError("Invalid account ID");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting active group invitations via SignalR");
+                await Clients.Caller.GroupInvitationError("Error retrieving group invitations");
+            }
+        }
+
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             var connectionId = Context.ConnectionId;
@@ -1828,5 +1970,15 @@ namespace RadegastWeb.Hubs
         Task TeleportRequestReceived(TeleportRequestDto request);
         Task TeleportRequestClosed(string accountId, string requestId);
         Task TeleportRequestError(string error);
+        
+        // Friendship Request methods
+        Task FriendshipRequestReceived(FriendshipRequestDto request);
+        Task FriendshipRequestClosed(string accountId, string requestId);
+        Task FriendshipRequestError(string error);
+        
+        // Group Invitation methods
+        Task GroupInvitationReceived(GroupInvitationDto invitation);
+        Task GroupInvitationClosed(string accountId, string invitationId);
+        Task GroupInvitationError(string error);
     }
 }

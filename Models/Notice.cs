@@ -30,7 +30,7 @@ namespace RadegastWeb.Models
         
         [Required]
         [StringLength(50)]
-        public string Type { get; set; } = string.Empty; // Group, Region, System
+        public string Type { get; set; } = string.Empty; // Group, Region, System, FriendshipOffer, GroupInvitation
         
         public bool HasAttachment { get; set; }
         
@@ -45,6 +45,23 @@ namespace RadegastWeb.Models
         public bool IsAcknowledged { get; set; }
         
         public bool IsRead { get; set; } = false;
+        
+        // Interactive notice fields for friend requests and group invitations
+        public bool IsInteractive { get; set; } = false;
+        
+        public bool HasResponse { get; set; } = false;
+        
+        public bool? AcceptedResponse { get; set; } // null = no response, true = accepted, false = declined
+        
+        public DateTime? RespondedAt { get; set; }
+        
+        [StringLength(100)]
+        public string? SessionId { get; set; } // IM Session ID for responses
+        
+        [StringLength(100)]
+        public string? ExternalRequestId { get; set; } // Reference to FriendshipRequest or GroupInvitation ID
+        
+        public DateTime? ExpiresAt { get; set; }
         
         // Navigation properties
         public virtual Account Account { get; set; } = null!;

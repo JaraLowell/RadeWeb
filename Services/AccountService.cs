@@ -333,7 +333,12 @@ namespace RadegastWeb.Services
                 _logger.LogDebug("Creating WebRadegastInstance for account {AccountId} with AvatarRelayUuid: {AvatarRelayUuid}", 
                     id, account.AvatarRelayUuid ?? "null");
                 
-                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService);
+                // Get additional required services
+                var dbContextFactory = _serviceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
+                var friendshipRequestService = _serviceProvider.GetRequiredService<IFriendshipRequestService>();
+                var groupInvitationService = _serviceProvider.GetRequiredService<IGroupInvitationService>();
+                
+                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService);
                 
                 var loginResult = await instance.LoginAsync();
                 

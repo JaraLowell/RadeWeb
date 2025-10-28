@@ -21,16 +21,28 @@ namespace RadegastWeb.Models
         public bool IsAcknowledged { get; set; }
         public bool IsRead { get; set; } = false;
         
+        // Interactive notice fields for friend requests and group invitations
+        public bool IsInteractive { get; set; } = false;
+        public bool HasResponse { get; set; } = false;
+        public bool? AcceptedResponse { get; set; } // null = no response, true = accepted, false = declined
+        public DateTime? RespondedAt { get; set; }
+        public string? ExternalRequestId { get; set; } // Reference to FriendshipRequest or GroupInvitation ID
+        public DateTime? ExpiresAt { get; set; }
+        
         // SLT formatted timestamps for display
         public string? SLTTime { get; set; } // HH:mm:ss format
         public string? SLTDateTime { get; set; } // MMM dd, HH:mm:ss format
+        public string? SLTExpiresAt { get; set; } // MMM dd, HH:mm:ss format
+        public string? SLTRespondedAt { get; set; } // MMM dd, HH:mm:ss format
     }
 
     public enum NoticeType
     {
         Group,
         Region,
-        System
+        System,
+        FriendshipOffer,
+        GroupInvitation
     }
 
     public class NoticeReceivedEventArgs : EventArgs

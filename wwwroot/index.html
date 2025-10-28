@@ -469,6 +469,43 @@
         </div>
     </div>
 
+    <!-- Interactive Notice Modal -->
+    <div class="modal fade" id="interactiveNoticeModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i id="interactiveNoticeIcon" class="fas fa-user-friends me-2"></i>
+                        <span id="interactiveNoticeTitle">Interactive Notice</span>
+                    </h5>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-info">
+                        <strong id="interactiveNoticeFromName">Someone</strong> 
+                        <span id="interactiveNoticeMessage">has sent you a request.</span>
+                    </div>
+                    <div id="interactiveNoticeDetails" class="mb-3"></div>
+                    <div class="text-muted small">
+                        <i class="fas fa-clock me-1"></i>
+                        <span id="interactiveNoticeTime">--:--</span>
+                        <span id="interactiveNoticeExpiry" class="ms-3 d-none">
+                            <i class="fas fa-hourglass-half me-1"></i>
+                            Expires: <span id="interactiveNoticeExpiryTime">--:--</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-danger" id="interactiveNoticeDecline">
+                        <i class="fas fa-times me-1"></i>Decline
+                    </button>
+                    <button type="button" class="btn btn-success" id="interactiveNoticeAccept">
+                        <i class="fas fa-check me-1"></i>Accept
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Loading Spinner -->
     <div id="loadingSpinner" class="d-none position-fixed top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center" style="background: rgba(0,0,0,0.5); z-index: 9999;">
         <div class="spinner-border text-light" role="status">

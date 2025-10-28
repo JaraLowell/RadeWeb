@@ -248,6 +248,19 @@ class RadegastWebClient {
                 this.showAlert("Teleport Request Error: " + error, "danger");
             });
 
+            // Interactive notice event handlers
+            this.connection.on("InteractiveFriendshipRequestReceived", (request) => {
+                this.handleInteractiveFriendshipRequestReceived(request);
+            });
+
+            this.connection.on("InteractiveGroupInvitationReceived", (invitation) => {
+                this.handleInteractiveGroupInvitationReceived(invitation);
+            });
+
+            this.connection.on("InteractiveNoticeResponded", (noticeId, response) => {
+                this.handleInteractiveNoticeResponse(noticeId, response);
+            });
+
             // Add reconnection event handlers
             this.connection.onreconnecting((error) => {
                 console.warn("SignalR connection lost, attempting to reconnect...", error);
@@ -2923,6 +2936,33 @@ class RadegastWebClient {
         }
     }
 
+    // Format relative time for interactive notice responses
+    formatRelativeTime(timestamp) {
+        try {
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diffMs = now - date;
+            const diffMins = Math.floor(diffMs / 60000);
+            const diffHours = Math.floor(diffMs / 3600000);
+            const diffDays = Math.floor(diffMs / 86400000);
+
+            if (diffMins < 1) {
+                return 'just now';
+            } else if (diffMins < 60) {
+                return `${diffMins} min${diffMins !== 1 ? 's' : ''} ago`;
+            } else if (diffHours < 24) {
+                return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+            } else if (diffDays < 7) {
+                return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+            } else {
+                return this.convertToSLT(timestamp);
+            }
+        } catch (error) {
+            console.error('Error formatting relative time:', error);
+            return 'some time ago';
+        }
+    }
+
     // New method to safely render message content that may contain SLURL links
     renderMessageContent(message) {
         // If the message contains HTML-like content (our SLURL links), render it as HTML
@@ -3635,12 +3675,17 @@ class RadegastWebClient {
         const noticeDiv = document.createElement('div');
         noticeDiv.className = `chat-message notice mb-3 p-3 border rounded`;
         noticeDiv.id = `notice-${notice.id}`;
-        // Notice.Type enum: 0=Group, 1=Region, 2=System
-        noticeDiv.style.backgroundColor = notice.type === 0 ? '#213c50' : '#563838';
+        // Notice.Type enum: 0=Group, 1=Region, 2=System, 5=FriendshipRequest, 6=GroupInvitation
+        let backgroundColor = '#563838'; // Default
+        if (notice.type === 0) backgroundColor = '#213c50'; // Group
+        else if (notice.type === 5) backgroundColor = '#4a73a9'; // FriendshipRequest (primary blue)
+        else if (notice.type === 6) backgroundColor = '#28a745'; // GroupInvitation (success green)
+        
+        noticeDiv.style.backgroundColor = backgroundColor;
         
         // Always use SLT time - prefer sltTime from server, fallback to converting timestamp to SLT
         const timestamp = notice.sltTime || this.convertToSLT(notice.timestamp);
-        const typeNames = { 0: 'Group', 1: 'Region', 2: 'System' };
+        const typeNames = { 0: 'Group', 1: 'Region', 2: 'System', 5: 'Friendship', 6: 'Invitation' };
         const typeName = typeNames[notice.type] || 'Unknown';
         
         noticeDiv.innerHTML = `
@@ -3649,7 +3694,7 @@ class RadegastWebClient {
                     <strong class="notice-title">${this.escapeHtml(notice.title)}</strong>
                     <small class="text-muted ms-2" title="Second Life Time (SLT)">${timestamp}</small>
                 </div>
-                <span class="badge ${notice.type === 0 ? 'bg-primary' : 'bg-secondary'}">${typeName}</span>
+                <span class="badge ${notice.type === 0 ? 'bg-primary' : notice.type === 5 ? 'bg-info' : notice.type === 6 ? 'bg-success' : 'bg-secondary'}">${typeName}</span>
             </div>
             <div class="notice-from mb-2">
                 <strong>From:</strong> ${this.escapeHtml(notice.fromName)}
@@ -3666,6 +3711,26 @@ class RadegastWebClient {
                             Accept Attachment
                         </button>
                     ` : ''}
+                </div>
+            ` : ''}
+            ${notice.isInteractive && !notice.hasResponse ? `
+                <div class="interactive-notice-controls mt-3 p-2 bg-info bg-opacity-10 border border-info rounded">
+                    <div class="d-flex justify-content-center gap-2">
+                        <button class="btn btn-success btn-sm" onclick="radegastClient.respondToInteractiveNotice('${notice.externalRequestId}', '${notice.type === 5 ? 'FriendshipRequest' : 'GroupInvitation'}', true)" title="Accept">
+                            <i class="fas fa-check me-1"></i>Accept
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="radegastClient.respondToInteractiveNotice('${notice.externalRequestId}', '${notice.type === 5 ? 'FriendshipRequest' : 'GroupInvitation'}', false)" title="Decline">
+                            <i class="fas fa-times me-1"></i>Decline
+                        </button>
+                    </div>
+                </div>
+            ` : notice.isInteractive && notice.hasResponse ? `
+                <div class="interactive-notice-response mt-3 p-2 ${notice.acceptedResponse ? 'bg-success' : 'bg-danger'} bg-opacity-10 border ${notice.acceptedResponse ? 'border-success' : 'border-danger'} rounded">
+                    <div class="text-center">
+                        <i class="fas ${notice.acceptedResponse ? 'fa-check-circle text-success' : 'fa-times-circle text-danger'} me-1"></i>
+                        <strong>${notice.acceptedResponse ? 'Accepted' : 'Declined'}</strong>
+                        <small class="text-muted ms-2">${this.formatRelativeTime(notice.respondedAt)}</small>
+                    </div>
                 </div>
             ` : ''}
             <div class="d-flex justify-content-end mt-2">
@@ -3744,6 +3809,282 @@ class RadegastWebClient {
             console.error("Error acknowledging notice:", error);
             this.showAlert("Error acknowledging notice", "danger");
         }
+    }
+
+    // Handle interactive friendship request received via SignalR
+    handleInteractiveFriendshipRequestReceived(request) {
+        console.log("Interactive friendship request received:", request);
+        
+        // Only handle requests for the current account
+        if (request.accountId !== this.currentAccountId) {
+            return;
+        }
+        
+        // Create or update the interactive notice
+        let notice = this.notices.find(n => n.externalRequestId === request.requestId);
+        if (notice) {
+            // Update existing notice
+            notice.isInteractive = true;
+            notice.hasResponse = false;
+            notice.expiresAt = request.expiresAt;
+        } else {
+            // Create new notice for friendship request
+            notice = {
+                id: `friendship-${request.requestId}`,
+                externalRequestId: request.requestId,
+                type: 5, // FriendshipRequest type
+                title: "Friendship Offer",
+                message: `${request.fromName} is offering friendship.`,
+                fromName: request.fromName,
+                timestamp: request.timestamp,
+                sltTime: request.sltTime,
+                isRead: false,
+                isInteractive: true,
+                hasResponse: false,
+                acceptedResponse: null,
+                respondedAt: null,
+                expiresAt: request.expiresAt,
+                sessionId: request.sessionId
+            };
+            
+            this.notices.unshift(notice);
+            this.unreadNoticesCount++;
+            
+            // Display the notice
+            this.displayNoticeInTab(notice);
+        }
+        
+        this.updateTabCounts();
+        
+        // Show notification sound/alert if notices tab is not active
+        if (this.currentChatSession !== 'notices') {
+            this.showAlert(`Friendship offer from ${request.fromName}`, "info");
+        }
+
+        // Show modal for immediate user interaction
+        this.showInteractiveNoticeModal(notice);
+    }
+
+    // Handle interactive group invitation received via SignalR
+    handleInteractiveGroupInvitationReceived(invitation) {
+        console.log("Interactive group invitation received:", invitation);
+        
+        // Only handle invitations for the current account
+        if (invitation.accountId !== this.currentAccountId) {
+            return;
+        }
+        
+        // Create or update the interactive notice
+        let notice = this.notices.find(n => n.externalRequestId === invitation.requestId);
+        if (notice) {
+            // Update existing notice
+            notice.isInteractive = true;
+            notice.hasResponse = false;
+            notice.expiresAt = invitation.expiresAt;
+        } else {
+            // Create new notice for group invitation
+            notice = {
+                id: `group-invitation-${invitation.requestId}`,
+                externalRequestId: invitation.requestId,
+                type: 6, // GroupInvitation type
+                title: "Group Invitation",
+                message: `${invitation.fromName} has invited you to join the group "${invitation.groupName}".`,
+                fromName: invitation.fromName,
+                groupName: invitation.groupName,
+                timestamp: invitation.timestamp,
+                sltTime: invitation.sltTime,
+                isRead: false,
+                isInteractive: true,
+                hasResponse: false,
+                acceptedResponse: null,
+                respondedAt: null,
+                expiresAt: invitation.expiresAt,
+                sessionId: invitation.sessionId
+            };
+            
+            this.notices.unshift(notice);
+            this.unreadNoticesCount++;
+            
+            // Display the notice
+            this.displayNoticeInTab(notice);
+        }
+        
+        this.updateTabCounts();
+        
+        // Show notification sound/alert if notices tab is not active
+        if (this.currentChatSession !== 'notices') {
+            this.showAlert(`Group invitation from ${invitation.fromName} for "${invitation.groupName}"`, "info");
+        }
+
+        // Show modal for immediate user interaction
+        this.showInteractiveNoticeModal(notice);
+    }
+
+    // Respond to an interactive notice (friendship request or group invitation)
+    async respondToInteractiveNotice(externalRequestId, requestType, accept) {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            if (!this.connection) {
+                this.showAlert("Not connected to server", "warning");
+                return;
+            }
+
+            console.log(`Responding to ${requestType} ${externalRequestId}: ${accept ? 'accept' : 'decline'}`);
+
+            // Call appropriate SignalR method based on request type
+            if (requestType === 'FriendshipRequest') {
+                await this.connection.invoke("RespondToFriendshipRequest", this.currentAccountId, externalRequestId, accept);
+            } else if (requestType === 'GroupInvitation') {
+                await this.connection.invoke("RespondToGroupInvitation", this.currentAccountId, externalRequestId, accept);
+            }
+
+            // Update the notice in our local array
+            const notice = this.notices.find(n => n.externalRequestId === externalRequestId);
+            if (notice) {
+                notice.hasResponse = true;
+                notice.acceptedResponse = accept;
+                notice.respondedAt = new Date().toISOString();
+                
+                // Refresh the display to show the response
+                this.displayNoticesInTab();
+            }
+
+            const action = accept ? 'accepted' : 'declined';
+            const typeText = requestType === 'FriendshipRequest' ? 'friendship request' : 'group invitation';
+            this.showAlert(`${typeText} ${action}`, "success");
+
+        } catch (error) {
+            console.error(`Error responding to ${requestType}:`, error);
+            this.showAlert(`Failed to respond to ${requestType.toLowerCase()}`, "danger");
+        }
+    }
+
+    // Handle response confirmation from server
+    handleInteractiveNoticeResponse(noticeId, response) {
+        console.log(`Interactive notice response confirmed: ${noticeId} = ${response}`);
+        
+        // Find and update the notice
+        const notice = this.notices.find(n => n.id === noticeId || n.externalRequestId === noticeId);
+        if (notice) {
+            notice.hasResponse = true;
+            notice.acceptedResponse = response.accepted;
+            notice.respondedAt = response.respondedAt;
+            
+            // Refresh the display
+            this.displayNoticesInTab();
+        }
+    }
+
+    // Show interactive notice modal for friendship requests and group invitations
+    showInteractiveNoticeModal(notice) {
+        // Set modal content based on notice type
+        const modal = document.getElementById('interactiveNoticeModal');
+        const titleElement = document.getElementById('interactiveNoticeTitle');
+        const iconElement = document.getElementById('interactiveNoticeIcon');
+        const fromNameElement = document.getElementById('interactiveNoticeFromName');
+        const messageElement = document.getElementById('interactiveNoticeMessage');
+        const detailsElement = document.getElementById('interactiveNoticeDetails');
+        const timeElement = document.getElementById('interactiveNoticeTime');
+        const expiryElement = document.getElementById('interactiveNoticeExpiry');
+        const expiryTimeElement = document.getElementById('interactiveNoticeExpiryTime');
+        const acceptBtn = document.getElementById('interactiveNoticeAccept');
+        const declineBtn = document.getElementById('interactiveNoticeDecline');
+
+        if (notice.type === 5) { // Friendship Request
+            titleElement.textContent = 'Friendship Offer';
+            iconElement.className = 'fas fa-user-friends me-2';
+            messageElement.textContent = 'is offering friendship.';
+            detailsElement.innerHTML = `
+                <p>Do you want to become friends with <strong>${this.escapeHtml(notice.fromName)}</strong>?</p>
+                <p class="text-muted small">Accepting will add them to your friends list and allow you to see when they're online.</p>
+            `;
+        } else if (notice.type === 6) { // Group Invitation
+            titleElement.textContent = 'Group Invitation';
+            iconElement.className = 'fas fa-users me-2';
+            messageElement.textContent = `has invited you to join "${notice.groupName}".`;
+            detailsElement.innerHTML = `
+                <p>Do you want to join the group <strong>${this.escapeHtml(notice.groupName)}</strong>?</p>
+                <p class="text-muted small">Joining will add you to the group and allow you to participate in group activities.</p>
+            `;
+        }
+
+        fromNameElement.textContent = notice.fromName;
+        timeElement.textContent = notice.sltTime || this.convertToSLT(notice.timestamp);
+
+        // Show expiry if available
+        if (notice.expiresAt) {
+            expiryElement.classList.remove('d-none');
+            expiryTimeElement.textContent = this.convertToSLT(notice.expiresAt);
+        } else {
+            expiryElement.classList.add('d-none');
+        }
+
+        // Clear any existing event listeners
+        const newAcceptBtn = acceptBtn.cloneNode(true);
+        const newDeclineBtn = declineBtn.cloneNode(true);
+        acceptBtn.parentNode.replaceChild(newAcceptBtn, acceptBtn);
+        declineBtn.parentNode.replaceChild(newDeclineBtn, declineBtn);
+
+        // Add event listeners for the buttons
+        newAcceptBtn.addEventListener('click', () => {
+            this.respondToInteractiveNotice(
+                notice.externalRequestId,
+                notice.type === 5 ? 'FriendshipRequest' : 'GroupInvitation',
+                true
+            );
+            const modalInstance = bootstrap.Modal.getInstance(modal);
+            modalInstance.hide();
+        });
+
+        newDeclineBtn.addEventListener('click', () => {
+            this.respondToInteractiveNotice(
+                notice.externalRequestId,
+                notice.type === 5 ? 'FriendshipRequest' : 'GroupInvitation',
+                false
+            );
+            const modalInstance = bootstrap.Modal.getInstance(modal);
+            modalInstance.hide();
+        });
+
+        // Show the modal
+        const modalInstance = new bootstrap.Modal(modal);
+        modalInstance.show();
+    }
+
+    // Test functions for interactive notices (can be called from browser console)
+    testFriendshipRequest() {
+        const testRequest = {
+            accountId: this.currentAccountId,
+            requestId: 'test-friendship-' + Date.now(),
+            fromName: 'Test User',
+            timestamp: new Date().toISOString(),
+            sltTime: this.convertToSLT(new Date().toISOString()),
+            expiresAt: new Date(Date.now() + 300000).toISOString(), // 5 minutes from now
+            sessionId: 'test-session'
+        };
+        
+        console.log('Testing friendship request:', testRequest);
+        this.handleInteractiveFriendshipRequestReceived(testRequest);
+    }
+
+    testGroupInvitation() {
+        const testInvitation = {
+            accountId: this.currentAccountId,
+            requestId: 'test-group-' + Date.now(),
+            fromName: 'Group Admin',
+            groupName: 'Test Group',
+            timestamp: new Date().toISOString(),
+            sltTime: this.convertToSLT(new Date().toISOString()),
+            expiresAt: new Date(Date.now() + 600000).toISOString(), // 10 minutes from now
+            sessionId: 'test-session'
+        };
+        
+        console.log('Testing group invitation:', testInvitation);
+        this.handleInteractiveGroupInvitationReceived(testInvitation);
     }
 
     // Dismiss a notice (removes it completely)

@@ -1347,3 +1347,63 @@ i[class*="fa-"], i[class^="fa "] {
 [data-theme="dark"] .service-icon {
     color: #adb5bd !important; /* Light grey for dark mode */
 }
+
+/* Interactive Notice Styles */
+.interactive-notice-controls {
+    animation: pulse-border 2s infinite;
+}
+
+@keyframes pulse-border {
+    0% {
+        border-color: var(--bs-info);
+        background-color: rgba(13, 110, 253, 0.1);
+    }
+    50% {
+        border-color: rgba(13, 110, 253, 0.8);
+        background-color: rgba(13, 110, 253, 0.2);
+    }
+    100% {
+        border-color: var(--bs-info);
+        background-color: rgba(13, 110, 253, 0.1);
+    }
+}
+
+.interactive-notice-response {
+    border: 2px solid;
+}
+
+/* Interactive notice type backgrounds */
+.notice[id^="notice-friendship-"] {
+    border-left: 4px solid #4a73a9;
+}
+
+.notice[id^="notice-group-invitation-"] {
+    border-left: 4px solid #28a745;
+}
+
+/* Dark mode interactive notice styles */
+[data-theme="dark"] .interactive-notice-controls {
+    background-color: rgba(13, 110, 253, 0.15) !important;
+}
+
+/* Modal interactive notice styling */
+#interactiveNoticeModal .modal-header {
+    background: linear-gradient(45deg, #4a73a9, #0d6efd);
+    color: white;
+}
+
+#interactiveNoticeModal .modal-header .btn-close {
+    filter: invert(1);
+}
+
+/* Responsive button styling for interactive notices */
+@media (max-width: 768px) {
+    .interactive-notice-controls .btn {
+        font-size: 0.85rem;
+        padding: 0.375rem 0.75rem;
+    }
+    
+    .interactive-notice-controls .gap-2 {
+        gap: 0.5rem !important;
+    }
+}

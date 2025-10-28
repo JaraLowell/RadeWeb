@@ -1,4 +1,6 @@
+using Microsoft.EntityFrameworkCore;
 using OpenMetaverse;
+using RadegastWeb.Data;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
 using System.Collections.Concurrent;
@@ -25,6 +27,9 @@ namespace RadegastWeb.Core
         private readonly IChatProcessingService _chatProcessingService;
         private readonly ISLTimeService _slTimeService;
         private readonly IPresenceService _presenceService;
+        private readonly IDbContextFactory<RadegastDbContext> _dbContextFactory;
+        private readonly IFriendshipRequestService _friendshipRequestService;
+        private readonly IGroupInvitationService _groupInvitationService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -72,7 +77,7 @@ namespace RadegastWeb.Core
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -91,6 +96,9 @@ namespace RadegastWeb.Core
             _chatProcessingService = chatProcessingService;
             _slTimeService = slTimeService;
             _presenceService = presenceService;
+            _dbContextFactory = dbContextFactory;
+            _friendshipRequestService = friendshipRequestService;
+            _groupInvitationService = groupInvitationService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -2004,6 +2012,20 @@ namespace RadegastWeb.Core
                 return; // Don't process as regular IM
             }
 
+            // Handle friendship offers
+            if (e.IM.Dialog == InstantMessageDialog.FriendshipOffered)
+            {
+                await HandleFriendshipOfferAsync(e.IM);
+                return; // Don't process as regular IM
+            }
+
+            // Handle group invitations
+            if (e.IM.Dialog == InstantMessageDialog.GroupInvitation)
+            {
+                await HandleGroupInvitationAsync(e.IM);
+                return; // Don't process as regular IM
+            }
+
             // Handle region notices from Second Life system
             // But filter out status-related messages
             if (e.IM.Dialog == InstantMessageDialog.MessageFromAgent && e.IM.FromAgentName == "Second Life")
@@ -3287,6 +3309,193 @@ namespace RadegastWeb.Core
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Handle incoming friendship offers by creating interactive notices
+        /// </summary>
+        private async Task HandleFriendshipOfferAsync(InstantMessage im)
+        {
+            try
+            {
+                // Create a friendship request DTO
+                var requestId = Guid.NewGuid().ToString();
+                var timestamp = DateTime.UtcNow;
+                
+                var friendshipRequest = new FriendshipRequestDto
+                {
+                    RequestId = requestId,
+                    AccountId = Guid.Parse(_accountId),
+                    FromAgentId = im.FromAgentID.ToString(),
+                    FromAgentName = im.FromAgentName,
+                    Message = im.Message,
+                    SessionId = im.IMSessionID.ToString(),
+                    ReceivedAt = timestamp,
+                    IsResponded = false,
+                    ExpiresAt = timestamp.AddHours(24), // Give 24 hours to respond
+                    SLTReceivedAt = _slTimeService.FormatSLTWithDate(timestamp, "MMM dd, HH:mm:ss"),
+                    SLTExpiresAt = _slTimeService.FormatSLTWithDate(timestamp.AddHours(24), "MMM dd, HH:mm:ss")
+                };
+
+                // Store the friendship request
+                await _friendshipRequestService.StoreFriendshipRequestAsync(friendshipRequest);
+
+                // Create an interactive notice
+                var notice = new Notice
+                {
+                    AccountId = Guid.Parse(_accountId),
+                    Title = "Friendship Offer",
+                    Message = $"{im.FromAgentName} has offered you friendship.\n\nMessage: {im.Message}",
+                    FromName = im.FromAgentName,
+                    FromId = im.FromAgentID.ToString(),
+                    Type = "FriendshipOffer",
+                    Timestamp = timestamp,
+                    IsInteractive = true,
+                    HasResponse = false,
+                    ExternalRequestId = requestId,
+                    SessionId = im.IMSessionID.ToString(),
+                    ExpiresAt = timestamp.AddHours(24),
+                    RequiresAcknowledgment = false, // User needs to respond, but no SL auto-ack needed
+                    IsAcknowledged = false,
+                    IsRead = false
+                };
+
+                // Save the notice to database
+                await SaveNoticeDirectlyAsync(notice);
+
+                _logger.LogInformation("Created interactive friendship offer notice from {FromAgentName} ({FromAgentId}) for account {AccountId}",
+                    im.FromAgentName, im.FromAgentID, _accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling friendship offer from {FromAgentName} for account {AccountId}",
+                    im.FromAgentName, _accountId);
+            }
+        }
+
+        /// <summary>
+        /// Handle incoming group invitations by creating interactive notices
+        /// </summary>
+        private async Task HandleGroupInvitationAsync(InstantMessage im)
+        {
+            try
+            {
+                // Create a group invitation DTO
+                var invitationId = Guid.NewGuid().ToString();
+                var timestamp = DateTime.UtcNow;
+                
+                // Try to extract group information from the message
+                // Group invitations typically have the group name in the message
+                var groupName = "Unknown Group";
+                var groupId = "00000000-0000-0000-0000-000000000000";
+
+                // Try to extract group ID from the binary bucket if available
+                if (im.BinaryBucket.Length >= 16)
+                {
+                    try
+                    {
+                        var extractedGroupId = new UUID(im.BinaryBucket, 0);
+                        groupId = extractedGroupId.ToString();
+
+                        // Try to get group name from our cached groups
+                        if (_groups.TryGetValue(extractedGroupId, out var group))
+                        {
+                            groupName = group.Name;
+                        }
+                        else
+                        {
+                            // Try to parse group name from message
+                            var lines = im.Message.Split('\n');
+                            if (lines.Length > 0)
+                            {
+                                var firstLine = lines[0].Trim();
+                                if (!string.IsNullOrEmpty(firstLine) && !firstLine.Contains("has invited you"))
+                                {
+                                    groupName = firstLine;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error parsing group ID from binary bucket for invitation from {FromAgentName}", im.FromAgentName);
+                    }
+                }
+
+                var groupInvitation = new GroupInvitationDto
+                {
+                    InvitationId = invitationId,
+                    AccountId = Guid.Parse(_accountId),
+                    FromAgentId = im.FromAgentID.ToString(),
+                    FromAgentName = im.FromAgentName,
+                    GroupId = groupId,
+                    GroupName = groupName,
+                    Message = im.Message,
+                    SessionId = im.IMSessionID.ToString(),
+                    ReceivedAt = timestamp,
+                    IsResponded = false,
+                    ExpiresAt = timestamp.AddHours(24), // Give 24 hours to respond
+                    SLTReceivedAt = _slTimeService.FormatSLTWithDate(timestamp, "MMM dd, HH:mm:ss"),
+                    SLTExpiresAt = _slTimeService.FormatSLTWithDate(timestamp.AddHours(24), "MMM dd, HH:mm:ss")
+                };
+
+                // Store the group invitation
+                await _groupInvitationService.StoreGroupInvitationAsync(groupInvitation);
+
+                // Create an interactive notice
+                var notice = new Notice
+                {
+                    AccountId = Guid.Parse(_accountId),
+                    Title = "Group Invitation",
+                    Message = $"{im.FromAgentName} has invited you to join the group '{groupName}'.\n\nMessage: {im.Message}",
+                    FromName = im.FromAgentName,
+                    FromId = im.FromAgentID.ToString(),
+                    GroupId = groupId,
+                    GroupName = groupName,
+                    Type = "GroupInvitation",
+                    Timestamp = timestamp,
+                    IsInteractive = true,
+                    HasResponse = false,
+                    ExternalRequestId = invitationId,
+                    SessionId = im.IMSessionID.ToString(),
+                    ExpiresAt = timestamp.AddHours(24),
+                    RequiresAcknowledgment = false, // User needs to respond, but no SL auto-ack needed
+                    IsAcknowledged = false,
+                    IsRead = false
+                };
+
+                // Save the notice to database
+                await SaveNoticeDirectlyAsync(notice);
+
+                _logger.LogInformation("Created interactive group invitation notice to '{GroupName}' from {FromAgentName} ({FromAgentId}) for account {AccountId}",
+                    groupName, im.FromAgentName, im.FromAgentID, _accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling group invitation from {FromAgentName} for account {AccountId}",
+                    im.FromAgentName, _accountId);
+            }
+        }
+
+        /// <summary>
+        /// Helper method to save notices directly to the database
+        /// </summary>
+        private async Task SaveNoticeDirectlyAsync(Notice notice)
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                context.Notices.Add(notice);
+                await context.SaveChangesAsync();
+                _logger.LogDebug("Saved interactive notice {NoticeId} to database for account {AccountId}", 
+                    notice.Id, notice.AccountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving interactive notice to database for account {AccountId}", 
+                    notice.AccountId);
+                throw;
+            }
         }
 
         #endregion

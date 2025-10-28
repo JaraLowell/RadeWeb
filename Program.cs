@@ -137,6 +137,10 @@ builder.Services.AddSingleton<IConnectionTrackingService, ConnectionTrackingServ
 builder.Services.AddSingleton<IChatProcessingService, ChatProcessingService>();
 builder.Services.AddSingleton<ISLTimeService, SLTimeService>();
 
+// Interactive notice services
+builder.Services.AddSingleton<IFriendshipRequestService, FriendshipRequestService>();
+builder.Services.AddSingleton<IGroupInvitationService, GroupInvitationService>();
+
 // Display name services - Unified approach with separate global cache
 builder.Services.AddSingleton<IGlobalDisplayNameCache, GlobalDisplayNameCache>();
 builder.Services.AddSingleton<IMasterDisplayNameService, MasterDisplayNameService>();
