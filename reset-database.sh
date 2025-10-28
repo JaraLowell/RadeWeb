@@ -70,26 +70,38 @@ recreate_database() {
 # Main menu
 echo ""
 echo "Select an option:"
-echo "1) Try to fix migration history (preserves data)"
-echo "2) Backup and recreate database (data loss)"
-echo "3) Just recreate database without backup (data loss)"
-echo "4) Exit"
+echo "1) Use safe migration (preserves all data - RECOMMENDED)"
+echo "2) Try to fix migration history manually (preserves data)"
+echo "3) Backup and recreate database (data loss)"
+echo "4) Just recreate database without backup (data loss)"
+echo "5) Exit"
 echo ""
-read -p "Enter your choice (1-4): " choice
+read -p "Enter your choice (1-5): " choice
 
 case $choice in
     1)
-        echo "Attempting to fix migration history..."
+        echo "Using safe migration approach (RECOMMENDED)..."
+        if [ -f "./safe-migration.sh" ]; then
+            chmod +x ./safe-migration.sh
+            ./safe-migration.sh
+            exit $?
+        else
+            echo "Safe migration script not found. Please ensure safe-migration.sh exists."
+            exit 1
+        fi
+        ;;
+    2)
+        echo "Attempting to fix migration history manually..."
         backup_database
         reset_migration_history
         if [ $? -eq 0 ]; then
             echo "Migration history fixed successfully!"
         else
-            echo "Failed to fix migration history. Consider option 2."
+            echo "Failed to fix migration history. Consider option 3."
             exit 1
         fi
         ;;
-    2)
+    3)
         backup_database
         if [ $? -eq 0 ]; then
             recreate_database
@@ -104,7 +116,7 @@ case $choice in
             exit 1
         fi
         ;;
-    3)
+    4)
         echo "WARNING: This will delete all existing data!"
         read -p "Are you sure? (yes/no): " confirm
         if [ "$confirm" = "yes" ]; then
@@ -119,7 +131,7 @@ case $choice in
             echo "Operation cancelled."
         fi
         ;;
-    4)
+    5)
         echo "Exiting..."
         exit 0
         ;;

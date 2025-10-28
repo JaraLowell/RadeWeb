@@ -39,6 +39,19 @@ if ($migrationOutput -match "already exists") {
     Write-Host "This happens when the database was created outside of EF migrations." -ForegroundColor Yellow
     Write-Host ""
     
+    Write-Host "RECOMMENDED: Use the safe migration approach that preserves all existing accounts." -ForegroundColor Green
+    $useSafe = Read-Host "Would you like to use the safe migration method? (y/n)"
+    
+    if ($useSafe -eq "y" -or $useSafe -eq "Y") {
+        if (Test-Path ".\safe-migration.ps1") {
+            Write-Host "Using safe migration..." -ForegroundColor Blue
+            & .\safe-migration.ps1
+            exit $LASTEXITCODE
+        } else {
+            Write-Host "Safe migration script not found. Falling back to manual method..." -ForegroundColor Yellow
+        }
+    }
+    
     # Create backup
     $backupName = "radegast_backup_$(Get-Date -Format 'yyyyMMdd_HHmmss').db"
     Write-Host "Creating backup: $backupName" -ForegroundColor Blue

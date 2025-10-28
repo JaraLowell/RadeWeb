@@ -77,25 +77,36 @@ function Invoke-DatabaseRecreation {
 # Main menu
 Write-Host ""
 Write-Host "Select an option:" -ForegroundColor Yellow
-Write-Host "1) Try to fix migration history (preserves data)" -ForegroundColor White
-Write-Host "2) Backup and recreate database (data loss)" -ForegroundColor White
-Write-Host "3) Just recreate database without backup (data loss)" -ForegroundColor White
-Write-Host "4) Exit" -ForegroundColor White
+Write-Host "1) Use safe migration (preserves all data - RECOMMENDED)" -ForegroundColor White
+Write-Host "2) Try to fix migration history manually (preserves data)" -ForegroundColor White
+Write-Host "3) Backup and recreate database (data loss)" -ForegroundColor White
+Write-Host "4) Just recreate database without backup (data loss)" -ForegroundColor White
+Write-Host "5) Exit" -ForegroundColor White
 Write-Host ""
-$choice = Read-Host "Enter your choice (1-4)"
+$choice = Read-Host "Enter your choice (1-5)"
 
 switch ($choice) {
     "1" {
-        Write-Host "Attempting to fix migration history..." -ForegroundColor Blue
-        Backup-Database
-        if (Reset-MigrationHistory) {
-            Write-Host "Migration history fixed successfully!" -ForegroundColor Green
+        Write-Host "Using safe migration approach (RECOMMENDED)..." -ForegroundColor Blue
+        if (Test-Path ".\safe-migration.ps1") {
+            & .\safe-migration.ps1
+            exit $LASTEXITCODE
         } else {
-            Write-Host "Failed to fix migration history. Consider option 2." -ForegroundColor Red
+            Write-Host "Safe migration script not found. Please ensure safe-migration.ps1 exists." -ForegroundColor Red
             exit 1
         }
     }
     "2" {
+        Write-Host "Attempting to fix migration history manually..." -ForegroundColor Blue
+        Backup-Database
+        if (Reset-MigrationHistory) {
+            Write-Host "Migration history fixed successfully!" -ForegroundColor Green
+        } else {
+            Write-Host "Failed to fix migration history. Consider option 3." -ForegroundColor Red
+            exit 1
+        }
+    }
+    "3" {
         if (Backup-Database) {
             if (Invoke-DatabaseRecreation) {
                 Write-Host "Database recreated successfully!" -ForegroundColor Green
@@ -108,7 +119,7 @@ switch ($choice) {
             exit 1
         }
     }
-    "3" {
+    "4" {
         Write-Host "WARNING: This will delete all existing data!" -ForegroundColor Red
         $confirm = Read-Host "Are you sure? (yes/no)"
         if ($confirm -eq "yes") {
@@ -122,7 +133,7 @@ switch ($choice) {
             Write-Host "Operation cancelled." -ForegroundColor Yellow
         }
     }
-    "4" {
+    "5" {
         Write-Host "Exiting..." -ForegroundColor Yellow
         exit 0
     }

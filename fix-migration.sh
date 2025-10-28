@@ -35,6 +35,20 @@ if grep -q "already exists" migration_output.log; then
     echo "This happens when the database was created outside of EF migrations."
     echo ""
     
+    echo "RECOMMENDED: Use the safe migration approach that preserves all existing accounts."
+    read -p "Would you like to use the safe migration method? (y/n): " use_safe
+    
+    if [ "$use_safe" = "y" ] || [ "$use_safe" = "Y" ]; then
+        if [ -f "./safe-migration.sh" ]; then
+            echo "Using safe migration..."
+            chmod +x ./safe-migration.sh
+            ./safe-migration.sh
+            exit $?
+        else
+            echo "Safe migration script not found. Falling back to manual method..."
+        fi
+    fi
+    
     # Create backup
     BACKUP_NAME="radegast_backup_$(date +%Y%m%d_%H%M%S).db"
     echo "Creating backup: $BACKUP_NAME"
