@@ -16,7 +16,6 @@ namespace RadegastWeb.Services
         private IPresenceService? _presenceService;
         private IRegionInfoService? _regionInfoService;
         private IGroupService? _groupService;
-        private IHealthCheckService? _healthCheckService;
         private volatile bool _isShuttingDown = false;
         private DateTime _lastDayCheck = DateTime.MinValue; // Will be initialized properly in ExecuteAsync
         
@@ -52,9 +51,6 @@ namespace RadegastWeb.Services
 
                 _groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
                 _groupService.GroupsUpdated += OnGroupsUpdated;
-
-                _healthCheckService = scope.ServiceProvider.GetRequiredService<IHealthCheckService>();
-                await _healthCheckService.StartHealthChecksAsync();
 
                 // Initialize _lastDayCheck with current SLT date
                 var sltTimeService = scope.ServiceProvider.GetRequiredService<ISLTimeService>();
@@ -119,10 +115,6 @@ namespace RadegastWeb.Services
                 if (_groupService != null)
                 {
                     _groupService.GroupsUpdated -= OnGroupsUpdated;
-                }
-                if (_healthCheckService != null)
-                {
-                    await _healthCheckService.StopHealthChecksAsync();
                 }
                 
                 // Clear subscription tracking
@@ -548,12 +540,6 @@ namespace RadegastWeb.Services
                 if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
-                // Record avatar activity for health monitoring
-                if (Guid.TryParse(instance.AccountId, out var accountGuid))
-                {
-                    _healthCheckService?.RecordAvatarUpdate(accountGuid);
-                }
-
                 _logger.LogInformation("Broadcasting avatar update - Account: {AccountId}, Avatar: {AvatarName} ({AvatarId})",
                     instance.AccountId, avatar.Name, avatar.Id);
 
@@ -673,9 +659,6 @@ namespace RadegastWeb.Services
             {
                 if (_isShuttingDown)
                     return;
-
-                // Record presence activity for health monitoring
-                _healthCheckService?.RecordPresenceUpdate(e.AccountId);
 
                 await _hubContext.Clients
                     .Group($"account_{e.AccountId}")

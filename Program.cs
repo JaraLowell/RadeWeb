@@ -136,7 +136,6 @@ builder.Services.AddSingleton<ITeleportRequestService, TeleportRequestService>()
 builder.Services.AddSingleton<IConnectionTrackingService, ConnectionTrackingService>();
 builder.Services.AddSingleton<IChatProcessingService, ChatProcessingService>();
 builder.Services.AddSingleton<ISLTimeService, SLTimeService>();
-builder.Services.AddSingleton<IHealthCheckService, HealthCheckService>();
 
 // Display name services - Unified approach with separate global cache
 builder.Services.AddSingleton<IGlobalDisplayNameCache, GlobalDisplayNameCache>();
