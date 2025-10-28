@@ -59,23 +59,45 @@ if ($migrationOutput -match "already exists") {
             Write-Host "Adding migrations to history table..." -ForegroundColor Blue
             sqlite3 $DbPath "CREATE TABLE IF NOT EXISTS __EFMigrationsHistory (MigrationId TEXT PRIMARY KEY, ProductVersion TEXT);"
             
-            # Add each migration to the history
-            sqlite3 $DbPath @"
-INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES 
-    ('20251013163043_InitialCreateWithVisitorStats', '8.0.0'),
-    ('20251022093619_AddAvatarRelayUuid', '8.0.0'),
-    ('20251023005245_FixResidentLastNames', '8.0.0'),
-    ('20251028111813_AddInteractiveNoticeFields', '8.0.0');
-"@
+            # Check which tables actually exist in the database
+            Write-Host "Checking existing database structure..." -ForegroundColor Blue
+            $existingTables = sqlite3 $DbPath ".tables" 2>$null
             
-            # Check if the AvatarRelayUuid column exists in the Accounts table
-            Write-Host "Checking for missing columns..." -ForegroundColor Blue
-            $columnCheck = sqlite3 $DbPath "PRAGMA table_info(Accounts);" | Select-String "AvatarRelayUuid"
+            Write-Host "Found existing tables: $existingTables" -ForegroundColor Blue
+            
+            # Only add migrations to history if their tables actually exist
+            if ($existingTables -match "Accounts") {
+                Write-Host "Accounts table exists - marking InitialCreate migration as applied..." -ForegroundColor Blue
+                sqlite3 $DbPath "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ('20251013163043_InitialCreateWithVisitorStats', '8.0.0');"
+            }
+            
+            # Check and add missing columns that were added in later migrations
+            Write-Host "Checking for missing columns that should exist..." -ForegroundColor Blue
+            
+            # Check for AvatarRelayUuid column (added in migration 20251022093619)
+            $columnCheck = sqlite3 $DbPath "PRAGMA table_info(Accounts);" 2>$null | Select-String "AvatarRelayUuid"
             
             if (-not $columnCheck) {
                 Write-Host "Adding missing AvatarRelayUuid column..." -ForegroundColor Blue
                 sqlite3 $DbPath "ALTER TABLE Accounts ADD COLUMN AvatarRelayUuid TEXT;"
+                # Mark this migration as applied since we manually added the column
+                sqlite3 $DbPath "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ('20251022093619_AddAvatarRelayUuid', '8.0.0');"
+            } else {
+                Write-Host "AvatarRelayUuid column already exists - marking migration as applied..." -ForegroundColor Blue
+                sqlite3 $DbPath "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ('20251022093619_AddAvatarRelayUuid', '8.0.0');"
             }
+            
+            # Check for other migrations that might need to be marked as applied
+            if ($existingTables -match "Accounts") {
+                # Mark subsequent migrations as applied if the base structure exists
+                sqlite3 $DbPath @"
+INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES 
+    ('20251023005245_FixResidentLastNames', '8.0.0'),
+    ('20251028111813_AddInteractiveNoticeFields', '8.0.0');
+"@
+            }
+            
+            Write-Host "Migration history synchronized with existing database structure." -ForegroundColor Green
         } else {
             Write-Host "SQLite command line tool not available. Using alternative method..." -ForegroundColor Yellow
             # Alternative: Use EF to mark migrations as applied

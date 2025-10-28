@@ -40,31 +40,50 @@ if grep -q "already exists" migration_output.log; then
     echo "Creating backup: $BACKUP_NAME"
     cp "$DB_PATH" "./data/$BACKUP_NAME"
     
-    # Method 1: Try to add all migrations to history without running them
-    echo "Attempting to fix migration history..."
+    # Method 1: Safely sync migration history with existing database
+    echo "Attempting to sync migration history with existing database..."
     
-    # Delete the migration history table to reset it
-    sqlite3 "$DB_PATH" "DROP TABLE IF EXISTS __EFMigrationsHistory;" 2>/dev/null
-    
-    # Get all migration IDs and add them to the history table
-    echo "Adding migrations to history table..."
+    # Create migration history table if it doesn't exist
+    echo "Ensuring migration history table exists..."
     sqlite3 "$DB_PATH" "CREATE TABLE IF NOT EXISTS __EFMigrationsHistory (MigrationId TEXT PRIMARY KEY, ProductVersion TEXT);"
     
-    # Add each migration to the history
-    sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES 
-        ('20251013163043_InitialCreateWithVisitorStats', '8.0.0'),
-        ('20251022093619_AddAvatarRelayUuid', '8.0.0'),
-        ('20251023005245_FixResidentLastNames', '8.0.0'),
-        ('20251028111813_AddInteractiveNoticeFields', '8.0.0');"
+    # Check which tables actually exist in the database
+    echo "Checking existing database structure..."
+    EXISTING_TABLES=$(sqlite3 "$DB_PATH" ".tables")
     
-    # Check if the AvatarRelayUuid column exists in the Accounts table
-    echo "Checking for missing columns..."
-    HAS_AVATAR_RELAY=$(sqlite3 "$DB_PATH" "PRAGMA table_info(Accounts);" | grep -c "AvatarRelayUuid")
+    echo "Found existing tables: $EXISTING_TABLES"
+    
+    # Only add migrations to history if their tables actually exist
+    if echo "$EXISTING_TABLES" | grep -q "Accounts"; then
+        echo "Accounts table exists - marking InitialCreate migration as applied..."
+        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ('20251013163043_InitialCreateWithVisitorStats', '8.0.0');"
+    fi
+    
+    # Check and add missing columns that were added in later migrations
+    echo "Checking for missing columns that should exist..."
+    
+    # Check for AvatarRelayUuid column (added in migration 20251022093619)
+    HAS_AVATAR_RELAY=$(sqlite3 "$DB_PATH" "PRAGMA table_info(Accounts);" | grep -c "AvatarRelayUuid" || echo "0")
     
     if [ "$HAS_AVATAR_RELAY" -eq 0 ]; then
         echo "Adding missing AvatarRelayUuid column..."
         sqlite3 "$DB_PATH" "ALTER TABLE Accounts ADD COLUMN AvatarRelayUuid TEXT;"
+        # Mark this migration as applied since we manually added the column
+        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ('20251022093619_AddAvatarRelayUuid', '8.0.0');"
+    else
+        echo "AvatarRelayUuid column already exists - marking migration as applied..."
+        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES ('20251022093619_AddAvatarRelayUuid', '8.0.0');"
     fi
+    
+    # Check for other migrations that might need to be marked as applied
+    if echo "$EXISTING_TABLES" | grep -q "Accounts"; then
+        # Mark subsequent migrations as applied if the base structure exists
+        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO __EFMigrationsHistory (MigrationId, ProductVersion) VALUES 
+            ('20251023005245_FixResidentLastNames', '8.0.0'),
+            ('20251028111813_AddInteractiveNoticeFields', '8.0.0');"
+    fi
+    
+    echo "Migration history synchronized with existing database structure."
     
     # Try migration again
     echo "Retrying migration..."
