@@ -432,10 +432,39 @@ dotnet ef database update
 #### Apply Database Migrations (for updates)
 When updating to a new version, apply any pending migrations:
 ```powershell
+# Windows
 ./update-database.ps1
+
+# Linux/macOS
+./update-database.sh
 ```
 
-#### Reset Database
+#### Database Troubleshooting Scripts
+
+**Quick Migration Fix** (for "table already exists" errors):
+```bash
+# Linux/macOS
+./fix-migration.sh
+
+# Windows
+./fix-migration.ps1
+```
+
+**Advanced Database Reset Utility**:
+```bash
+# Linux/macOS
+./reset-database.sh
+
+# Windows  
+./reset-database.ps1
+```
+
+The reset utility provides options to:
+1. Fix migration history while preserving data
+2. Backup and recreate the database
+3. Force recreation without backup
+
+**Manual Reset** (if scripts are unavailable):
 ```powershell
 Remove-Item ./data/radegast.db
 dotnet run
@@ -598,9 +627,17 @@ When contributing:
 - **Logs**: Review application logs for detailed error messages
 
 #### Database Issues
+
+**Migration Conflicts ("table already exists" error)**:
+- **Quick Fix**: Use the migration fix script: `./fix-migration.sh` (Linux/macOS) or `./fix-migration.ps1` (Windows)
+- **Manual Fix**: Run `./reset-database.sh` and choose option 1 to fix migration history
+- **Last Resort**: Backup and recreate database with option 2
+
+**General Database Issues**:
 - **Reset Database**: Delete `./data/radegast.db` and restart application
 - **Migration Errors**: Run `dotnet ef database update`
 - **Permissions**: Ensure write access to `./data/` directory
+- **Schema Conflicts**: Use the database reset utility: `./reset-database.sh` or `./reset-database.ps1`
 
 #### Web Interface Issues
 - **JavaScript**: Ensure JavaScript is enabled in browser
