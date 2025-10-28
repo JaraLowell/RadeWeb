@@ -34,6 +34,7 @@ namespace RadegastWeb.Services
         Task<int> GetUnreadNoticesCountAsync(Guid accountId);
         Task<RegionStatsDto?> GetRegionStatsAsync(Guid accountId);
         Task ResetAllAccountsToOfflineAsync();
+        Task CleanupDisconnectedAccountsAsync();
     }
 
     public class AccountService : IAccountService, IDisposable
@@ -112,6 +113,7 @@ namespace RadegastWeb.Services
                     {
                         account.IsConnected = false;
                         account.Status = "Offline";
+                        account.CurrentRegion = null; // Clear region on reset
                         updateCount++;
                     }
                 }
@@ -131,6 +133,7 @@ namespace RadegastWeb.Services
                 {
                     kvp.Value.IsConnected = false;
                     kvp.Value.Status = "Offline";
+                    kvp.Value.CurrentRegion = null; // Clear region in memory too
                 }
                 
                 // Clear any lingering instances (shouldn't be any at startup, but just in case)
@@ -150,6 +153,48 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error resetting accounts to offline status");
+            }
+        }
+        
+        /// <summary>
+        /// Check for and cleanup accounts that may have disconnected unexpectedly
+        /// Call this periodically to maintain accurate connection status
+        /// </summary>
+        public async Task CleanupDisconnectedAccountsAsync()
+        {
+            try
+            {
+                var cleanedUpCount = 0;
+                var instancesToRemove = new List<Guid>();
+                
+                foreach (var kvp in _instances.ToList())
+                {
+                    var accountId = kvp.Key;
+                    var instance = kvp.Value;
+                    
+                    // Check if instance is actually connected
+                    if (!instance.IsConnected)
+                    {
+                        _logger.LogWarning("Found disconnected instance for account {AccountId}, cleaning up", accountId);
+                        instancesToRemove.Add(accountId);
+                        cleanedUpCount++;
+                    }
+                }
+                
+                // Remove disconnected instances and update their status
+                foreach (var accountId in instancesToRemove)
+                {
+                    await LogoutAccountAsync(accountId); // This will handle proper cleanup
+                }
+                
+                if (cleanedUpCount > 0)
+                {
+                    _logger.LogInformation("Cleaned up {Count} disconnected account instances", cleanedUpCount);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during disconnected accounts cleanup");
             }
         }
 
@@ -406,6 +451,36 @@ namespace RadegastWeb.Services
                         }
                     };
                     
+                    // Subscribe to connection changes to update database status
+                    instance.ConnectionChanged += async (sender, isConnected) =>
+                    {
+                        try
+                        {
+                            if (!isConnected)
+                            {
+                                // Update both in-memory and database when disconnected
+                                account.IsConnected = false;
+                                account.Status = "Offline";
+                                account.CurrentRegion = null;
+                                
+                                using var context = CreateDbContext();
+                                var dbAccount = await context.Accounts.FindAsync(id);
+                                if (dbAccount != null)
+                                {
+                                    dbAccount.IsConnected = false;
+                                    dbAccount.Status = "Offline";
+                                    dbAccount.CurrentRegion = null;
+                                    await context.SaveChangesAsync();
+                                    _logger.LogInformation("Updated account {AccountId} to offline status in database on disconnect", id);
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error updating account status on connection change for {AccountId}", id);
+                        }
+                    };
+                    
                     // Update the database
                     try
                     {
@@ -481,21 +556,38 @@ namespace RadegastWeb.Services
 
         public async Task<bool> LogoutAccountAsync(Guid id)
         {
-            if (!_instances.TryRemove(id, out var instance))
+            var hadInstance = _instances.TryRemove(id, out var instance);
+            
+            if (!hadInstance)
             {
-                _logger.LogWarning("Attempted to logout non-connected account {AccountId}", id);
-                return false;
+                _logger.LogWarning("Attempted to logout account {AccountId} with no active instance - performing cleanup anyway", id);
             }
 
             try
             {
-                await instance.DisconnectAsync();
-                instance.Dispose();
+                // If we had an instance, properly disconnect it
+                if (instance != null)
+                {
+                    try
+                    {
+                        await instance.DisconnectAsync();
+                    }
+                    catch (Exception disconnectEx)
+                    {
+                        _logger.LogWarning(disconnectEx, "Error during disconnect for account {AccountId}, continuing with cleanup", id);
+                    }
+                    finally
+                    {
+                        instance.Dispose(); // Always dispose, even if disconnect failed
+                    }
+                }
                 
+                // Always update account status regardless of whether we had an instance
                 if (_accounts.TryGetValue(id, out var account))
                 {
                     account.IsConnected = false;
                     account.Status = "Offline";
+                    account.CurrentRegion = null; // Clear region
                     
                     // Update the database
                     try
@@ -506,7 +598,9 @@ namespace RadegastWeb.Services
                         {
                             dbAccount.IsConnected = false;
                             dbAccount.Status = "Offline";
+                            dbAccount.CurrentRegion = null; // Clear region in DB too
                             await context.SaveChangesAsync();
+                            _logger.LogInformation("Updated account {AccountId} to offline status in database", id);
                         }
                     }
                     catch (Exception dbEx)
@@ -540,13 +634,13 @@ namespace RadegastWeb.Services
                     _logger.LogError(ex, "Failed to unregister account {AccountId} from periodic display name processing", id);
                 }
                 
-                _logger.LogInformation("Successfully logged out account {AccountId}", id);
+                _logger.LogInformation("Successfully logged out account {AccountId} (had instance: {HadInstance})", id, hadInstance);
                 return true;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Exception during logout for account {AccountId}", id);
-                instance.Dispose(); // Ensure cleanup
+                instance?.Dispose(); // Ensure cleanup if instance still exists
                 return false;
             }
         }

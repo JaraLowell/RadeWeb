@@ -359,14 +359,41 @@ namespace RadegastWeb.Core
             {
                 UpdateStatus("Disconnecting...");
                 await Task.Run(() => _client.Network.Logout());
+                
                 AccountInfo.IsConnected = false;
-                UpdateStatus("Disconnected");
+                AccountInfo.CurrentRegion = null; // Clear region info
+                
+                // Reset status to offline and clear any presence status
+                UpdateStatus("Offline");
+                
+                // Reset presence status to clear any Away/Busy status
+                ResetPresenceStatusOnDisconnect();
+                
                 ConnectionChanged?.Invoke(this, false);
+                
+                // Trigger region change event with empty region to clear it in the database
+                var regionInfo = new RegionInfoDto
+                {
+                    Name = string.Empty,
+                    AvatarCount = 0,
+                    AccountId = Guid.Parse(_accountId),
+                    RegionX = 0,
+                    RegionY = 0
+                };
+                RegionChanged?.Invoke(this, regionInfo);
+                
+                // Clean up all cached data
                 _nearbyAvatars.Clear();
                 _proximityAlertedAvatars.Clear(); // Clear proximity tracking on disconnect
                 _previousAvatarPositions.Clear(); // Clear position tracking on disconnect
                 _chatSessions.Clear();
                 _groups.Clear();
+                _coarseLocationAvatars.Clear(); // Clear coarse location avatars
+                _avatarSimHandles.Clear(); // Clear avatar sim handles
+                
+                // Stop any periodic timers
+                _displayNameRefreshTimer?.Dispose();
+                _displayNameRefreshTimer = null;
                 
                 // Clean up display name service resources
                 _displayNameService.CleanupAccount(Guid.Parse(_accountId));
@@ -376,6 +403,8 @@ namespace RadegastWeb.Core
                 
                 // Clean up group service resources
                 _groupService.CleanupAccount(Guid.Parse(_accountId));
+                
+                _logger.LogInformation("Completed manual disconnect cleanup for account {AccountId}", _accountId);
             }
             catch (Exception ex)
             {
@@ -1288,9 +1317,18 @@ namespace RadegastWeb.Core
 
         private void Network_Disconnected(object? sender, DisconnectedEventArgs e)
         {
+            _logger.LogInformation("Network disconnected for account {AccountId}: {Reason}", _accountId, e.Reason);
+            
             AccountInfo.IsConnected = false;
             AccountInfo.CurrentRegion = null; // Clear region info on disconnect
-            UpdateStatus($"Disconnected: {e.Reason}");
+            
+            // Reset status to offline and clear any presence status  
+            var disconnectReason = DetermineDisconnectReason(e.Reason);
+            UpdateStatus($"Offline ({disconnectReason})");
+            
+            // Reset presence status to clear any Away/Busy status
+            ResetPresenceStatusOnDisconnect();
+            
             ConnectionChanged?.Invoke(this, false);
             
             // Trigger region change event with empty region to clear it in the database
@@ -1308,31 +1346,72 @@ namespace RadegastWeb.Core
             _globalDisplayNameCache.UnregisterGridClient(Guid.Parse(_accountId));
             _logger.LogDebug("Unregistered grid client {AccountId} from global display name cache", _accountId);
             
+            // Clean up all cached data
             _nearbyAvatars.Clear();
             _proximityAlertedAvatars.Clear(); // Clear proximity tracking on client cleanup
             _previousAvatarPositions.Clear(); // Clear position tracking on client cleanup
             _chatSessions.Clear();
             _groups.Clear();
+            _coarseLocationAvatars.Clear(); // Clear coarse location avatars
+            _avatarSimHandles.Clear(); // Clear avatar sim handles
             
             // Remove account from stats service region tracking
             _statsService.RemoveAccountRegion(Guid.Parse(_accountId));
+            
+            // Stop any periodic timers
+            _displayNameRefreshTimer?.Dispose();
+            _displayNameRefreshTimer = null;
+            
+            _logger.LogInformation("Completed disconnect cleanup for account {AccountId}", _accountId);
         }
 
         private void Network_LoggedOut(object? sender, LoggedOutEventArgs e)
         {
+            _logger.LogInformation("Network logged out for account {AccountId}", _accountId);
+            
             AccountInfo.IsConnected = false;
-            UpdateStatus("Logged out");
+            AccountInfo.CurrentRegion = null; // Clear region info on logout
+            
+            // Reset status to offline and clear any presence status
+            UpdateStatus("Offline");
+            
+            // Reset presence status to clear any Away/Busy status
+            ResetPresenceStatusOnDisconnect();
+            
             ConnectionChanged?.Invoke(this, false);
+            
+            // Trigger region change event with empty region to clear it in the database
+            var regionInfo = new RegionInfoDto
+            {
+                Name = string.Empty,
+                AvatarCount = 0,
+                AccountId = Guid.Parse(_accountId),
+                RegionX = 0,
+                RegionY = 0
+            };
+            RegionChanged?.Invoke(this, regionInfo);
             
             // Unregister from global display name cache
             _globalDisplayNameCache.UnregisterGridClient(Guid.Parse(_accountId));
             _logger.LogDebug("Unregistered grid client {AccountId} from global display name cache (logout)", _accountId);
             
+            // Clean up all cached data
             _nearbyAvatars.Clear();
             _proximityAlertedAvatars.Clear(); // Clear proximity tracking on logout
             _previousAvatarPositions.Clear(); // Clear position tracking on logout
             _chatSessions.Clear();
             _groups.Clear();
+            _coarseLocationAvatars.Clear(); // Clear coarse location avatars
+            _avatarSimHandles.Clear(); // Clear avatar sim handles
+            
+            // Remove account from stats service region tracking
+            _statsService.RemoveAccountRegion(Guid.Parse(_accountId));
+            
+            // Stop any periodic timers
+            _displayNameRefreshTimer?.Dispose();
+            _displayNameRefreshTimer = null;
+            
+            _logger.LogInformation("Completed logout cleanup for account {AccountId}", _accountId);
         }
 
         private void Network_SimChanged(object? sender, SimChangedEventArgs e)
@@ -3025,6 +3104,52 @@ namespace RadegastWeb.Core
             {
                 _logger.LogWarning(ex, "Error parsing account ID for presence reset: {AccountId}", _accountId);
             }
+        }
+        
+        /// <summary>
+        /// Reset presence status specifically for disconnect scenarios where we need immediate cleanup
+        /// </summary>
+        private void ResetPresenceStatusOnDisconnect()
+        {
+            try
+            {
+                if (Guid.TryParse(_accountId, out var accountGuid))
+                {
+                    // Fire and forget - reset presence status immediately for disconnect
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _presenceService.SetAwayAsync(accountGuid, false);
+                            await _presenceService.SetBusyAsync(accountGuid, false);
+                            _logger.LogInformation("Reset presence status to Offline for account {AccountId} on disconnect", _accountId);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Error resetting presence status on disconnect for account {AccountId}", _accountId);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error parsing account ID for presence reset on disconnect: {AccountId}", _accountId);
+            }
+        }
+        
+        /// <summary>
+        /// Determines a user-friendly disconnect reason based on the network disconnect reason
+        /// </summary>
+        private string DetermineDisconnectReason(NetworkManager.DisconnectType reason)
+        {
+            return reason switch
+            {
+                NetworkManager.DisconnectType.ServerInitiated => "Server Restart/Maintenance",
+                NetworkManager.DisconnectType.ClientInitiated => "Manual Logout",
+                NetworkManager.DisconnectType.NetworkTimeout => "Network Timeout",
+                NetworkManager.DisconnectType.SimShutdown => "Region Shutdown",
+                _ => "Connection Lost"
+            };
         }
         
         /// <summary>

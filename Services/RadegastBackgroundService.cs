@@ -75,6 +75,9 @@ namespace RadegastWeb.Services
                             lastPeriodicRecording = now;
                         }
                         
+                        // Periodic cleanup of disconnected accounts (every 5 minutes) to ensure proper status
+                        await CleanupDisconnectedAccountsAsync(stoppingToken);
+                        
                         await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
                     }
                     catch (OperationCanceledException)
@@ -809,6 +812,38 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error triggering periodic avatar recording");
+            }
+        }
+
+        private DateTime _lastAccountCleanup = DateTime.MinValue;
+
+        /// <summary>
+        /// Periodic cleanup of accounts that may have disconnected unexpectedly
+        /// </summary>
+        private async Task CleanupDisconnectedAccountsAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+                
+                // Only run cleanup every 5 minutes to avoid excessive processing
+                var now = DateTime.UtcNow;
+                
+                if (now - _lastAccountCleanup < TimeSpan.FromMinutes(5))
+                {
+                    return; // Skip this cleanup cycle
+                }
+                
+                _lastAccountCleanup = now;
+                
+                await accountService.CleanupDisconnectedAccountsAsync();
+                
+                _logger.LogDebug("Completed periodic cleanup of disconnected accounts");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during periodic cleanup of disconnected accounts");
             }
         }
 
