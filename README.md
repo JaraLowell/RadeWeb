@@ -308,7 +308,7 @@ The Corrade plugin enables remote control of your avatar through whisper command
 
 ### Avatar Command Relay
 
-The Avatar Command Relay feature provides direct avatar control through whisper commands from a designated relay avatar:
+The Avatar Command Relay feature provides direct avatar control through IM commands from a designated relay avatar:
 
 - **Direct Avatar Control**: Sit, stand, say, and send IMs through simple commands
 - **Relay Avatar Security**: Only commands from the configured AvatarRelayUuid are processed

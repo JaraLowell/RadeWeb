@@ -8,7 +8,7 @@ namespace RadegastWeb.Services
 {
     /// <summary>
     /// Processor for handling command relay from the configured AvatarRelayUuid
-    /// Processes whisper commands like //sit, //stand, //say, //im from the relay avatar
+    /// Processes IM commands like //sit, //stand, //say, //im from the relay avatar
     /// </summary>
     internal class AvatarCommandRelayProcessor : IChatMessageProcessor
     {
@@ -32,8 +32,8 @@ namespace RadegastWeb.Services
 
         public async Task<ChatProcessingResult> ProcessAsync(ChatMessageDto message, ChatProcessingContext context)
         {
-            // Only process whisper messages
-            if (message.ChatType?.ToLower() != "whisper" || string.IsNullOrEmpty(message.SenderId))
+            // Only process incoming IM messages (not our own outgoing IMs)
+            if (message.ChatType?.ToLower() != "im" || string.IsNullOrEmpty(message.SenderId))
                 return ChatProcessingResult.CreateSuccess();
 
             try
@@ -57,10 +57,10 @@ namespace RadegastWeb.Services
                     return ChatProcessingResult.CreateSuccess();
                 }
 
-                // Only process whispers from the configured relay avatar
+                // Only process IMs from the configured relay avatar
                 if (!message.SenderId.Equals(account.AvatarRelayUuid, StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogDebug("Whisper from {SenderId} ignored - not from relay avatar {RelayUuid} for account {AccountId}", 
+                    _logger.LogDebug("IM from {SenderId} ignored - not from relay avatar {RelayUuid} for account {AccountId}", 
                         message.SenderId, account.AvatarRelayUuid, context.AccountId);
                     return ChatProcessingResult.CreateSuccess();
                 }

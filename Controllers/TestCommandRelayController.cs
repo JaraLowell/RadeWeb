@@ -5,7 +5,7 @@ using RadegastWeb.Models;
 namespace RadegastWeb.Controllers
 {
     /// <summary>
-    /// Controller for testing avatar command relay functionality
+    /// Controller for testing avatar command relay functionality via IM messages
     /// </summary>
     [ApiController]
     [Route("api/test/command-relay")]
@@ -26,7 +26,7 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
-        /// Test command relay by simulating a whisper command from the relay avatar
+        /// Test command relay by simulating an IM command from the relay avatar
         /// </summary>
         [HttpPost("test-command")]
         public async Task<IActionResult> TestCommandRelay([FromBody] TestRelayCommandRequest request)
@@ -46,24 +46,24 @@ namespace RadegastWeb.Controllers
                     return BadRequest("Account does not have a valid relay avatar UUID configured");
                 }
 
-                // Create a simulated whisper message from the relay avatar
-                var whisperMessage = new ChatMessageDto
+                // Create a simulated IM message from the relay avatar
+                var imMessage = new ChatMessageDto
                 {
                     AccountId = request.AccountId,
                     SenderName = request.SenderName ?? "Test Relay Avatar",
                     SenderId = account.AvatarRelayUuid, // Send from the configured relay avatar
                     Message = request.Command,
-                    ChatType = "Whisper",
-                    Channel = "0",
+                    ChatType = "IM",
+                    Channel = "IM",
                     Timestamp = DateTime.UtcNow,
                     RegionName = "Test Region",
-                    SessionId = "whisper-test",
+                    SessionId = $"im-{account.AvatarRelayUuid}",
                     SessionName = request.SenderName ?? "Test Relay Avatar",
                     TargetId = account.AvatarRelayUuid
                 };
 
                 // Process through the chat processing pipeline
-                await _chatProcessingService.ProcessChatMessageAsync(whisperMessage, request.AccountId);
+                await _chatProcessingService.ProcessChatMessageAsync(imMessage, request.AccountId);
 
                 _logger.LogInformation("Tested command relay for account {AccountId} with command: {Command}", 
                     request.AccountId, request.Command);
@@ -168,7 +168,7 @@ namespace RadegastWeb.Controllers
                 },
                 notes = new[]
                 {
-                    "Commands must be sent as whispers from the configured AvatarRelayUuid",
+                    "Commands must be sent as IMs from the configured AvatarRelayUuid",
                     "The account must be connected and have a valid AvatarRelayUuid configured",
                     "Feedback messages will be sent back to the relay avatar via IM",
                     "Commands are case-insensitive but must start with '//' prefix"
