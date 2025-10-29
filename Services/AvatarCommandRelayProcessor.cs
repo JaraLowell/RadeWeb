@@ -49,18 +49,29 @@ namespace RadegastWeb.Services
                     return ChatProcessingResult.CreateSuccess();
                 }
 
-                // Check if AvatarRelayUuid is configured
+                // Check if AvatarRelayUuid is configured - if not, don't process any commands
                 if (string.IsNullOrEmpty(account.AvatarRelayUuid) || 
                     account.AvatarRelayUuid == "00000000-0000-0000-0000-000000000000")
                 {
-                    _logger.LogDebug("Account {AccountId} has no valid relay avatar configured for command processing", context.AccountId);
+                    _logger.LogDebug("Account {AccountId} has no valid relay avatar configured - ignoring all IM commands", context.AccountId);
                     return ChatProcessingResult.CreateSuccess();
                 }
 
-                // Only process IMs from the configured relay avatar
+                // STRICT CHECK: Only process IMs from the exact configured relay avatar UUID
                 if (!message.SenderId.Equals(account.AvatarRelayUuid, StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogDebug("IM from {SenderId} ignored - not from relay avatar {RelayUuid} for account {AccountId}", 
+                    _logger.LogDebug("IM from {SenderId} ignored - not from configured relay avatar {RelayUuid} for account {AccountId}", 
+                        message.SenderId, account.AvatarRelayUuid, context.AccountId);
+                    return ChatProcessingResult.CreateSuccess();
+                }
+
+                // Double-check: Verify sender is definitely the relay avatar (additional safety)
+                if (string.IsNullOrEmpty(message.SenderId) || 
+                    !UUID.TryParse(message.SenderId, out var senderUuid) ||
+                    !UUID.TryParse(account.AvatarRelayUuid, out var relayUuid) ||
+                    senderUuid != relayUuid)
+                {
+                    _logger.LogWarning("Security check failed - IM sender {SenderId} does not match relay UUID {RelayUuid} for account {AccountId}", 
                         message.SenderId, account.AvatarRelayUuid, context.AccountId);
                     return ChatProcessingResult.CreateSuccess();
                 }
@@ -73,7 +84,7 @@ namespace RadegastWeb.Services
                     return ChatProcessingResult.CreateSuccess();
                 }
 
-                _logger.LogInformation("Processing command relay from {SenderName} ({SenderId}) for account {AccountId}: {Message}", 
+                _logger.LogInformation("AUTHORIZED: Processing command relay from {SenderName} ({SenderId}) for account {AccountId}: {Message}", 
                     message.SenderName, message.SenderId, context.AccountId, message.Message);
 
                 // Process the command
@@ -81,13 +92,19 @@ namespace RadegastWeb.Services
                 
                 if (commandResult.Success)
                 {
-                    _logger.LogInformation("Successfully executed relay command for account {AccountId}: {Message}", 
-                        context.AccountId, commandResult.Message);
-                    
-                    // Send success feedback to relay avatar
+                    // Only log if it was an actual command (not empty message)
                     if (!string.IsNullOrEmpty(commandResult.Message))
                     {
+                        _logger.LogInformation("Successfully executed relay command for account {AccountId}: {Message}", 
+                            context.AccountId, commandResult.Message);
+                        
+                        // Send success feedback to relay avatar
                         context.AccountInstance.SendIM(account.AvatarRelayUuid, $"✓ {commandResult.Message}");
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Ignored non-command IM from relay avatar for account {AccountId}: {Message}", 
+                            context.AccountId, message.Message);
                     }
                 }
                 else
@@ -197,8 +214,14 @@ namespace RadegastWeb.Services
                 }
             }
 
-            // Command not recognized
-            return Task.FromResult(RelayCommandResult.CreateError($"Unknown command: {trimmedCommand}. Supported commands: //sit <uuid>, //stand, //say <message>, //im <uuid> <message>"));
+            // Check if the message starts with "//" - if so, it's an unrecognized command
+            if (trimmedCommand.StartsWith("//"))
+            {
+                return Task.FromResult(RelayCommandResult.CreateError($"Unknown command: {trimmedCommand}. Supported commands: //sit <uuid>, //stand, //say <message>, //im <uuid> <message>"));
+            }
+
+            // Not a command - ignore silently (regular IM message, no feedback needed)
+            return Task.FromResult(RelayCommandResult.CreateSuccess(string.Empty));
         }
     }
 
