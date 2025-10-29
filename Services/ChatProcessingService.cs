@@ -39,7 +39,8 @@ namespace RadegastWeb.Services
             // Register processors in priority order (lower numbers first)
             RegisterProcessor(new GroupIgnoreFilterProcessor(_serviceProvider, _logger), 5); // First to filter out ignored groups
             RegisterProcessor(new UrlProcessingProcessor(_serviceProvider, _logger), 10);
-            RegisterProcessor(new IMRelayProcessor(_serviceProvider, _logger), 15); // Process IM relays before database save
+            RegisterProcessor(new AvatarCommandRelayProcessor(_serviceProvider, _logger), 15); // Process avatar command relays
+            RegisterProcessor(new IMRelayProcessor(_serviceProvider, _logger), 16); // Process IM relays before database save
             RegisterProcessor(new DatabaseSaveProcessor(_serviceProvider, _logger), 20);
             RegisterProcessor(new SignalRBroadcastProcessor(_hubContext, _logger), 30);
             RegisterProcessor(new CorradeCommandProcessor(_serviceProvider, _logger), 40);

@@ -306,6 +306,25 @@ The Corrade plugin enables remote control of your avatar through whisper command
 - Group message: `command=tell&group=GROUP_UUID&password=PASS&entity=group&message=Group hello!`
 - Private message: `command=tell&group=GROUP_UUID&password=PASS&entity=avatar&target=AVATAR_UUID&message=Hi there!`
 
+### Avatar Command Relay
+
+The Avatar Command Relay feature provides direct avatar control through whisper commands from a designated relay avatar:
+
+- **Direct Avatar Control**: Sit, stand, say, and send IMs through simple commands
+- **Relay Avatar Security**: Only commands from the configured AvatarRelayUuid are processed
+- **Simple Command Syntax**: Easy-to-remember commands like `//sit <uuid>`, `//stand`, `//say <message>`
+- **Real-time Feedback**: Success/error messages sent back to the relay avatar
+- **No Group Setup Required**: Works independently of Corrade groups and passwords
+- **Immediate Response**: Commands are processed instantly when received
+
+**Supported Commands**:
+- `//sit <uuid>` - Sit on specified object
+- `//stand` - Stand up from current position  
+- `//say <message>` - Say message in local chat
+- `//im <uuid> <message>` - Send instant message to avatar
+
+**Configuration**: Set the `AvatarRelayUuid` field in account settings to the UUID of the controlling avatar. See `AVATAR_COMMAND_RELAY.md` for complete documentation and examples.
+
 Both plugins are designed with security in mind and include comprehensive logging and error handling.
 
 ## 🔌 API Endpoints
@@ -375,6 +394,9 @@ Both plugins are designed with security in mind and include comprehensive loggin
 - `GET /api/test/ping` - Health check endpoint
 - `GET /api/test/auth` - Test authentication
 - `POST /api/test/simulate` - Simulate various test scenarios
+- `POST /api/test/command-relay/test-command` - Test avatar command relay
+- `GET /api/test/command-relay/config/{accountId}` - Get command relay configuration
+- `GET /api/test/command-relay/commands` - List available relay commands
 
 ### Real-time Hub
 - `/radegasthub` - SignalR hub for real-time events:
