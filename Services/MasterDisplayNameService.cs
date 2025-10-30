@@ -289,8 +289,18 @@ namespace RadegastWeb.Services
             
             // Fall back to legacy name if no valid display name
             if (!IsInvalidNameValue(legacyName))
+            {
                 return legacyName;
-                
+            }
+            
+            // If we reach here, we have neither display name nor legacy name
+            // This should be extremely rare - queue for immediate retry with high priority
+            _logger.LogWarning("Avatar {AvatarId} has no display name or legacy name - queuing for immediate retry", 
+                displayName.AvatarId);
+            
+            // Queue for quick retry as this is a critical missing name scenario
+            QueueForRetry(displayName.AvatarId, "No display name or legacy name available", FailureType.MissingDisplayName);
+            
             // Final fallback
             return LoadingPlaceholder;
         }
