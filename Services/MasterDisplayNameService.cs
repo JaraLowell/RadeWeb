@@ -46,6 +46,9 @@ namespace RadegastWeb.Services
         // Events
         event EventHandler<DisplayNameChangedEventArgs>? DisplayNameChanged;
         
+        // Force refresh from database and network if needed
+        Task<string> RefreshDisplayNameAsync(string avatarId, NameDisplayMode mode = NameDisplayMode.Smart, string? fallbackName = null);
+        
         // Monitoring
         (int PendingRetries, int ReadyForRetry, int TotalRequests, Dictionary<string, int> FailureTypes) GetQueueStatistics();
     }
@@ -63,6 +66,12 @@ namespace RadegastWeb.Services
         // Track registered accounts for periodic processing
         private readonly ConcurrentDictionary<Guid, bool> _registeredAccounts = new();
         
+        // Track pending requests to prevent duplicates
+        private readonly ConcurrentDictionary<string, DateTime> _pendingRequests = new();
+        
+        // Track retry attempts to enforce max retry limit
+        private readonly ConcurrentDictionary<string, int> _retryAttempts = new();
+        
         // Request queue for batching name requests
         private readonly Channel<NameRequest> _requestChannel;
         private readonly ChannelWriter<NameRequest> _requestWriter;
@@ -78,13 +87,13 @@ namespace RadegastWeb.Services
         private readonly TimeSpan _batchDelay = TimeSpan.FromMilliseconds(100);
         private readonly TimeSpan _periodicInterval = TimeSpan.FromMinutes(5);
         private readonly TimeSpan _refreshAge = TimeSpan.FromHours(2);
-        private readonly TimeSpan _quickRetryDelay = TimeSpan.FromSeconds(3); // Quick retry for missing names
-        private readonly TimeSpan _retryDelay = TimeSpan.FromMinutes(1); // Initial retry delay for network issues
-        private readonly TimeSpan _maxRetryDelay = TimeSpan.FromMinutes(10); // Max retry delay
+        private readonly TimeSpan _firstRetryDelay = TimeSpan.FromSeconds(5);   // First retry after 5 seconds
+        private readonly TimeSpan _secondRetryDelay = TimeSpan.FromSeconds(30); // Second retry after 30 seconds  
+        private readonly TimeSpan _thirdRetryDelay = TimeSpan.FromMinutes(2);   // Third retry after 2 minutes
+        private readonly TimeSpan _pendingRequestTimeout = TimeSpan.FromMinutes(5); // Clear pending requests after 5 minutes
         private const int MaxBatchSize = 20;
         private const int MaxPeriodicAvatars = 20;
-        private const int MaxRetryAttempts = 5;
-        private const int MaxQuickRetryAttempts = 5; // Quick retries for missing display names
+        private const int MaxRetryAttempts = 3; // Maximum of 3 retry attempts
         
         // Processing state
         private Timer? _periodicTimer;
@@ -171,12 +180,15 @@ namespace RadegastWeb.Services
                 return fallbackName ?? UnknownUser;
             }
 
-            // Try global cache first
+            // Try global cache first (this includes in-memory, memory cache, and database checks)
             var cached = await _globalCache.GetCachedDisplayNameAsync(avatarId);
-            if (cached != null)
+            if (cached != null && !IsInvalidNameValue(cached.DisplayNameValue))
             {
-                // Check if we should refresh (but don't wait for it)
-                if (DateTime.UtcNow - cached.LastUpdated > _refreshAge)
+                // We have valid cached data
+                var age = DateTime.UtcNow - cached.LastUpdated;
+                
+                // Check if we should refresh in background (but don't wait for it)
+                if (age > _refreshAge)
                 {
                     _ = Task.Run(() => QueueNameRequestAsync(avatarId));
                 }
@@ -184,7 +196,13 @@ namespace RadegastWeb.Services
                 return FormatDisplayName(cached, mode);
             }
 
-            // Not in cache, queue for background request
+            // Check if we have a pending request to avoid duplicate network calls
+            if (_pendingRequests.ContainsKey(avatarId))
+            {
+                return fallbackName ?? LoadingPlaceholder;
+            }
+
+            // No valid cached data, queue for network request
             await QueueNameRequestAsync(avatarId);
             
             return fallbackName ?? LoadingPlaceholder;
@@ -197,22 +215,47 @@ namespace RadegastWeb.Services
                 return fallbackName ?? UnknownUser;
             }
 
-            // Use cached synchronous method for immediate response
+            // First try synchronous cache (memory only)
             var cached = _globalCache.GetCachedDisplayName(avatarId, mode);
-            if (cached != null)
+            if (!string.IsNullOrEmpty(cached) && !IsInvalidNameValue(cached))
             {
-                // Queue refresh if needed (fire and forget)
-                var cachedObject = _globalCache.GetCachedDisplayNameAsync(avatarId).Result;
-                if (cachedObject != null && DateTime.UtcNow - cachedObject.LastUpdated > _refreshAge)
+                // We have valid cached data, check if we should refresh in background
+                _ = Task.Run(async () =>
                 {
-                    _ = Task.Run(() => QueueNameRequestAsync(avatarId));
-                }
+                    var cachedObject = await _globalCache.GetCachedDisplayNameAsync(avatarId);
+                    if (cachedObject != null && DateTime.UtcNow - cachedObject.LastUpdated > _refreshAge)
+                    {
+                        await QueueNameRequestAsync(avatarId);
+                    }
+                });
                 
                 return cached;
             }
 
-            // Queue request for background processing
-            _ = Task.Run(() => QueueNameRequestAsync(avatarId));
+            // No memory cache hit, try async database check (with short timeout for sync method)
+            try
+            {
+                var dbCheckTask = _globalCache.GetCachedDisplayNameAsync(avatarId);
+                if (dbCheckTask.Wait(TimeSpan.FromMilliseconds(100))) // Short timeout for sync method
+                {
+                    var cachedObject = dbCheckTask.Result;
+                    if (cachedObject != null && !IsInvalidNameValue(cachedObject.DisplayNameValue))
+                    {
+                        return FormatDisplayName(cachedObject, mode);
+                    }
+                }
+            }
+            catch (AggregateException)
+            {
+                // Timeout or error - fall through to queue request
+            }
+
+            // Check if we have a pending request to avoid duplicates
+            if (!_pendingRequests.ContainsKey(avatarId))
+            {
+                // Queue request for background processing
+                _ = Task.Run(() => QueueNameRequestAsync(avatarId));
+            }
             
             return fallbackName ?? LoadingPlaceholder;
         }
@@ -224,13 +267,24 @@ namespace RadegastWeb.Services
                 return fallbackName ?? UnknownUser;
             }
 
+            // Check cache (includes in-memory, memory cache, and database)
             var cached = await _globalCache.GetCachedDisplayNameAsync(avatarId);
-            if (cached?.LegacyFullName != null)
+            if (cached?.LegacyFullName != null && !IsInvalidNameValue(cached.LegacyFullName))
             {
+                // Check if we should refresh in background
+                if (DateTime.UtcNow - cached.LastUpdated > _refreshAge)
+                {
+                    _ = Task.Run(() => QueueNameRequestAsync(avatarId));
+                }
                 return cached.LegacyFullName;
             }
 
-            await QueueNameRequestAsync(avatarId);
+            // Check if we already have a pending request
+            if (!_pendingRequests.ContainsKey(avatarId))
+            {
+                await QueueNameRequestAsync(avatarId);
+            }
+            
             return fallbackName ?? LoadingPlaceholder;
         }
 
@@ -241,13 +295,24 @@ namespace RadegastWeb.Services
                 return fallbackName?.ToLower().Replace(" ", ".") ?? "unknown.user";
             }
 
+            // Check cache (includes in-memory, memory cache, and database)
             var cached = await _globalCache.GetCachedDisplayNameAsync(avatarId);
-            if (cached?.UserName != null)
+            if (cached?.UserName != null && !IsInvalidNameValue(cached.UserName))
             {
+                // Check if we should refresh in background
+                if (DateTime.UtcNow - cached.LastUpdated > _refreshAge)
+                {
+                    _ = Task.Run(() => QueueNameRequestAsync(avatarId));
+                }
                 return cached.UserName;
             }
 
-            await QueueNameRequestAsync(avatarId);
+            // Check if we already have a pending request
+            if (!_pendingRequests.ContainsKey(avatarId))
+            {
+                await QueueNameRequestAsync(avatarId);
+            }
+            
             return fallbackName?.ToLower().Replace(" ", ".") ?? LoadingPlaceholder.ToLower();
         }
 
@@ -319,6 +384,43 @@ namespace RadegastWeb.Services
             return $"{displayPart} ({userName})";
         }
 
+        public async Task<string> RefreshDisplayNameAsync(string avatarId, NameDisplayMode mode = NameDisplayMode.Smart, string? fallbackName = null)
+        {
+            if (string.IsNullOrEmpty(avatarId) || avatarId == UUID.Zero.ToString())
+            {
+                return fallbackName ?? UnknownUser;
+            }
+
+            // Force a fresh database check first
+            var cached = await _globalCache.GetCachedDisplayNameAsync(avatarId);
+            
+            // If we have recent valid data (less than 30 minutes old), return it
+            if (cached != null && !IsInvalidNameValue(cached.DisplayNameValue))
+            {
+                var age = DateTime.UtcNow - cached.LastUpdated;
+                if (age < TimeSpan.FromMinutes(30))
+                {
+                    return FormatDisplayName(cached, mode);
+                }
+            }
+
+            // Force a network request for this avatar (remove from pending to allow duplicate)
+            _pendingRequests.TryRemove(avatarId, out _);
+            await QueueNameRequestAsync(avatarId);
+            
+            // Wait a brief moment for the request to potentially complete
+            await Task.Delay(100);
+            
+            // Try to get the updated data
+            var refreshed = await _globalCache.GetCachedDisplayNameAsync(avatarId);
+            if (refreshed != null && !IsInvalidNameValue(refreshed.DisplayNameValue))
+            {
+                return FormatDisplayName(refreshed, mode);
+            }
+            
+            return fallbackName ?? LoadingPlaceholder;
+        }
+
         #endregion
 
         #region Update Methods
@@ -336,6 +438,17 @@ namespace RadegastWeb.Services
         public async Task PreloadDisplayNamesAsync(IEnumerable<string> avatarIds)
         {
             await _globalCache.PreloadDisplayNamesAsync(avatarIds);
+            
+            // Also ensure these are loaded into our tracking to prevent immediate re-requests
+            foreach (var avatarId in avatarIds)
+            {
+                var cached = await _globalCache.GetCachedDisplayNameAsync(avatarId);
+                if (cached != null && !IsInvalidNameValue(cached.DisplayNameValue))
+                {
+                    // Mark as recently processed to prevent immediate network requests
+                    _pendingRequests.TryAdd(avatarId, DateTime.UtcNow.Subtract(TimeSpan.FromMinutes(1)));
+                }
+            }
         }
 
         public async Task RequestDisplayNamesAsync(List<string> avatarIds, Guid requestingAccountId)
@@ -352,18 +465,35 @@ namespace RadegastWeb.Services
             if (_isDisposing || !await _requestWriter.WaitToWriteAsync())
                 return;
 
+            // Check if we already have a pending request for this avatar
+            var now = DateTime.UtcNow;
+            if (_pendingRequests.TryGetValue(avatarId, out var pendingTime))
+            {
+                // If the pending request is still recent (within timeout), skip
+                if (now - pendingTime < _pendingRequestTimeout)
+                {
+                    return;
+                }
+                // Otherwise remove the old pending request
+                _pendingRequests.TryRemove(avatarId, out _);
+            }
+
             try
             {
+                // Mark as pending before queuing
+                _pendingRequests.TryAdd(avatarId, now);
+                
                 await _requestWriter.WriteAsync(new NameRequest 
                 { 
                     AvatarId = avatarId, 
-                    RequestTime = DateTime.UtcNow,
+                    RequestTime = now,
                     Priority = RequestPriority.Normal 
                 });
             }
             catch (InvalidOperationException)
             {
-                // Channel closed during shutdown
+                // Channel closed during shutdown - remove from pending
+                _pendingRequests.TryRemove(avatarId, out _);
             }
         }
 
@@ -372,25 +502,40 @@ namespace RadegastWeb.Services
             if (_isDisposing)
                 return;
 
+            // Check current retry attempts
+            var currentAttempts = _retryAttempts.GetOrAdd(avatarId, 0);
+            if (currentAttempts >= MaxRetryAttempts)
+            {
+                _logger.LogDebug("Avatar {AvatarId} has reached maximum retry attempts ({MaxAttempts}), giving up", 
+                    avatarId, MaxRetryAttempts);
+                _retryAttempts.TryRemove(avatarId, out _);
+                _pendingRequests.TryRemove(avatarId, out _);
+                return;
+            }
+
+            // Increment retry count
+            _retryAttempts.AddOrUpdate(avatarId, 1, (key, value) => value + 1);
+            var attemptNumber = _retryAttempts[avatarId];
+
             try
             {
-                // Determine initial delay based on failure type
-                var initialDelay = failureType switch
+                // Determine delay based on attempt number (progressive delays)
+                var delay = attemptNumber switch
                 {
-                    FailureType.MissingDisplayName => _quickRetryDelay, // 3 seconds
-                    FailureType.NetworkError => _retryDelay,          // 1 minute
-                    FailureType.TemporaryFailure => TimeSpan.FromSeconds(10), // 10 seconds
-                    _ => _quickRetryDelay
+                    1 => _firstRetryDelay,  // 5 seconds
+                    2 => _secondRetryDelay, // 30 seconds  
+                    3 => _thirdRetryDelay,  // 2 minutes
+                    _ => _thirdRetryDelay   // Fallback (shouldn't happen with max 3 attempts)
                 };
 
                 var retryRequest = new RetryNameRequest
                 {
                     AvatarId = avatarId,
                     FirstAttempt = DateTime.UtcNow,
-                    NextRetryTime = DateTime.UtcNow.Add(initialDelay),
-                    AttemptCount = 1,
+                    NextRetryTime = DateTime.UtcNow.Add(delay),
+                    AttemptCount = attemptNumber,
                     Priority = RequestPriority.Normal,
-                    LastErrorReason = reason ?? "Initial request failed",
+                    LastErrorReason = reason ?? "Request failed",
                     FailureType = failureType
                 };
 
@@ -400,12 +545,15 @@ namespace RadegastWeb.Services
                 }
                 else
                 {
-                    _logger.LogDebug("Queued avatar {AvatarId} for retry ({FailureType}): {Reason}", avatarId, failureType, reason);
+                    _logger.LogDebug("Queued avatar {AvatarId} for retry attempt {AttemptCount}/{MaxAttempts} (delay: {Delay}): {Reason}", 
+                        avatarId, attemptNumber, MaxRetryAttempts, delay, reason);
                 }
             }
             catch (InvalidOperationException)
             {
-                // Channel closed during shutdown
+                // Channel closed during shutdown - clean up tracking
+                _retryAttempts.TryRemove(avatarId, out _);
+                _pendingRequests.TryRemove(avatarId, out _);
             }
         }
 
@@ -466,6 +614,11 @@ namespace RadegastWeb.Services
                 {
                     needsRequest.Add(avatarId);
                 }
+                else
+                {
+                    // We have recent data, clean up tracking
+                    MarkRequestCompleted(avatarId);
+                }
             }
 
             if (needsRequest.Count == 0)
@@ -476,6 +629,11 @@ namespace RadegastWeb.Services
             if (gridClient?.Network?.Connected != true)
             {
                 _logger.LogWarning("No connected grid client available for display name requests");
+                // Mark as failed and queue for retry
+                foreach (var avatarId in needsRequest)
+                {
+                    QueueForRetry(avatarId, "No connected grid client available", FailureType.NetworkError);
+                }
                 return;
             }
 
@@ -487,6 +645,37 @@ namespace RadegastWeb.Services
             finally
             {
                 _requestSemaphore.Release();
+            }
+        }
+
+        private void MarkRequestCompleted(string avatarId)
+        {
+            // Clean up tracking for successful requests
+            _pendingRequests.TryRemove(avatarId, out _);
+            _retryAttempts.TryRemove(avatarId, out _);
+        }
+
+        private void CleanupExpiredPendingRequests(DateTime now)
+        {
+            var expiredRequests = new List<string>();
+            
+            foreach (var kvp in _pendingRequests)
+            {
+                if (now - kvp.Value > _pendingRequestTimeout)
+                {
+                    expiredRequests.Add(kvp.Key);
+                }
+            }
+            
+            foreach (var avatarId in expiredRequests)
+            {
+                _pendingRequests.TryRemove(avatarId, out _);
+                _logger.LogDebug("Cleaned up expired pending request for avatar {AvatarId}", avatarId);
+            }
+            
+            if (expiredRequests.Count > 0)
+            {
+                _logger.LogDebug("Cleaned up {Count} expired pending requests", expiredRequests.Count);
             }
         }
 
@@ -517,12 +706,13 @@ namespace RadegastWeb.Services
                                     var displayNameDict = names.ToDictionary(n => n.ID, n => n);
                                     await UpdateDisplayNamesAsync(displayNameDict);
                                     
-                                    // Mark as successful
+                                    // Mark as successful and clean up tracking
                                     foreach (var name in names)
                                     {
                                         var avatarId = name.ID.ToString();
                                         successful.Add(avatarId);
                                         failed.Remove(avatarId);
+                                        MarkRequestCompleted(avatarId);
                                     }
                                 }
                                 
@@ -543,6 +733,7 @@ namespace RadegastWeb.Services
                                                 var avatarId = kvp.Key.ToString();
                                                 successful.Add(avatarId);
                                                 failed.Remove(avatarId);
+                                                MarkRequestCompleted(avatarId);
                                             }
                                             
                                             // Queue remaining failed avatars for retry
@@ -616,10 +807,12 @@ namespace RadegastWeb.Services
                     // Update successful legacy names
                     await UpdateLegacyNamesAsync(e.Names);
                     
-                    // Mark successful ones
+                    // Mark successful ones and clean up tracking
                     foreach (var kvp in e.Names)
                     {
-                        failed.Remove(kvp.Key.ToString());
+                        var avatarId = kvp.Key.ToString();
+                        failed.Remove(avatarId);
+                        MarkRequestCompleted(avatarId);
                     }
                     
                     // Queue remaining failed avatars for retry
@@ -818,51 +1011,44 @@ namespace RadegastWeb.Services
         {
             foreach (var request in failedRequests)
             {
-                // Check retry limits based on failure type
-                var maxAttempts = request.FailureType == FailureType.MissingDisplayName 
-                    ? MaxQuickRetryAttempts 
-                    : MaxRetryAttempts;
-
-                if (request.AttemptCount >= maxAttempts)
+                // Check if we should continue retrying this avatar
+                if (request.AttemptCount >= MaxRetryAttempts)
                 {
-                    _logger.LogDebug("Giving up on avatar {AvatarId} after {Attempts} attempts (type: {FailureType})", 
-                        request.AvatarId, request.AttemptCount, request.FailureType);
+                    _logger.LogDebug("Giving up on avatar {AvatarId} after {Attempts} attempts", 
+                        request.AvatarId, request.AttemptCount);
+                    
+                    // Clean up tracking for this avatar
+                    _retryAttempts.TryRemove(request.AvatarId, out _);
+                    _pendingRequests.TryRemove(request.AvatarId, out _);
                     continue;
                 }
 
-                // Calculate delay based on failure type
-                TimeSpan delay;
-                switch (request.FailureType)
+                // Calculate delay based on attempt number
+                var delay = request.AttemptCount switch
                 {
-                    case FailureType.MissingDisplayName:
-                        // Quick retries: 3s, 3s, 3s, 3s, 3s (total: 15 seconds)
-                        delay = _quickRetryDelay;
-                        break;
-                    
-                    case FailureType.NetworkError:
-                        // Exponential backoff: 1min, 2min, 4min, 8min, 10min(max)
-                        delay = TimeSpan.FromMinutes(Math.Min(
-                            Math.Pow(2, request.AttemptCount), 
-                            _maxRetryDelay.TotalMinutes));
-                        break;
-                    
-                    case FailureType.TemporaryFailure:
-                        // Linear increase: 10s, 20s, 30s, 40s, 50s
-                        delay = TimeSpan.FromSeconds(Math.Min(10 * (request.AttemptCount + 1), 60));
-                        break;
-                    
-                    default:
-                        delay = _quickRetryDelay;
-                        break;
-                }
+                    1 => _secondRetryDelay,  // 30 seconds for second attempt
+                    2 => _thirdRetryDelay,   // 2 minutes for third attempt  
+                    _ => _thirdRetryDelay    // Fallback
+                };
 
                 request.AttemptCount++;
                 request.NextRetryTime = DateTime.UtcNow.Add(delay);
                 request.LastErrorReason = "Previous request failed or incomplete";
 
+                // Update retry tracking
+                _retryAttempts.AddOrUpdate(request.AvatarId, request.AttemptCount, (key, value) => request.AttemptCount);
+
                 if (!_retryWriter.TryWrite(request))
                 {
                     _logger.LogWarning("Failed to requeue retry request for {AvatarId}", request.AvatarId);
+                    // Clean up tracking if we can't requeue
+                    _retryAttempts.TryRemove(request.AvatarId, out _);
+                    _pendingRequests.TryRemove(request.AvatarId, out _);
+                }
+                else
+                {
+                    _logger.LogDebug("Requeued avatar {AvatarId} for attempt {AttemptCount}/{MaxAttempts} (delay: {Delay})", 
+                        request.AvatarId, request.AttemptCount, MaxRetryAttempts, delay);
                 }
             }
         }
@@ -880,6 +1066,9 @@ namespace RadegastWeb.Services
             {
                 var avatarsToRefresh = new List<string>();
                 var now = DateTime.UtcNow;
+
+                // Clean up expired pending requests
+                CleanupExpiredPendingRequests(now);
 
                 // Collect avatars from all registered accounts
                 foreach (var accountId in _registeredAccounts.Keys)
@@ -1041,11 +1230,16 @@ namespace RadegastWeb.Services
             try
             {
                 _requestWriter.Complete();
+                _retryWriter.Complete();
             }
             catch (InvalidOperationException)
             {
                 // Channel already completed
             }
+            
+            // Clear tracking dictionaries
+            _pendingRequests.Clear();
+            _retryAttempts.Clear();
             
             await base.StopAsync(cancellationToken);
         }
@@ -1063,6 +1257,10 @@ namespace RadegastWeb.Services
             {
                 CleanupAccount(accountId);
             }
+            
+            // Clear tracking dictionaries
+            _pendingRequests.Clear();
+            _retryAttempts.Clear();
             
             base.Dispose();
         }
