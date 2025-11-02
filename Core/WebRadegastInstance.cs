@@ -208,6 +208,9 @@ namespace RadegastWeb.Core
             // Subscribe to global display name cache changes
             _globalDisplayNameCache.DisplayNameChanged += GlobalDisplayNameCache_DisplayNameChanged;
             
+            // Subscribe to master display name service changes
+            _masterDisplayNameService.DisplayNameChanged += MasterDisplayNameService_DisplayNameChanged;
+            
             // Subscribe to notice events
             _noticeService.NoticeReceived += NoticeService_NoticeReceived;
             
@@ -252,6 +255,9 @@ namespace RadegastWeb.Core
             
             // Unsubscribe from global display name cache changes
             _globalDisplayNameCache.DisplayNameChanged -= GlobalDisplayNameCache_DisplayNameChanged;
+            
+            // Unsubscribe from master display name service changes
+            _masterDisplayNameService.DisplayNameChanged -= MasterDisplayNameService_DisplayNameChanged;
             
             // Unsubscribe from notice events
             _noticeService.NoticeReceived -= NoticeService_NoticeReceived;
@@ -2783,6 +2789,64 @@ namespace RadegastWeb.Core
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error handling display name change for avatar {AvatarId}", e.AvatarId);
+            }
+        }
+        
+        private void MasterDisplayNameService_DisplayNameChanged(object? sender, DisplayNameChangedEventArgs e)
+        {
+            try
+            {
+                // Check if this avatar is in our nearby avatars list
+                if (UUID.TryParse(e.AvatarId, out var avatarUuid) && _nearbyAvatars.TryGetValue(avatarUuid, out var avatar))
+                {
+                    // Create updated avatar DTO with new display name
+                    var actualPosition = GetAvatarActualPosition(avatar);
+                    var avatarDto = new AvatarDto
+                    {
+                        Id = e.AvatarId,
+                        Name = e.DisplayName.LegacyFullName,
+                        DisplayName = e.DisplayName.DisplayNameValue,
+                        Distance = Calculate3DDistance(GetOurActualPosition(), actualPosition),
+                        Status = "Online",
+                        AccountId = Guid.Parse(_accountId),
+                        Position = new PositionDto
+                        {
+                            X = actualPosition.X,
+                            Y = actualPosition.Y,
+                            Z = actualPosition.Z
+                        }
+                    };
+                    
+                    // Fire the avatar updated event
+                    AvatarUpdated?.Invoke(this, avatarDto);
+                    
+                    _logger.LogDebug("Updated nearby avatar display name (master service) for {AvatarId} to '{NewName}'", 
+                        e.AvatarId, e.DisplayName.DisplayNameValue);
+                }
+                
+                // Also check coarse location avatars and update them
+                if (UUID.TryParse(e.AvatarId, out var coarseAvatarUuid) && _coarseLocationAvatars.TryGetValue(coarseAvatarUuid, out var coarseAvatar))
+                {
+                    coarseAvatar.Name = e.DisplayName.DisplayNameValue;
+                    _logger.LogDebug("Updated coarse location avatar display name (master service) for {AvatarId} to '{NewName}'", 
+                        e.AvatarId, e.DisplayName.DisplayNameValue);
+                }
+                
+                // Check if this avatar has an active IM session and update the session name
+                var imSessionId = $"im-{e.AvatarId}";
+                if (_chatSessions.TryGetValue(imSessionId, out var imSession))
+                {
+                    var oldSessionName = imSession.SessionName;
+                    imSession.SessionName = e.DisplayName.DisplayNameValue;
+                    ChatSessionUpdated?.Invoke(this, imSession);
+                    
+                    _logger.LogDebug("Updated IM session display name (master service) for {AvatarId} from '{OldName}' to '{NewName}'", 
+                        e.AvatarId, oldSessionName, e.DisplayName.DisplayNameValue);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling master display name change for avatar {AvatarId}", e.AvatarId);
             }
         }
         
