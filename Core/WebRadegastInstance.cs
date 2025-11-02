@@ -17,6 +17,7 @@ namespace RadegastWeb.Core
         private readonly INameResolutionService _nameResolutionService;
         private readonly IGroupService _groupService;
         private readonly IGlobalDisplayNameCache _globalDisplayNameCache;
+        private readonly IMasterDisplayNameService _masterDisplayNameService;
         private readonly IStatsService _statsService;
         private readonly ICorradeService _corradeService;
         private readonly IAiChatService _aiChatService;
@@ -77,7 +78,7 @@ namespace RadegastWeb.Core
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -86,6 +87,7 @@ namespace RadegastWeb.Core
             _nameResolutionService = nameResolutionService;
             _groupService = groupService;
             _globalDisplayNameCache = globalDisplayNameCache;
+            _masterDisplayNameService = masterDisplayNameService;
             _statsService = statsService;
             _corradeService = corradeService;
             _aiChatService = aiChatService;
@@ -1241,6 +1243,10 @@ namespace RadegastWeb.Core
                 _globalDisplayNameCache.RegisterGridClient(Guid.Parse(_accountId), _client);
                 _logger.LogDebug("Registered grid client {AccountId} with global display name cache", _accountId);
                 
+                // Also register with the master display name service
+                _masterDisplayNameService.RegisterGridClient(Guid.Parse(_accountId), _client);
+                _logger.LogDebug("Registered grid client {AccountId} with master display name service", _accountId);
+                
                 // Request current groups after successful login
                 _client.Groups.RequestCurrentGroups();
                 
@@ -1346,6 +1352,10 @@ namespace RadegastWeb.Core
             _globalDisplayNameCache.UnregisterGridClient(Guid.Parse(_accountId));
             _logger.LogDebug("Unregistered grid client {AccountId} from global display name cache", _accountId);
             
+            // Also unregister from master display name service
+            _masterDisplayNameService.UnregisterGridClient(Guid.Parse(_accountId));
+            _logger.LogDebug("Unregistered grid client {AccountId} from master display name service", _accountId);
+            
             // Clean up all cached data
             _nearbyAvatars.Clear();
             _proximityAlertedAvatars.Clear(); // Clear proximity tracking on client cleanup
@@ -1394,6 +1404,10 @@ namespace RadegastWeb.Core
             // Unregister from global display name cache
             _globalDisplayNameCache.UnregisterGridClient(Guid.Parse(_accountId));
             _logger.LogDebug("Unregistered grid client {AccountId} from global display name cache (logout)", _accountId);
+            
+            // Also unregister from master display name service
+            _masterDisplayNameService.UnregisterGridClient(Guid.Parse(_accountId));
+            _logger.LogDebug("Unregistered grid client {AccountId} from master display name service (logout)", _accountId);
             
             // Clean up all cached data
             _nearbyAvatars.Clear();

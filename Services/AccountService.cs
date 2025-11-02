@@ -383,7 +383,7 @@ namespace RadegastWeb.Services
                 var friendshipRequestService = _serviceProvider.GetRequiredService<IFriendshipRequestService>();
                 var groupInvitationService = _serviceProvider.GetRequiredService<IGroupInvitationService>();
                 
-                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService);
+                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, _masterDisplayNameService, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService);
                 
                 var loginResult = await instance.LoginAsync();
                 
