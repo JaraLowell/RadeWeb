@@ -61,10 +61,13 @@ namespace RadegastWeb.Services
         // Rate limiting and batching
         private readonly SemaphoreSlim _requestSemaphore = new(5, 5); // Max 5 concurrent requests
         private readonly TimeSpan _batchDelay = TimeSpan.FromMilliseconds(100);
-        private readonly TimeSpan _cacheExpiry = TimeSpan.FromHours(48); // Same as Radegast
+        private readonly TimeSpan _memoryCacheExpiry = TimeSpan.FromHours(2); // Short-term memory cache
+        private readonly TimeSpan _databaseCacheExpiry = TimeSpan.FromHours(48); // Long-term database cache
         private readonly TimeSpan _saveInterval = TimeSpan.FromSeconds(30);
+        private readonly TimeSpan _cleanupInterval = TimeSpan.FromMinutes(30);
         
         private readonly Timer _saveTimer;
+        private readonly Timer _cleanupTimer;
         private volatile bool _hasUpdates = false;
         private DateTime _lastSave = DateTime.UtcNow;
         private volatile bool _disposed = false;
@@ -95,6 +98,9 @@ namespace RadegastWeb.Services
             // Start periodic save timer
             _saveTimer = new Timer(SaveTimerCallback, null, _saveInterval, _saveInterval);
             
+            // Start periodic cleanup timer for memory cache
+            _cleanupTimer = new Timer(CleanupTimerCallback, null, _cleanupInterval, _cleanupInterval);
+            
             // Load cached names on startup
             _ = Task.Run(LoadCachedNamesAsync);
         }
@@ -104,30 +110,29 @@ namespace RadegastWeb.Services
             if (string.IsNullOrEmpty(avatarId))
                 return null;
 
-            // Check in-memory cache first
+            // Layer 1: Check short-term memory cache first (2 hours expiry)
             if (_globalNameCache.TryGetValue(avatarId, out var cachedName))
             {
-                // Check if cache is still valid
-                if (DateTime.UtcNow - cachedName.CachedAt < _cacheExpiry)
+                if (DateTime.UtcNow - cachedName.CachedAt < _memoryCacheExpiry)
                 {
                     return cachedName;
                 }
-                // Don't remove expired entries here to avoid race conditions
-                // Let the cleanup process handle expired entries periodically
+                // Expired from memory cache, but don't remove yet (cleanup will handle it)
             }
 
-            // Check memory cache (faster than DB)
+            // Layer 2: Check IMemoryCache (also short-term)
             var cacheKey = $"global_display_name_{avatarId}";
             if (_memoryCache.TryGetValue(cacheKey, out DisplayName? memoryCached) && memoryCached != null)
             {
-                if (DateTime.UtcNow - memoryCached.CachedAt < _cacheExpiry)
+                if (DateTime.UtcNow - memoryCached.CachedAt < _memoryCacheExpiry)
                 {
+                    // Refresh the memory cache
                     _globalNameCache.TryAdd(avatarId, memoryCached);
                     return memoryCached;
                 }
             }
 
-            // Try database as last resort
+            // Layer 3: Check database (48 hours expiry - medium-term storage)
             if (_disposed)
                 return null;
                 
@@ -137,15 +142,16 @@ namespace RadegastWeb.Services
                 var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
                 using var context = dbContextFactory.CreateDbContext();
                 
-                // Try GlobalDisplayNames table
                 var globalDbName = await context.GlobalDisplayNames
                     .FirstOrDefaultAsync(dn => dn.AvatarId == avatarId);
 
-                if (globalDbName != null && globalDbName.CachedAt > DateTime.UtcNow.Subtract(_cacheExpiry))
+                if (globalDbName != null && globalDbName.CachedAt > DateTime.UtcNow.Subtract(_databaseCacheExpiry))
                 {
                     var globalName = globalDbName.ToDisplayName();
+                    
+                    // Store in both memory caches with short expiry
                     _globalNameCache.TryAdd(avatarId, globalName);
-                    _memoryCache.Set(cacheKey, globalName, _cacheExpiry);
+                    _memoryCache.Set(cacheKey, globalName, _memoryCacheExpiry);
                     return globalName;
                 }
             }
@@ -169,26 +175,25 @@ namespace RadegastWeb.Services
 
             var cacheKey = $"global_display_name_{avatarId}";
 
-            // Check in-memory cache first
+            // Layer 1: Check memory cache (2 hours expiry)
             if (_globalNameCache.TryGetValue(avatarId, out var cachedName))
             {
-                // Check if cache is still valid
-                if (DateTime.UtcNow - cachedName.CachedAt < _cacheExpiry)
+                if (DateTime.UtcNow - cachedName.CachedAt < _memoryCacheExpiry)
                 {
-                    // Also ensure it's in memory cache for consistency
-                    _memoryCache.Set(cacheKey, cachedName, _cacheExpiry);
+                    // Refresh IMemoryCache for consistency
+                    _memoryCache.Set(cacheKey, cachedName, _memoryCacheExpiry);
                     return FormatDisplayName(cachedName, mode);
                 }
                 // Don't remove expired entries here to avoid race conditions
                 // Let the cleanup process handle expired entries periodically
             }
 
-            // Check memory cache (faster than DB)
+            // Layer 2: Check IMemoryCache
             if (_memoryCache.TryGetValue(cacheKey, out DisplayName? memoryCached))
             {
-                if (memoryCached != null && DateTime.UtcNow - memoryCached.CachedAt < _cacheExpiry)
+                if (memoryCached != null && DateTime.UtcNow - memoryCached.CachedAt < _memoryCacheExpiry)
                 {
-                    // Sync the in-memory cache with memory cache to keep layers consistent
+                    // Sync back to ConcurrentDictionary for consistency
                     _globalNameCache.AddOrUpdate(avatarId, memoryCached, (key, existing) => memoryCached);
                     return FormatDisplayName(memoryCached, mode);
                 }
@@ -307,7 +312,7 @@ namespace RadegastWeb.Services
             _globalNameCache.AddOrUpdate(displayName.AvatarId, globalName, (key, existingCache) => globalName);
             
             var cacheKey = $"global_display_name_{displayName.AvatarId}";
-            _memoryCache.Set(cacheKey, globalName, _cacheExpiry);
+            _memoryCache.Set(cacheKey, globalName, _memoryCacheExpiry);
             
             _hasUpdates = true;
             
@@ -578,8 +583,8 @@ namespace RadegastWeb.Services
                 var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
                 using var context = dbContextFactory.CreateDbContext();
                 
-                // Load from GlobalDisplayNames table first (preferred)
-                var cutoffTime = DateTime.UtcNow.Subtract(_cacheExpiry);
+                // Load from GlobalDisplayNames table (database acts as medium-term cache)
+                var cutoffTime = DateTime.UtcNow.Subtract(_databaseCacheExpiry);
                 var globalNames = await context.GlobalDisplayNames
                     .Where(dn => dn.CachedAt > cutoffTime)
                     .ToListAsync();
@@ -587,9 +592,13 @@ namespace RadegastWeb.Services
                 foreach (var globalName in globalNames)
                 {
                     var displayName = globalName.ToDisplayName();
-                    _globalNameCache.TryAdd(globalName.AvatarId, displayName);
-                    var cacheKey = $"global_display_name_{globalName.AvatarId}";
-                    _memoryCache.Set(cacheKey, displayName, _cacheExpiry);
+                    // Only load into memory cache if it's still fresh enough for memory
+                    if (DateTime.UtcNow - displayName.CachedAt < _memoryCacheExpiry)
+                    {
+                        _globalNameCache.TryAdd(globalName.AvatarId, displayName);
+                        var cacheKey = $"global_display_name_{globalName.AvatarId}";
+                        _memoryCache.Set(cacheKey, displayName, _memoryCacheExpiry);
+                    }
                 }
                 
                 _logger.LogInformation("Loaded {Total} cached display names into global cache", globalNames.Count);
@@ -760,7 +769,8 @@ namespace RadegastWeb.Services
 
         public void CleanExpiredCache()
         {
-            var expired = _globalNameCache.Where(kvp => DateTime.UtcNow - kvp.Value.CachedAt > _cacheExpiry)
+            // Clean expired entries from memory cache (2-hour expiry)
+            var expired = _globalNameCache.Where(kvp => DateTime.UtcNow - kvp.Value.CachedAt > _memoryCacheExpiry)
                                          .Select(kvp => kvp.Key)
                                          .ToList();
 
@@ -773,7 +783,59 @@ namespace RadegastWeb.Services
 
             if (expired.Count > 0)
             {
-                _logger.LogDebug("Cleaned {Count} expired display names from global cache", expired.Count);
+                _logger.LogDebug("Cleaned {Count} expired display names from memory cache", expired.Count);
+            }
+        }
+
+        private void CleanupTimerCallback(object? state)
+        {
+            if (_disposed)
+                return;
+
+            try
+            {
+                CleanExpiredCache();
+                
+                // Also clean database periodically (every 4th cleanup = every 2 hours)
+                var now = DateTime.UtcNow;
+                if ((now.Hour % 2 == 0) && now.Minute < 30)
+                {
+                    _ = Task.Run(CleanExpiredDatabaseEntriesAsync);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during periodic cache cleanup");
+            }
+        }
+
+        private async Task CleanExpiredDatabaseEntriesAsync()
+        {
+            if (_disposed)
+                return;
+
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
+                using var context = dbContextFactory.CreateDbContext();
+                
+                var cutoffTime = DateTime.UtcNow.Subtract(_databaseCacheExpiry);
+                var expiredEntries = await context.GlobalDisplayNames
+                    .Where(dn => dn.CachedAt < cutoffTime)
+                    .ToListAsync();
+
+                if (expiredEntries.Any())
+                {
+                    context.GlobalDisplayNames.RemoveRange(expiredEntries);
+                    await context.SaveChangesAsync();
+                    
+                    _logger.LogInformation("Cleaned {Count} expired display names from database", expiredEntries.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleaning expired database entries");
             }
         }
 
@@ -920,6 +982,7 @@ namespace RadegastWeb.Services
             
             _cancellationTokenSource.Cancel();
             _saveTimer?.Dispose();
+            _cleanupTimer?.Dispose();
             
             // Save any pending changes
             try
