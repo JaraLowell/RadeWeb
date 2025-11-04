@@ -356,6 +356,7 @@ namespace RadegastWeb.Services
                 var chatProcessingService = scope.ServiceProvider.GetRequiredService<IChatProcessingService>();
                 var slTimeService = scope.ServiceProvider.GetRequiredService<ISLTimeService>();
                 var presenceService = scope.ServiceProvider.GetRequiredService<IPresenceService>();
+                var regionMapCacheService = scope.ServiceProvider.GetRequiredService<IRegionMapCacheService>();
                 
                 // Create a copy of the account object to avoid modifying the original in-memory account
                 var accountCopy = new Account
@@ -383,7 +384,7 @@ namespace RadegastWeb.Services
                 var friendshipRequestService = _serviceProvider.GetRequiredService<IFriendshipRequestService>();
                 var groupInvitationService = _serviceProvider.GetRequiredService<IGroupInvitationService>();
                 
-                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, _masterDisplayNameService, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService);
+                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, _masterDisplayNameService, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService, regionMapCacheService);
                 
                 var loginResult = await instance.LoginAsync();
                 

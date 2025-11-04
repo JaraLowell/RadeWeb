@@ -127,7 +127,7 @@ builder.Services.AddSingleton<ISlUrlParser, SlUrlParser>();
 builder.Services.AddSingleton<IGroupService, GroupService>();
 builder.Services.AddSingleton<IStatsService, StatsService>();
 builder.Services.AddSingleton<IChatLogService, ChatLogService>();
-builder.Services.AddSingleton<IRegionMapCacheService, RegionMapCacheService>();
+builder.Services.AddSingleton<IRegionMapCacheService, FileBasedRegionMapCacheService>();
 builder.Services.AddSingleton<ICorradeService, CorradeService>();
 builder.Services.AddSingleton<IAiChatService, AiChatService>();
 builder.Services.AddSingleton<IChatHistoryService, ChatHistoryService>();

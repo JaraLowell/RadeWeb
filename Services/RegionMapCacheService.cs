@@ -10,9 +10,13 @@ namespace RadegastWeb.Services
     public interface IRegionMapCacheService
     {
         Task<byte[]?> GetRegionMapAsync(ulong regionX, ulong regionY);
+        Task<byte[]?> GetRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY);
         void CacheRegionMap(ulong regionX, ulong regionY, byte[] imageData);
+        Task CacheRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY, byte[] imageData);
         bool IsRegionMapCached(ulong regionX, ulong regionY);
+        bool IsRegionMapCachedForAccount(Guid accountId, ulong regionX, ulong regionY);
         void ClearExpiredMaps();
+        Task CleanupAccountMapsAsync(Guid accountId);
         int GetCacheSize();
     }
 
@@ -24,7 +28,7 @@ namespace RadegastWeb.Services
         private readonly Timer _cleanupTimer;
         
         // Cache settings
-        private readonly TimeSpan _cacheExpiry = TimeSpan.FromHours(1); // Region maps don't change often
+        private readonly TimeSpan _cacheExpiry = TimeSpan.FromHours(6); // Region maps rarely change - check every 6 hours
         private readonly TimeSpan _cleanupInterval = TimeSpan.FromMinutes(15);
         private readonly long _maxCacheSize = 50 * 1024 * 1024; // 50MB max cache size
         private readonly int _maxRegionCount = 200; // Maximum number of cached regions
@@ -257,6 +261,34 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error during region map cache cleanup");
             }
+        }
+
+        // New interface methods (stub implementations since we're using FileBasedRegionMapCacheService)
+        public async Task<byte[]?> GetRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY)
+        {
+            // Fallback to regular method for compatibility
+            return await GetRegionMapAsync(regionX, regionY);
+        }
+
+        public Task CacheRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY, byte[] imageData)
+        {
+            // Use the regular cache method
+            CacheRegionMap(regionX, regionY, imageData);
+            return Task.CompletedTask;
+        }
+
+        public bool IsRegionMapCachedForAccount(Guid accountId, ulong regionX, ulong regionY)
+        {
+            // Fallback to regular method for compatibility
+            return IsRegionMapCached(regionX, regionY);
+        }
+
+        public Task CleanupAccountMapsAsync(Guid accountId)
+        {
+            // For memory-based cache, we don't have per-account cleanup
+            // This is a no-op since memory cache is shared
+            _logger.LogDebug("Account-specific cleanup not supported in memory-based cache service");
+            return Task.CompletedTask;
         }
 
         public void Dispose()

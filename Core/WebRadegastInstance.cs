@@ -31,6 +31,7 @@ namespace RadegastWeb.Core
         private readonly IDbContextFactory<RadegastDbContext> _dbContextFactory;
         private readonly IFriendshipRequestService _friendshipRequestService;
         private readonly IGroupInvitationService _groupInvitationService;
+        private readonly IRegionMapCacheService _regionMapCacheService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -78,7 +79,7 @@ namespace RadegastWeb.Core
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService, IRegionMapCacheService regionMapCacheService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -101,6 +102,7 @@ namespace RadegastWeb.Core
             _dbContextFactory = dbContextFactory;
             _friendshipRequestService = friendshipRequestService;
             _groupInvitationService = groupInvitationService;
+            _regionMapCacheService = regionMapCacheService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -411,6 +413,9 @@ namespace RadegastWeb.Core
                 
                 // Clean up group service resources
                 _groupService.CleanupAccount(Guid.Parse(_accountId));
+                
+                // Clean up region map cache for this account
+                await _regionMapCacheService.CleanupAccountMapsAsync(Guid.Parse(_accountId));
                 
                 _logger.LogInformation("Completed manual disconnect cleanup for account {AccountId}", _accountId);
             }
@@ -4107,6 +4112,9 @@ namespace RadegastWeb.Core
                 
                 // Clean up group service resources
                 _groupService.CleanupAccount(Guid.Parse(_accountId));
+                
+                // Clean up region map cache for this account
+                _ = Task.Run(async () => await _regionMapCacheService.CleanupAccountMapsAsync(Guid.Parse(_accountId)));
                 
                 // Unregister from name resolution service
                 _nameResolutionService.UnregisterInstance(Guid.Parse(_accountId));

@@ -124,8 +124,8 @@ namespace RadegastWeb.Controllers
                 _logger.LogDebug("Getting region map for {RegionName} at ({RegionX}, {RegionY})", 
                     currentSim.Name, regionX, regionY);
 
-                // Try to get the map from cache first
-                var imageBytes = await _regionMapCacheService.GetRegionMapAsync(regionX, regionY);
+                // Try to get the map from cache first (account-specific)
+                var imageBytes = await _regionMapCacheService.GetRegionMapForAccountAsync(accountId, regionX, regionY);
                 
                 if (imageBytes == null || imageBytes.Length == 0)
                 {
@@ -136,8 +136,9 @@ namespace RadegastWeb.Controllers
                 _logger.LogDebug("Serving region map for {RegionName} at ({RegionX}, {RegionY}), size: {SizeKB}KB", 
                     currentSim.Name, regionX, regionY, imageBytes.Length / 1024);
 
-                // Return the image as JPEG with caching headers
-                Response.Headers["Cache-Control"] = "public, max-age=3600"; // 1 hour browser cache
+                // Return the image as JPEG with longer caching headers since maps rarely change
+                Response.Headers["Cache-Control"] = "public, max-age=21600"; // 6 hour browser cache to match server cache
+                Response.Headers["ETag"] = $"\"{regionX}_{regionY}\""; // Simple ETag for cache validation
                 return File(imageBytes, "image/jpeg", $"{currentSim.Name}_map.jpg");
             }
             catch (Exception ex)
@@ -178,8 +179,8 @@ namespace RadegastWeb.Controllers
                 // Generate the public map URL using Linden Lab's Map API
                 var publicMapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
 
-                // Check if the map is cached
-                var isCached = _regionMapCacheService.IsRegionMapCached(regionX, regionY);
+                // Check if the map is cached for this account
+                var isCached = _regionMapCacheService.IsRegionMapCachedForAccount(accountId, regionX, regionY);
 
                 var result = new
                 {
