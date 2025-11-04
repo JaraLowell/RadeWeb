@@ -15,13 +15,15 @@ namespace RadegastWeb.Controllers
         private readonly ILogger<StatsController> _logger;
         private readonly ISLTimeService _sltTimeService;
         private readonly IMasterDisplayNameService _displayNameService;
+        private readonly INoticeService _noticeService;
 
-        public StatsController(IStatsService statsService, ILogger<StatsController> logger, ISLTimeService sltTimeService, IMasterDisplayNameService displayNameService)
+        public StatsController(IStatsService statsService, ILogger<StatsController> logger, ISLTimeService sltTimeService, IMasterDisplayNameService displayNameService, INoticeService noticeService)
         {
             _statsService = statsService;
             _logger = logger;
             _sltTimeService = sltTimeService;
             _displayNameService = displayNameService;
+            _noticeService = noticeService;
         }
 
         /// <summary>
@@ -428,6 +430,83 @@ namespace RadegastWeb.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting dashboard statistics");
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Clean up notices for a specific account (admin function)
+        /// </summary>
+        [HttpDelete("notices/account/{accountId}")]
+        public async Task<IActionResult> CleanupAccountNotices(Guid accountId)
+        {
+            try
+            {
+                int deletedCount = await _noticeService.CleanupAccountNoticesAsync(accountId);
+                return Ok(new { 
+                    message = $"Cleanup completed for account {accountId}", 
+                    deletedCount = deletedCount 
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during notice cleanup for account {AccountId}", accountId);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Clean up old notices across all accounts (admin function)
+        /// </summary>
+        [HttpPost("cleanup/notices")]
+        public async Task<IActionResult> CleanupOldNotices([FromQuery] int keepDays = 30)
+        {
+            try
+            {
+                if (keepDays < 1)
+                {
+                    return BadRequest("Keep days must be at least 1");
+                }
+
+                int deletedCount = await _noticeService.CleanupOldNoticesAsync(keepDays);
+                return Ok(new { 
+                    message = $"Notice cleanup completed, deleted notices older than {keepDays} days",
+                    deletedCount = deletedCount
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during old notices cleanup");
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Get notice statistics across all accounts
+        /// </summary>
+        [HttpGet("notices")]
+        public async Task<ActionResult<object>> GetNoticeStatistics()
+        {
+            try
+            {
+                int totalNotices = await _noticeService.GetTotalNoticeCountAsync();
+                Dictionary<Guid, int> accountNoticeCounts = await _noticeService.GetAccountNoticeCountsAsync();
+                DateTime? oldestNotice = await _noticeService.GetOldestNoticeAsync();
+                DateTime? newestNotice = await _noticeService.GetNewestNoticeAsync();
+
+                return Ok(new
+                {
+                    TotalNotices = totalNotices,
+                    AccountCounts = accountNoticeCounts,
+                    OldestNotice = oldestNotice,
+                    NewestNotice = newestNotice,
+                    Timestamp = DateTime.UtcNow,
+                    SLT = _sltTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, yyyy HH:mm:ss")
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting notice statistics");
                 return StatusCode(500, "Internal server error");
             }
         }

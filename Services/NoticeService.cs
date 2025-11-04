@@ -16,6 +16,12 @@ namespace RadegastWeb.Services
         Task DismissNoticeAsync(Guid accountId, string noticeId);
         Task SendNoticeAcknowledgmentToSecondLifeAsync(Guid accountId, InstantMessage originalMessage, bool hasAttachment);
         void CleanupAccount(Guid accountId);
+        Task<int> CleanupAccountNoticesAsync(Guid accountId);
+        Task<int> CleanupOldNoticesAsync(int keepDays = 7);
+        Task<int> GetTotalNoticeCountAsync();
+        Task<Dictionary<Guid, int>> GetAccountNoticeCountsAsync();
+        Task<DateTime?> GetOldestNoticeAsync();
+        Task<DateTime?> GetNewestNoticeAsync();
         event EventHandler<NoticeReceivedEventArgs>? NoticeReceived;
     }
 
@@ -592,9 +598,80 @@ namespace RadegastWeb.Services
 
         public void CleanupAccount(Guid accountId)
         {
-            // Database notices persist even after cleanup, which is what we want
-            // This method is kept for interface compatibility
-            _logger.LogInformation("Notice cleanup requested for account {AccountId} - notices persisted in database", accountId);
+            // Clean up all notices for the account when it disconnects
+            _ = Task.Run(async () => await CleanupAccountNoticesAsync(accountId));
+        }
+        
+        /// <summary>
+        /// Remove all notices for an account when they disconnect/logout
+        /// This prevents memory bloat from users with hundreds of accumulated notices
+        /// </summary>
+        public async Task<int> CleanupAccountNoticesAsync(Guid accountId)
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                
+                var accountNotices = await context.Notices
+                    .Where(n => n.AccountId == accountId)
+                    .ToListAsync();
+                
+                if (accountNotices.Any())
+                {
+                    context.Notices.RemoveRange(accountNotices);
+                    await context.SaveChangesAsync();
+                    
+                    _logger.LogInformation("Cleaned up {Count} notices for disconnected account {AccountId}", 
+                        accountNotices.Count, accountId);
+                    
+                    return accountNotices.Count;
+                }
+                else
+                {
+                    _logger.LogDebug("No notices to cleanup for account {AccountId}", accountId);
+                    return 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleaning up notices for account {AccountId}", accountId);
+                return 0;
+            }
+        }
+        
+        /// <summary>
+        /// Clean up old notices across all accounts (maintenance operation)
+        /// Removes notices older than the specified number of days
+        /// </summary>
+        public async Task<int> CleanupOldNoticesAsync(int keepDays = 7)
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                
+                var cutoffDate = DateTime.UtcNow.AddDays(-keepDays);
+                var oldNotices = await context.Notices
+                    .Where(n => n.Timestamp < cutoffDate)
+                    .ToListAsync();
+                
+                if (oldNotices.Any())
+                {
+                    context.Notices.RemoveRange(oldNotices);
+                    await context.SaveChangesAsync();
+                    
+                    _logger.LogInformation("Cleaned up {Count} old notices older than {Days} days", 
+                        oldNotices.Count, keepDays);
+                    
+                    return oldNotices.Count;
+                }
+                
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleaning up old notices");
+                return 0;
+            }
         }
 
         public async Task SendNoticeAcknowledgmentToSecondLifeAsync(Guid accountId, InstantMessage originalMessage, bool hasAttachment)
@@ -618,6 +695,66 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing notice acknowledgment for account {AccountId}", accountId);
+            }
+        }
+
+        public async Task<int> GetTotalNoticeCountAsync()
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                return await context.Notices.CountAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting total notice count");
+                return 0;
+            }
+        }
+
+        public async Task<Dictionary<Guid, int>> GetAccountNoticeCountsAsync()
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                return await context.Notices
+                    .GroupBy(n => n.AccountId)
+                    .ToDictionaryAsync(g => g.Key, g => g.Count());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting account notice counts");
+                return new Dictionary<Guid, int>();
+            }
+        }
+
+        public async Task<DateTime?> GetOldestNoticeAsync()
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                return await context.Notices
+                    .MinAsync(n => (DateTime?)n.Timestamp);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting oldest notice timestamp");
+                return null;
+            }
+        }
+
+        public async Task<DateTime?> GetNewestNoticeAsync()
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                return await context.Notices
+                    .MaxAsync(n => (DateTime?)n.Timestamp);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting newest notice timestamp");
+                return null;
             }
         }
     }

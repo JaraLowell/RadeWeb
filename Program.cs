@@ -149,7 +149,9 @@ builder.Services.AddSingleton<IMasterDisplayNameService, MasterDisplayNameServic
 builder.Services.AddSingleton<IDisplayNameService>(provider => 
     new DisplayNameServiceCompatibilityAdapter(provider.GetRequiredService<IMasterDisplayNameService>()));
 
-builder.Services.AddHostedService<RadegastBackgroundService>();
+// Register as singleton first, then as hosted service
+builder.Services.AddSingleton<RadegastBackgroundService>();
+builder.Services.AddHostedService<RadegastBackgroundService>(provider => provider.GetRequiredService<RadegastBackgroundService>());
 builder.Services.AddHostedService<MasterDisplayNameService>();
 
 // Add logging configuration with additional filters

@@ -22,6 +22,7 @@ namespace RadegastWeb.Services
         // Track which instances we've already subscribed to avoid multiple subscriptions
         private readonly ConcurrentDictionary<Guid, bool> _subscribedInstances = new();
         private readonly ConcurrentDictionary<Guid, DateTime> _lastSubscriptionTime = new();
+        private readonly ConcurrentDictionary<Guid, WeakReference<WebRadegastInstance>> _instanceReferences = new();
         private readonly object _subscriptionLock = new();
 
         public RadegastBackgroundService(
@@ -152,6 +153,7 @@ namespace RadegastWeb.Services
             {
                 _subscribedInstances.TryRemove(obsoleteId, out _);
                 _lastSubscriptionTime.TryRemove(obsoleteId, out _);
+                _instanceReferences.TryRemove(obsoleteId, out _);
                 _logger.LogDebug("Cleaned up obsolete instance subscription for account {AccountId}", obsoleteId);
             }
             
@@ -222,19 +224,8 @@ namespace RadegastWeb.Services
                     {
                         _logger.LogInformation("Subscribing to events for account instance {AccountId}", account.Id);
                         
-                        // First unsubscribe to ensure we don't have duplicates
-                        instance.ChatReceived -= OnChatReceived;
-                        instance.StatusChanged -= OnStatusChanged;
-                        instance.ConnectionChanged -= OnConnectionChanged;
-                        instance.ChatSessionUpdated -= OnChatSessionUpdated;
-                        instance.AvatarAdded -= OnAvatarAdded;
-                        instance.AvatarRemoved -= OnAvatarRemoved;
-                        instance.AvatarUpdated -= OnAvatarUpdated;
-                        instance.RegionChanged -= OnRegionChanged;
-                        instance.NoticeReceived -= OnNoticeReceived;
-                        instance.ScriptDialogReceived -= OnScriptDialogReceived;
-                        instance.ScriptPermissionReceived -= OnScriptPermissionReceived;
-                        instance.TeleportRequestReceived -= OnTeleportRequestReceived;
+                        // First, safely unsubscribe to prevent double subscriptions
+                        SafeUnsubscribeFromInstance(account.Id, instance);
                         
                         // Now subscribe
                         instance.ChatReceived += OnChatReceived;
@@ -250,6 +241,11 @@ namespace RadegastWeb.Services
                         instance.ScriptPermissionReceived += OnScriptPermissionReceived;
                         instance.TeleportRequestReceived += OnTeleportRequestReceived;
                         
+                        // Track instance with weak reference to prevent GC issues
+                        _instanceReferences.AddOrUpdate(account.Id, 
+                            new WeakReference<WebRadegastInstance>(instance),
+                            (key, old) => new WeakReference<WebRadegastInstance>(instance));
+                        
                         // Mark as subscribed and record the time
                         _subscribedInstances.TryAdd(account.Id, true);
                         _lastSubscriptionTime.AddOrUpdate(account.Id, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
@@ -259,6 +255,8 @@ namespace RadegastWeb.Services
                 {
                     // Instance no longer exists but we have it tracked - clean up
                     _subscribedInstances.TryRemove(account.Id, out _);
+                    _lastSubscriptionTime.TryRemove(account.Id, out _);
+                    _instanceReferences.TryRemove(account.Id, out _);
                     _logger.LogDebug("Cleaned up subscription for disappeared instance {AccountId}", account.Id);
                 }
             }
@@ -277,6 +275,7 @@ namespace RadegastWeb.Services
                 // Clear all existing subscriptions to force complete refresh
                 _subscribedInstances.Clear();
                 _lastSubscriptionTime.Clear();
+                _instanceReferences.Clear();
                 
                 _logger.LogInformation("Cleared all existing event subscription tracking - next ProcessAccountEvents cycle will re-subscribe all active accounts");
                 
@@ -310,27 +309,12 @@ namespace RadegastWeb.Services
                 }
 
                 // Remove from subscription tracking to force re-subscription
-                if (_subscribedInstances.ContainsKey(accountId))
-                {
-                    _logger.LogDebug("Removing existing event subscriptions for account {AccountId}", accountId);
-                    
-                    // Unsubscribe from all events on the actual instance
-                    instance.ChatReceived -= OnChatReceived;
-                    instance.StatusChanged -= OnStatusChanged;
-                    instance.ConnectionChanged -= OnConnectionChanged;
-                    instance.ChatSessionUpdated -= OnChatSessionUpdated;
-                    instance.AvatarAdded -= OnAvatarAdded;
-                    instance.AvatarRemoved -= OnAvatarRemoved;
-                    instance.AvatarUpdated -= OnAvatarUpdated;
-                    instance.RegionChanged -= OnRegionChanged;
-                    instance.NoticeReceived -= OnNoticeReceived;
-                    instance.ScriptDialogReceived -= OnScriptDialogReceived;
-                    instance.ScriptPermissionReceived -= OnScriptPermissionReceived;
-                    instance.TeleportRequestReceived -= OnTeleportRequestReceived;
-                    
-                    // Remove from tracking
-                    _subscribedInstances.TryRemove(accountId, out _);
-                }
+                // Always safely unsubscribe first to prevent accumulation
+                SafeUnsubscribeFromInstance(accountId, instance);
+                
+                // Remove from tracking
+                _subscribedInstances.TryRemove(accountId, out _);
+                _instanceReferences.TryRemove(accountId, out _);
 
                 // Re-subscribe to all events
                 _logger.LogInformation("Re-subscribing to events for account {AccountId}", accountId);
@@ -347,6 +331,11 @@ namespace RadegastWeb.Services
                 instance.ScriptDialogReceived += OnScriptDialogReceived;
                 instance.ScriptPermissionReceived += OnScriptPermissionReceived;
                 instance.TeleportRequestReceived += OnTeleportRequestReceived;
+                
+                // Track instance with weak reference
+                _instanceReferences.AddOrUpdate(accountId, 
+                    new WeakReference<WebRadegastInstance>(instance),
+                    (key, old) => new WeakReference<WebRadegastInstance>(instance));
                 
                 // Track the subscription
                 _subscribedInstances.TryAdd(accountId, true);
@@ -763,9 +752,12 @@ namespace RadegastWeb.Services
                     // Trigger bulk recording across all connected accounts
                     await TriggerPeriodicAvatarRecordingAsync(cancellationToken);
                     
-                    // Also trigger cleanup of old visitor records (keep last 90 days)
+                    // Also trigger cleanup of old records (daily maintenance)
                     using var scope = _serviceProvider.CreateScope();
                     var statsService = scope.ServiceProvider.GetService<IStatsService>();
+                    var noticeService = scope.ServiceProvider.GetService<INoticeService>();
+                    
+                    // Clean up old visitor records (keep last 90 days)
                     if (statsService != null)
                     {
                         _ = Task.Run(async () =>
@@ -777,6 +769,26 @@ namespace RadegastWeb.Services
                             catch (Exception ex)
                             {
                                 _logger.LogError(ex, "Error during daily cleanup of old visitor records");
+                            }
+                        }, cancellationToken);
+                    }
+                    
+                    // Clean up old notices (keep last 7 days)
+                    if (noticeService != null)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var deletedCount = await noticeService.CleanupOldNoticesAsync(7);
+                                if (deletedCount > 0)
+                                {
+                                    _logger.LogInformation("Daily maintenance: cleaned up {DeletedCount} old notices", deletedCount);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error during daily cleanup of old notices");
                             }
                         }, cancellationToken);
                     }
@@ -1110,6 +1122,72 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error broadcasting teleport request");
+            }
+        }
+
+        /// <summary>
+        /// Safely unsubscribe from all events for a specific account instance
+        /// This prevents memory leaks from accumulated event handlers
+        /// </summary>
+        private void SafeUnsubscribeFromInstance(Guid accountId, WebRadegastInstance instance)
+        {
+            try
+            {
+                // Unsubscribe from all events - this MUST match the subscription list exactly
+                instance.ChatReceived -= OnChatReceived;
+                instance.StatusChanged -= OnStatusChanged;
+                instance.ConnectionChanged -= OnConnectionChanged;
+                instance.ChatSessionUpdated -= OnChatSessionUpdated;
+                instance.AvatarAdded -= OnAvatarAdded;
+                instance.AvatarRemoved -= OnAvatarRemoved;
+                instance.AvatarUpdated -= OnAvatarUpdated;
+                instance.RegionChanged -= OnRegionChanged;
+                instance.NoticeReceived -= OnNoticeReceived;
+                instance.ScriptDialogReceived -= OnScriptDialogReceived;
+                instance.ScriptPermissionReceived -= OnScriptPermissionReceived;
+                instance.TeleportRequestReceived -= OnTeleportRequestReceived;
+
+                _logger.LogDebug("Successfully unsubscribed from all events for account {AccountId}", accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error unsubscribing from events for account {AccountId}", accountId);
+            }
+        }
+
+        /// <summary>
+        /// Clean up all event subscriptions and references when service is disposed
+        /// This is critical to prevent memory leaks
+        /// </summary>
+        public override void Dispose()
+        {
+            _isShuttingDown = true;
+            
+            try
+            {
+                // Unsubscribe from all tracked instances
+                foreach (var kvp in _instanceReferences.ToList())
+                {
+                    if (kvp.Value.TryGetTarget(out var instance))
+                    {
+                        SafeUnsubscribeFromInstance(kvp.Key, instance);
+                    }
+                }
+                
+                // Clear all tracking dictionaries
+                _subscribedInstances.Clear();
+                _lastSubscriptionTime.Clear();
+                _instanceReferences.Clear();
+                
+                _logger.LogInformation("RadegastBackgroundService disposed and cleaned up all event subscriptions");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during RadegastBackgroundService disposal");
+            }
+            finally
+            {
+                base.Dispose();
             }
         }
     }

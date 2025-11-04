@@ -1974,6 +1974,14 @@ namespace RadegastWeb.Core
                 return;
             }
 
+            // Skip processing our own messages to avoid double logging
+            // Our outgoing messages are already processed in SendChat()
+            if (e.SourceID == _client.Self.AgentID)
+            {
+                _logger.LogDebug("Skipping own chat message echo from server to avoid double logging");
+                return;
+            }
+
             string senderDisplayName;
             
             // Check if this is object chat or avatar chat
