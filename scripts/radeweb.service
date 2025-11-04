@@ -1,0 +1,43 @@
+[Unit]
+Description=RadeWeb - Second Life Web Client
+After=network.target
+
+[Service]
+Type=notify
+# Run as radeweb user instead of root
+User=radeweb
+Group=radeweb
+
+# Application settings
+WorkingDirectory=/srv/RadeWeb
+ExecStart=/usr/bin/dotnet run --project /srv/RadeWeb/RadegastWeb.csproj
+Restart=always
+RestartSec=10
+
+# Security settings
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/RadeWeb
+
+# Environment variables
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
+Environment=ASPNETCORE_URLS=http://localhost:5000
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=radeweb
+
+# Process limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Memory and CPU limits (adjust as needed)
+MemoryMax=2G
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target
