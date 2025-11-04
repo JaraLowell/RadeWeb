@@ -1383,7 +1383,39 @@ namespace RadegastWeb.Core
             _displayNameRefreshTimer?.Dispose();
             _displayNameRefreshTimer = null;
             
-            _logger.LogInformation("Completed disconnect cleanup for account {AccountId}", _accountId);
+            // CRITICAL: Call the same service cleanup as manual disconnect
+            // This prevents memory leaks on simulator restarts and network timeouts
+            try
+            {
+                // Clean up display name service resources
+                _displayNameService.CleanupAccount(Guid.Parse(_accountId));
+                
+                // Clean up notice service resources
+                _noticeService.CleanupAccount(Guid.Parse(_accountId));
+                
+                // Clean up group service resources
+                _groupService.CleanupAccount(Guid.Parse(_accountId));
+                
+                // Clean up region map cache for this account (async but don't await in event handler)
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _regionMapCacheService.CleanupAccountMapsAsync(Guid.Parse(_accountId));
+                        _logger.LogDebug("Cleaned up region map cache for disconnected account {AccountId}", _accountId);
+                    }
+                    catch (Exception cleanupEx)
+                    {
+                        _logger.LogWarning(cleanupEx, "Error cleaning up region map cache for account {AccountId}", _accountId);
+                    }
+                });
+                
+                _logger.LogInformation("Completed full disconnect cleanup for account {AccountId} (including service cleanup)", _accountId);
+            }
+            catch (Exception cleanupEx)
+            {
+                _logger.LogError(cleanupEx, "Error during service cleanup for disconnected account {AccountId}", _accountId);
+            }
         }
 
         private void Network_LoggedOut(object? sender, LoggedOutEventArgs e)
