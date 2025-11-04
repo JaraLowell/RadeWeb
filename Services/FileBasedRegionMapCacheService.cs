@@ -233,43 +233,46 @@ namespace RadegastWeb.Services
             if (_disposed)
                 return;
 
-            try
+            await Task.Run(() =>
             {
-                var accountCacheDir = GetAccountCacheDirectory(accountId);
-                if (Directory.Exists(accountCacheDir))
+                try
                 {
-                    var mapFiles = Directory.GetFiles(accountCacheDir, "region_*.jpg");
-                    foreach (var file in mapFiles)
+                    var accountCacheDir = GetAccountCacheDirectory(accountId);
+                    if (Directory.Exists(accountCacheDir))
                     {
-                        File.Delete(file);
-                    }
-                    
-                    // Remove from metadata cache
-                    var keysToRemove = _metadataCache
-                        .Where(kvp => kvp.Value.AccountId == accountId)
-                        .Select(kvp => kvp.Key)
-                        .ToList();
+                        var mapFiles = Directory.GetFiles(accountCacheDir, "region_*.jpg");
+                        foreach (var file in mapFiles)
+                        {
+                            File.Delete(file);
+                        }
                         
-                    foreach (var key in keysToRemove)
-                    {
-                        _metadataCache.TryRemove(key, out _);
+                        // Remove from metadata cache
+                        var keysToRemove = _metadataCache
+                            .Where(kvp => kvp.Value.AccountId == accountId)
+                            .Select(kvp => kvp.Key)
+                            .ToList();
+                            
+                        foreach (var key in keysToRemove)
+                        {
+                            _metadataCache.TryRemove(key, out _);
+                        }
+                        
+                        // Delete metadata file
+                        var metadataPath = Path.Combine(accountCacheDir, "map_metadata.json");
+                        if (File.Exists(metadataPath))
+                        {
+                            File.Delete(metadataPath);
+                        }
+                        
+                        _logger.LogInformation("Cleaned up {Count} map files for account {AccountId}", 
+                            mapFiles.Length, accountId);
                     }
-                    
-                    // Delete metadata file
-                    var metadataPath = Path.Combine(accountCacheDir, "map_metadata.json");
-                    if (File.Exists(metadataPath))
-                    {
-                        File.Delete(metadataPath);
-                    }
-                    
-                    _logger.LogInformation("Cleaned up {Count} map files for account {AccountId}", 
-                        mapFiles.Length, accountId);
                 }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error cleaning up maps for account {AccountId}", accountId);
-            }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error cleaning up maps for account {AccountId}", accountId);
+                }
+            });
         }
 
         public int GetCacheSize()
