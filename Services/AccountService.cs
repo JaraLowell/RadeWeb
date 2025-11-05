@@ -383,8 +383,9 @@ namespace RadegastWeb.Services
                 var dbContextFactory = _serviceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
                 var friendshipRequestService = _serviceProvider.GetRequiredService<IFriendshipRequestService>();
                 var groupInvitationService = _serviceProvider.GetRequiredService<IGroupInvitationService>();
+                var autoSitService = _serviceProvider.GetRequiredService<IAutoSitService>();
                 
-                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, _masterDisplayNameService, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService, regionMapCacheService);
+                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, _masterDisplayNameService, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService, regionMapCacheService, autoSitService);
                 
                 var loginResult = await instance.LoginAsync();
                 
@@ -562,6 +563,17 @@ namespace RadegastWeb.Services
             if (!hadInstance)
             {
                 _logger.LogWarning("Attempted to logout account {AccountId} with no active instance - performing cleanup anyway", id);
+            }
+
+            // Cancel any pending auto-sit
+            try
+            {
+                var autoSitService = _serviceProvider.GetRequiredService<IAutoSitService>();
+                autoSitService.CancelAutoSit(id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error cancelling auto-sit for account {AccountId}", id);
             }
 
             try

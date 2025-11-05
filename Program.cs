@@ -158,6 +158,9 @@ builder.Services.AddSingleton<IMasterDisplayNameService, MasterDisplayNameServic
 builder.Services.AddSingleton<IDisplayNameService>(provider => 
     new DisplayNameServiceCompatibilityAdapter(provider.GetRequiredService<IMasterDisplayNameService>()));
 
+// Auto-sit service
+builder.Services.AddSingleton<IAutoSitService, AutoSitService>();
+
 // Register as singleton first, then as hosted service
 builder.Services.AddSingleton<RadegastBackgroundService>();
 builder.Services.AddHostedService<RadegastBackgroundService>(provider => provider.GetRequiredService<RadegastBackgroundService>());

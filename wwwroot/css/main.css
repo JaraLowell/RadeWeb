@@ -391,10 +391,11 @@ a {
 
 .chat-message-time {
     flex-shrink: 0;
-    width: 3.5rem;
+    width: 4rem;
     text-align: left;
     align-self: flex-start; /* Align to top of the container */
     line-height: 1.0;
+    font-size: 0.75rem;
 }
 
 .chat-message-right {

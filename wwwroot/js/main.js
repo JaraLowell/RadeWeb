@@ -1640,6 +1640,19 @@ class RadegastWebClient {
             }
         });
 
+        // Auto-sit controls
+        document.getElementById('autoSitEnabled').addEventListener('change', (e) => {
+            this.toggleAutoSit(e.target.checked);
+        });
+
+        document.getElementById('autoSitDelay').addEventListener('change', (e) => {
+            this.updateAutoSitDelay(parseInt(e.target.value));
+        });
+
+        document.getElementById('autoSitResitBtn').addEventListener('click', () => {
+            this.resitNow();
+        });
+
         // Groups toggle button
         document.getElementById('groupsToggleBtn').addEventListener('click', () => {
             this.toggleGroupsList();
@@ -2167,6 +2180,9 @@ class RadegastWebClient {
                     await this.connection.invoke("GetChatHistory", accountId, "local-chat", 50, 0);
                     // Load recent notices for this account
                     await this.loadAccountNotices(accountId);
+                    
+                    // Load auto-sit configuration for this account
+                    await this.loadAutoSitConfig();
                     
                     // Sync presence status for the newly active account
                     if (account.isConnected) {
@@ -2733,8 +2749,8 @@ class RadegastWebClient {
         const messageDiv = document.createElement('div');
         messageDiv.className = `chat-message ${(chatMessage.chatType || 'normal').toLowerCase()} mb-2`;
         
-        // Always use SLT time - prefer sltTime from server, fallback to converting timestamp to SLT
-        const timestamp = chatMessage.sltTime || this.convertToSLT(chatMessage.timestamp);
+        // Use enhanced timestamp formatting with relative date information
+        const timestamp = this.formatChatTimestamp(chatMessage.timestamp);
         
         // Check if this is a /me command (personal thought)
         const isPersonalThought = chatMessage.message.startsWith('/me ');
@@ -3074,6 +3090,50 @@ class RadegastWebClient {
         }
     }
 
+    // Format chat timestamp with relative date information for older messages
+    formatChatTimestamp(timestamp) {
+        try {
+            const msgDate = new Date(timestamp);
+            const now = new Date();
+            
+            // Convert both to SLT for proper comparison
+            const sltOptions = { timeZone: 'America/Los_Angeles' };
+            const msgSltDate = new Date(msgDate.toLocaleString('en-US', sltOptions));
+            const nowSltDate = new Date(now.toLocaleString('en-US', sltOptions));
+            
+            // Get the start of today in SLT
+            const todayStart = new Date(nowSltDate);
+            todayStart.setHours(0, 0, 0, 0);
+            
+            // Get the start of yesterday in SLT  
+            const yesterdayStart = new Date(todayStart);
+            yesterdayStart.setDate(todayStart.getDate() - 1);
+            
+            const msgDateStart = new Date(msgSltDate);
+            msgDateStart.setHours(0, 0, 0, 0);
+            
+            // Get just the time portion
+            const timeOnly = this.convertToSLT(timestamp);
+            
+            if (msgDateStart.getTime() === todayStart.getTime()) {
+                // Today - just show time
+                return timeOnly;
+            } else if (msgDateStart.getTime() === yesterdayStart.getTime()) {
+                // Yesterday - show "yesterday" + time
+                return `yesterday<br>${timeOnly}`;
+            } else {
+                // Older - calculate days ago
+                const diffTime = todayStart.getTime() - msgDateStart.getTime();
+                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+                return `${diffDays} days ago<br>${timeOnly}`;
+            }
+        } catch (error) {
+            console.error('Error formatting chat timestamp:', error);
+            // Fallback to regular SLT time
+            return this.convertToSLT(timestamp);
+        }
+    }
+
     // New method to safely render message content that may contain SLURL links
     renderMessageContent(message) {
         // If the message contains HTML-like content (our SLURL links), render it as HTML
@@ -3155,8 +3215,8 @@ class RadegastWebClient {
         const messageDiv = document.createElement('div');
         messageDiv.className = 'chat-message mb-2';
         
-        // Always use SLT time - prefer sltTime from server, fallback to converting timestamp to SLT
-        const timestamp = message.sltTime || this.convertToSLT(message.timestamp);
+        // Use enhanced timestamp formatting with relative date information
+        const timestamp = this.formatChatTimestamp(message.timestamp);
         const senderName = this.escapeHtml(message.senderName);
         
         // Check if this is a /me command (personal thought)
@@ -3390,6 +3450,124 @@ class RadegastWebClient {
         } catch (error) {
             console.error("Error refreshing sitting status:", error);
         }
+    }
+
+    // Auto-Sit Methods
+    async loadAutoSitConfig() {
+        if (!this.currentAccountId) return;
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit`);
+            if (response.ok) {
+                const config = await response.json();
+                
+                // Update UI elements
+                document.getElementById('autoSitEnabled').checked = config.enabled || false;
+                document.getElementById('autoSitDelay').value = config.delaySeconds || 180;
+                document.getElementById('autoSitLastTarget').textContent = config.targetUuid || 'None';
+                
+                // Show/hide settings based on enabled state
+                this.toggleAutoSitSettings(config.enabled || false);
+            }
+        } catch (error) {
+            console.error("Error loading auto-sit config:", error);
+        }
+    }
+
+    async toggleAutoSit(enabled) {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit/toggle`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ enabled: enabled })
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                this.showAlert(result.message, "success");
+                this.toggleAutoSitSettings(enabled);
+            } else {
+                const error = await response.text();
+                this.showAlert("Failed to toggle auto-sit: " + error, "danger");
+                // Revert checkbox state
+                document.getElementById('autoSitEnabled').checked = !enabled;
+            }
+        } catch (error) {
+            console.error("Error toggling auto-sit:", error);
+            this.showAlert("Failed to toggle auto-sit: " + error.message, "danger");
+            // Revert checkbox state
+            document.getElementById('autoSitEnabled').checked = !enabled;
+        }
+    }
+
+    async updateAutoSitDelay(delaySeconds) {
+        if (!this.currentAccountId) return;
+
+        try {
+            // Get current config first
+            const getResponse = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit`);
+            if (!getResponse.ok) return;
+            
+            const config = await getResponse.json();
+            config.delaySeconds = delaySeconds;
+
+            // Update config
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(config)
+            });
+
+            if (response.ok) {
+                console.log("Auto-sit delay updated to", delaySeconds, "seconds");
+            }
+        } catch (error) {
+            console.error("Error updating auto-sit delay:", error);
+        }
+    }
+
+    async resitNow() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            // Get current auto-sit config
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit`);
+            if (!response.ok) {
+                this.showAlert("Failed to get auto-sit configuration", "danger");
+                return;
+            }
+            
+            const config = await response.json();
+            
+            if (!config.targetUuid) {
+                this.showAlert("No last sit target available", "warning");
+                return;
+            }
+
+            // Set the UUID in the input and sit
+            document.getElementById('objectIdInput').value = config.targetUuid;
+            await this.sitOnObject();
+        } catch (error) {
+            console.error("Error resitting:", error);
+            this.showAlert("Failed to resit: " + error.message, "danger");
+        }
+    }
+
+    toggleAutoSitSettings(show) {
+        const settings = document.getElementById('autoSitSettings');
+        settings.style.display = show ? 'block' : 'none';
     }
 
     updateSittingStatus(status) {
@@ -4183,6 +4361,47 @@ class RadegastWebClient {
         
         console.log('Testing friendship request:', testRequest);
         this.handleInteractiveFriendshipRequestReceived(testRequest);
+    }
+    
+    // Test function for new timestamp formatting (can be called from browser console)
+    testTimestampFormatting() {
+        const now = new Date();
+        
+        // Create test timestamps for different scenarios
+        const timestamps = [
+            { 
+                name: 'Now (today)', 
+                timestamp: now 
+            },
+            { 
+                name: 'Earlier today', 
+                timestamp: new Date(now.getTime() - (3 * 60 * 60 * 1000)) // 3 hours ago
+            },
+            { 
+                name: 'Yesterday', 
+                timestamp: new Date(now.getTime() - (25 * 60 * 60 * 1000)) // 25 hours ago
+            },
+            { 
+                name: '2 days ago', 
+                timestamp: new Date(now.getTime() - (2 * 24 * 60 * 60 * 1000))
+            },
+            { 
+                name: '5 days ago', 
+                timestamp: new Date(now.getTime() - (5 * 24 * 60 * 60 * 1000))
+            }
+        ];
+        
+        console.log('Testing timestamp formatting:');
+        timestamps.forEach(test => {
+            const formatted = this.formatChatTimestamp(test.timestamp.toISOString());
+            console.log(`${test.name}: "${formatted}"`);
+        });
+        
+        return timestamps.map(test => ({
+            scenario: test.name,
+            original: test.timestamp.toISOString(),
+            formatted: this.formatChatTimestamp(test.timestamp.toISOString())
+        }));
     }
 
     testGroupInvitation() {

@@ -32,6 +32,7 @@ namespace RadegastWeb.Core
         private readonly IFriendshipRequestService _friendshipRequestService;
         private readonly IGroupInvitationService _groupInvitationService;
         private readonly IRegionMapCacheService _regionMapCacheService;
+        private readonly IAutoSitService _autoSitService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -79,7 +80,7 @@ namespace RadegastWeb.Core
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService, IRegionMapCacheService regionMapCacheService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService, IRegionMapCacheService regionMapCacheService, IAutoSitService autoSitService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -103,6 +104,7 @@ namespace RadegastWeb.Core
             _friendshipRequestService = friendshipRequestService;
             _groupInvitationService = groupInvitationService;
             _regionMapCacheService = regionMapCacheService;
+            _autoSitService = autoSitService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -343,6 +345,20 @@ namespace RadegastWeb.Core
                     
                     UpdateStatus("Connected");
                     ConnectionChanged?.Invoke(this, true);
+                    
+                    // Schedule auto-sit if enabled
+                    _ = Task.Run(async () => 
+                    {
+                        try
+                        {
+                            await _autoSitService.ScheduleAutoSitAsync(Guid.Parse(_accountId), this);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Error scheduling auto-sit for account {AccountId}", _accountId);
+                        }
+                    });
+                    
                     return true;
                 }
                 else
@@ -3112,6 +3128,19 @@ namespace RadegastWeb.Core
                         _client.Self.RequestSit(target, Vector3.Zero);
                         _client.Self.Sit();
                         _logger.LogInformation("Requested to sit on object {ObjectId} for account {AccountId}", target, _accountId);
+                        
+                        // Track the sit target for auto-sit functionality
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await _autoSitService.UpdateLastSitTargetAsync(Guid.Parse(_accountId), target.ToString());
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Error updating last sit target for account {AccountId}", _accountId);
+                            }
+                        });
                     }
                 }
                 else

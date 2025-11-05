@@ -566,5 +566,75 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, "Internal server error");
             }
         }
+
+        /// <summary>
+        /// Get auto-sit configuration for account
+        /// </summary>
+        [HttpGet("{id}/auto-sit")]
+        public async Task<ActionResult<AutoSitConfig>> GetAutoSitConfig(Guid id)
+        {
+            try
+            {
+                var autoSitService = HttpContext.RequestServices.GetRequiredService<IAutoSitService>();
+                var config = await autoSitService.GetAutoSitConfigAsync(id);
+                
+                if (config == null)
+                {
+                    return Ok(new AutoSitConfig()); // Return default config
+                }
+                
+                return Ok(config);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting auto-sit config for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Update auto-sit configuration for account
+        /// </summary>
+        [HttpPut("{id}/auto-sit")]
+        public async Task<IActionResult> UpdateAutoSitConfig(Guid id, [FromBody] AutoSitConfig config)
+        {
+            try
+            {
+                var autoSitService = HttpContext.RequestServices.GetRequiredService<IAutoSitService>();
+                await autoSitService.SaveAutoSitConfigAsync(id, config);
+                
+                return Ok(new { message = "Auto-sit configuration updated successfully" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating auto-sit config for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Enable or disable auto-sit for account
+        /// </summary>
+        [HttpPost("{id}/auto-sit/toggle")]
+        public async Task<IActionResult> ToggleAutoSit(Guid id, [FromBody] ToggleAutoSitRequest request)
+        {
+            try
+            {
+                var autoSitService = HttpContext.RequestServices.GetRequiredService<IAutoSitService>();
+                await autoSitService.SetAutoSitEnabledAsync(id, request.Enabled);
+                
+                return Ok(new { message = $"Auto-sit {(request.Enabled ? "enabled" : "disabled")} successfully", enabled = request.Enabled });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error toggling auto-sit for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+    }
+
+    public class ToggleAutoSitRequest
+    {
+        public bool Enabled { get; set; }
     }
 }
