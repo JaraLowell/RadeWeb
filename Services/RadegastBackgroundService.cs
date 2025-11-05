@@ -24,6 +24,11 @@ namespace RadegastWeb.Services
         private readonly ConcurrentDictionary<Guid, DateTime> _lastSubscriptionTime = new();
         private readonly ConcurrentDictionary<Guid, WeakReference<WebRadegastInstance>> _instanceReferences = new();
         private readonly object _subscriptionLock = new();
+        
+        // Avatar update debouncing to prevent rapid-fire broadcasts
+        private readonly ConcurrentDictionary<Guid, DateTime> _lastAvatarUpdateBroadcast = new();
+        private readonly ConcurrentDictionary<Guid, Timer> _avatarUpdateTimers = new();
+        private readonly TimeSpan _avatarUpdateDebounceInterval = TimeSpan.FromMilliseconds(500); // 500ms debounce
 
         public RadegastBackgroundService(
             IServiceProvider serviceProvider,
@@ -562,17 +567,68 @@ namespace RadegastWeb.Services
                 if (sender is not Core.WebRadegastInstance instance || _isShuttingDown)
                     return;
 
-                // Broadcast the individual avatar update (more efficient than full list)
-                await _hubContext.Clients
-                    .Group($"account_{instance.AccountId}")
-                    .AvatarUpdated(avatar);
+                var accountId = Guid.Parse(instance.AccountId);
+                var now = DateTime.UtcNow;
 
+                // Check if we recently broadcasted for this account
+                var lastBroadcast = _lastAvatarUpdateBroadcast.GetValueOrDefault(accountId, DateTime.MinValue);
+                var timeSinceLastBroadcast = now - lastBroadcast;
+
+                // If we're within the debounce interval, set up a timer to broadcast later
+                if (timeSinceLastBroadcast < _avatarUpdateDebounceInterval)
+                {
+                    // Cancel any existing timer for this account
+                    if (_avatarUpdateTimers.TryRemove(accountId, out var existingTimer))
+                    {
+                        existingTimer.Dispose();
+                    }
+
+                    // Create a new timer to broadcast after the debounce interval
+                    var debounceTimer = new Timer(async _ =>
+                    {
+                        try
+                        {
+                            await BroadcastSingleAvatarUpdate(instance, avatar);
+                            _avatarUpdateTimers.TryRemove(accountId, out var timer);
+                            timer?.Dispose();
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error in debounced avatar update broadcast for account {AccountId}", accountId);
+                        }
+                    }, null, _avatarUpdateDebounceInterval, Timeout.InfiniteTimeSpan);
+
+                    _avatarUpdateTimers.TryAdd(accountId, debounceTimer);
+                    
+                    _logger.LogDebug("Avatar update for account {AccountId} debounced (last broadcast: {TimeSince}ms ago)", 
+                        accountId, timeSinceLastBroadcast.TotalMilliseconds);
+                    return;
+                }
+
+                // Broadcast immediately if enough time has passed
+                await BroadcastSingleAvatarUpdate(instance, avatar);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error broadcasting avatar update for account {AccountId}", 
                     sender is Core.WebRadegastInstance inst ? inst.AccountId : "unknown");
             }
+        }
+
+        private async Task BroadcastSingleAvatarUpdate(Core.WebRadegastInstance instance, AvatarDto avatar)
+        {
+            var accountId = Guid.Parse(instance.AccountId);
+            
+            // Update the last broadcast time
+            _lastAvatarUpdateBroadcast.AddOrUpdate(accountId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
+
+            // Broadcast the individual avatar update (more efficient than full list)
+            await _hubContext.Clients
+                .Group($"account_{instance.AccountId}")
+                .AvatarUpdated(avatar);
+
+            _logger.LogDebug("Broadcasted single avatar update for account {AccountId}: {AvatarName}", 
+                accountId, avatar.Name);
         }
 
         private async void OnAvatarRemoved(object? sender, string avatarId)
@@ -1211,10 +1267,18 @@ namespace RadegastWeb.Services
                     }
                 }
                 
+                // Dispose and clear avatar update timers
+                foreach (var timer in _avatarUpdateTimers.Values)
+                {
+                    timer?.Dispose();
+                }
+                _avatarUpdateTimers.Clear();
+
                 // Clear all tracking dictionaries
                 _subscribedInstances.Clear();
                 _lastSubscriptionTime.Clear();
                 _instanceReferences.Clear();
+                _lastAvatarUpdateBroadcast.Clear();
                 
                 _logger.LogInformation("RadegastBackgroundService disposed and cleaned up all event subscriptions");
             }
