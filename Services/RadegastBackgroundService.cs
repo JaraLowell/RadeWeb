@@ -719,6 +719,7 @@ namespace RadegastWeb.Services
 
         /// <summary>
         /// Checks for day boundary transitions and triggers bulk avatar recording when a new day starts
+        /// OPTIMIZED: Now includes memory pressure monitoring and GC management during maintenance
         /// </summary>
         private async Task CheckDayBoundaryAsync(CancellationToken cancellationToken)
         {
@@ -732,54 +733,102 @@ namespace RadegastWeb.Services
                 // Check if we've crossed into a new SLT day
                 if (currentSLTDay > _lastDayCheck)
                 {
-                    _logger.LogInformation("SLT day boundary detected: {PreviousDay} -> {CurrentDay} (SLT), triggering bulk avatar recording", 
-                        _lastDayCheck, currentSLTDay);
+                    // Log memory usage before maintenance
+                    var memoryBefore = GC.GetTotalMemory(false);
+                    _logger.LogInformation("SLT day boundary detected: {PreviousDay} -> {CurrentDay} (SLT), triggering maintenance. Memory before: {MemoryMB}MB", 
+                        _lastDayCheck, currentSLTDay, memoryBefore / (1024 * 1024));
                     
                     _lastDayCheck = currentSLTDay;
                     
                     // Trigger bulk recording across all connected accounts
                     await TriggerPeriodicAvatarRecordingAsync(cancellationToken);
                     
+                    // Pause briefly to let bulk recording settle and allow GC to clean up temporary objects
+                    await Task.Delay(2000, cancellationToken);
+                    
                     // Also trigger cleanup of old records (daily maintenance)
                     using var scope = _serviceProvider.CreateScope();
                     var statsService = scope.ServiceProvider.GetService<IStatsService>();
                     var noticeService = scope.ServiceProvider.GetService<INoticeService>();
                     
+                    var maintenanceTasks = new List<Task>();
+                    
                     // Clean up old visitor records (keep last 90 days)
                     if (statsService != null)
                     {
-                        _ = Task.Run(async () =>
+                        maintenanceTasks.Add(Task.Run(async () =>
                         {
                             try
                             {
+                                _logger.LogInformation("Starting daily cleanup of old visitor records");
                                 await statsService.CleanupOldRecordsAsync(90);
+                                
+                                // Force garbage collection after database cleanup to free up memory
+                                var memoryAfterStats = GC.GetTotalMemory(false);
+                                GC.Collect(2, GCCollectionMode.Optimized, true);
+                                GC.WaitForPendingFinalizers();
+                                var memoryAfterGC = GC.GetTotalMemory(true);
+                                
+                                _logger.LogInformation("Stats cleanup completed. Memory before GC: {BeforeMB}MB, after GC: {AfterMB}MB", 
+                                    memoryAfterStats / (1024 * 1024), memoryAfterGC / (1024 * 1024));
                             }
                             catch (Exception ex)
                             {
                                 _logger.LogError(ex, "Error during daily cleanup of old visitor records");
                             }
-                        }, cancellationToken);
+                        }, cancellationToken));
                     }
                     
                     // Clean up old notices (keep last 7 days)
                     if (noticeService != null)
                     {
-                        _ = Task.Run(async () =>
+                        maintenanceTasks.Add(Task.Run(async () =>
                         {
                             try
                             {
+                                _logger.LogInformation("Starting daily cleanup of old notices");
                                 var deletedCount = await noticeService.CleanupOldNoticesAsync(7);
                                 if (deletedCount > 0)
                                 {
                                     _logger.LogInformation("Daily maintenance: cleaned up {DeletedCount} old notices", deletedCount);
+                                    
+                                    // Force garbage collection after notice cleanup if significant deletions
+                                    if (deletedCount > 100)
+                                    {
+                                        GC.Collect(1, GCCollectionMode.Optimized, true);
+                                        _logger.LogDebug("Triggered GC after deleting {Count} notices", deletedCount);
+                                    }
                                 }
                             }
                             catch (Exception ex)
                             {
                                 _logger.LogError(ex, "Error during daily cleanup of old notices");
                             }
-                        }, cancellationToken);
+                        }, cancellationToken));
                     }
+                    
+                    // Wait for all maintenance tasks to complete with timeout
+                    try
+                    {
+                        await Task.WhenAll(maintenanceTasks).WaitAsync(TimeSpan.FromMinutes(5), cancellationToken);
+                    }
+                    catch (TimeoutException)
+                    {
+                        _logger.LogWarning("Daily maintenance tasks timed out after 5 minutes");
+                    }
+                    
+                    // Final comprehensive memory cleanup and reporting
+                    var memoryAfterMaintenance = GC.GetTotalMemory(false);
+                    GC.Collect(2, GCCollectionMode.Aggressive, true);
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect(2, GCCollectionMode.Aggressive, true); // Second pass to clean up finalizers
+                    var finalMemory = GC.GetTotalMemory(true);
+                    
+                    _logger.LogInformation("Daily maintenance completed. Memory: Before={BeforeMB}MB, After={AfterMB}MB, Final={FinalMB}MB, Saved={SavedMB}MB", 
+                        memoryBefore / (1024 * 1024), 
+                        memoryAfterMaintenance / (1024 * 1024),
+                        finalMemory / (1024 * 1024),
+                        (memoryBefore - finalMemory) / (1024 * 1024));
                 }
             }
             catch (Exception ex)

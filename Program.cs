@@ -12,12 +12,21 @@ var builder = WebApplication.CreateBuilder(args);
 // Configure URLs - allow binding to all interfaces
 builder.WebHost.UseUrls("http://*:15269", "https://*:15277");
 
-// Configure Serilog with additional filters
+// Configure Serilog with memory-efficient settings and proper file handling
 builder.Host.UseSerilog((context, configuration) =>
 {
     configuration
-        .WriteTo.Console()
-        .WriteTo.File("logs/radegast-web-.log", rollingInterval: RollingInterval.Day)
+        .WriteTo.Console(
+            outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
+        .WriteTo.File("logs/radegast-web-.log", 
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 30, // Keep only 30 days of logs
+            fileSizeLimitBytes: 100_000_000, // 100MB per file
+            rollOnFileSizeLimit: true,
+            shared: true, // Allow multiple processes to write
+            flushToDiskInterval: TimeSpan.FromSeconds(5), // Regular flushes to prevent memory buildup
+            buffered: false, // Disable buffering to reduce memory usage during rollover
+            outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
         .ReadFrom.Configuration(context.Configuration)
         .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
         .MinimumLevel.Override("Microsoft.Extensions.Hosting", Serilog.Events.LogEventLevel.Warning)

@@ -3413,6 +3413,7 @@ namespace RadegastWeb.Core
         /// <summary>
         /// Records all currently present avatars for visitor statistics
         /// This is useful for day boundary transitions to ensure existing avatars are counted
+        /// OPTIMIZED: Now uses batching and memory-efficient processing to prevent midnight memory spikes
         /// </summary>
         public async Task RecordAllPresentAvatarsAsync()
         {
@@ -3423,15 +3424,13 @@ namespace RadegastWeb.Core
             var regionName = _client.Network.CurrentSim.Name;
             var simHandle = _client.Network.CurrentSim.Handle;
             
-            // FIXED: Always record present avatars regardless of other accounts in the same region
-            // The StatsService already handles deduplication through its cooldown mechanism
-            // Multiple accounts in the same region should all contribute to ensure complete coverage
-            
             var recordedCount = 0;
+            const int batchSize = 10; // Process in small batches to prevent memory spikes
+            const int delayBetweenBatches = 50; // Small delay between batches to reduce pressure
 
-            // FIXED: First, record our own avatar as present
             try
             {
+                // First, record our own avatar as present
                 await RecordOwnAvatarAsync();
                 recordedCount++;
                 _logger.LogDebug("Recorded own avatar in bulk recording for region {Region}", regionName);
@@ -3441,52 +3440,115 @@ namespace RadegastWeb.Core
                 _logger.LogDebug(ex, "Error recording own avatar in bulk recording");
             }
 
-            // Record all detailed avatars
+            // Collect all avatars to process (detailed + coarse, avoiding duplicates)
+            var avatarsToProcess = new List<(UUID Id, string Name, bool IsDetailed)>();
+            
+            // Add detailed avatars
             foreach (var kvp in _nearbyAvatars)
             {
-                try
-                {
-                    var avatarId = kvp.Key.ToString();
-                    var avatarName = kvp.Value.Name;
-                    var displayName = await _globalDisplayNameCache.GetCachedDisplayNameAsync(avatarId);
-                    var finalDisplayName = displayName?.DisplayNameValue ?? avatarName;
-
-                    await _statsService.RecordVisitorAsync(avatarId, regionName, simHandle, avatarName, finalDisplayName);
-                    recordedCount++;
-                }
-                catch (Exception ex)
-                {
-                    // Reduced log level to avoid spam during bulk operations
-                    _logger.LogTrace(ex, "Error recording present detailed avatar {AvatarId} during bulk recording", kvp.Key);
-                }
+                avatarsToProcess.Add((kvp.Key, kvp.Value.Name, true));
             }
 
-            // Record all coarse location avatars that aren't already in detailed list
+            // Add coarse location avatars that aren't already in detailed list
             foreach (var kvp in _coarseLocationAvatars)
             {
-                if (_nearbyAvatars.ContainsKey(kvp.Key))
-                    continue; // Already recorded above
+                if (!_nearbyAvatars.ContainsKey(kvp.Key))
+                {
+                    var fallbackName = $"Avatar {kvp.Key.ToString().Substring(0, 8)}...";
+                    avatarsToProcess.Add((kvp.Key, fallbackName, false));
+                }
+            }
 
+            // Pre-fetch display names in batches to reduce individual cache hits
+            var avatarIds = avatarsToProcess.Select(a => a.Id.ToString()).ToList();
+            var displayNameCache = new Dictionary<string, string>();
+            
+            for (int i = 0; i < avatarIds.Count; i += batchSize)
+            {
+                var batch = avatarIds.Skip(i).Take(batchSize).ToList();
+                
+                // Fetch display names concurrently for this batch
+                var displayNameTasks = batch.Select(async avatarId =>
+                {
+                    try
+                    {
+                        var displayName = await _globalDisplayNameCache.GetCachedDisplayNameAsync(avatarId);
+                        return new KeyValuePair<string, string>(avatarId, displayName?.DisplayNameValue ?? "");
+                    }
+                    catch
+                    {
+                        return new KeyValuePair<string, string>(avatarId, "");
+                    }
+                });
+                
+                var results = await Task.WhenAll(displayNameTasks);
+                foreach (var result in results)
+                {
+                    if (!string.IsNullOrEmpty(result.Value))
+                        displayNameCache[result.Key] = result.Value;
+                }
+                
+                // Small delay to prevent overwhelming the cache
+                if (i + batchSize < avatarIds.Count)
+                    await Task.Delay(delayBetweenBatches);
+            }
+
+            // Process visitor recording in batches using batch API for better performance
+            for (int i = 0; i < avatarsToProcess.Count; i += batchSize)
+            {
+                var batch = avatarsToProcess.Skip(i).Take(batchSize).ToList();
+                
+                // Prepare batch data
+                var batchData = batch.Select(avatar =>
+                {
+                    var avatarId = avatar.Id.ToString();
+                    var avatarName = avatar.Name;
+                    
+                    // Use pre-fetched display name or fallback to avatar name
+                    var finalDisplayName = displayNameCache.TryGetValue(avatarId, out var cachedName) && !string.IsNullOrEmpty(cachedName)
+                        ? cachedName
+                        : avatarName;
+
+                    return (AvatarId: avatarId, RegionName: regionName, SimHandle: simHandle, AvatarName: (string?)avatarName, DisplayName: (string?)finalDisplayName);
+                }).ToList();
+                
                 try
                 {
-                    var avatarId = kvp.Key.ToString();
-                    var avatarName = $"Avatar {avatarId.Substring(0, 8)}..."; // Fallback name
-                    var displayName = await _globalDisplayNameCache.GetCachedDisplayNameAsync(avatarId);
-                    var finalDisplayName = displayName?.DisplayNameValue ?? avatarName;
-
-                    await _statsService.RecordVisitorAsync(avatarId, regionName, simHandle, avatarName, finalDisplayName);
-                    recordedCount++;
+                    // Use batch recording for better database performance
+                    await _statsService.RecordVisitorBatchAsync(batchData);
+                    recordedCount += batchData.Count;
                 }
                 catch (Exception ex)
                 {
-                    // Reduced log level to avoid spam during bulk operations
-                    _logger.LogTrace(ex, "Error recording present coarse avatar {AvatarId} during bulk recording", kvp.Key);
+                    _logger.LogWarning(ex, "Error in batch recording {Count} avatars, falling back to individual recording", batchData.Count);
+                    
+                    // Fallback to individual recording if batch fails
+                    foreach (var item in batchData)
+                    {
+                        try
+                        {
+                            await _statsService.RecordVisitorAsync(item.AvatarId, item.RegionName, item.SimHandle, item.AvatarName, item.DisplayName);
+                            recordedCount++;
+                        }
+                        catch (Exception individualEx)
+                        {
+                            _logger.LogTrace(individualEx, "Error recording present avatar {AvatarId} during fallback recording", item.AvatarId);
+                        }
+                    }
                 }
+                
+                // Small delay between batches to reduce memory pressure
+                if (i + batchSize < avatarsToProcess.Count)
+                    await Task.Delay(delayBetweenBatches);
             }
+
+            // Clear temporary collections to help GC
+            avatarsToProcess.Clear();
+            displayNameCache.Clear();
 
             if (recordedCount > 0)
             {
-                _logger.LogDebug("Recorded {Count} present avatars for visitor statistics in {Region}", recordedCount, regionName);
+                _logger.LogDebug("Recorded {Count} present avatars for visitor statistics in {Region} using batched processing", recordedCount, regionName);
             }
         }
 

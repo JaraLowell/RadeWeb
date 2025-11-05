@@ -16,6 +16,11 @@ namespace RadegastWeb.Services
         /// </summary>
         Task RecordVisitorAsync(string avatarId, string regionName, ulong simHandle, 
             string? avatarName = null, string? displayName = null);
+            
+        /// <summary>
+        /// Record multiple visitors in a single batch operation for improved performance
+        /// </summary>
+        Task RecordVisitorBatchAsync(IEnumerable<(string AvatarId, string RegionName, ulong SimHandle, string? AvatarName, string? DisplayName)> visitors);
         
         /// <summary>
         /// Get daily visitor statistics for a region over a date range
@@ -101,6 +106,16 @@ namespace RadegastWeb.Services
             _globalDisplayNameCache = globalDisplayNameCache;
             _sltTimeService = sltTimeService;
         }
+
+        /// <summary>
+        /// Configure database context for memory-efficient bulk operations
+        /// </summary>
+        private static void ConfigureContextForBulkOperations(RadegastDbContext context)
+        {
+            // Disable change tracking for better performance during bulk operations
+            context.ChangeTracker.AutoDetectChangesEnabled = false;
+            context.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+        }
         
         public void SetAccountRegion(Guid accountId, string regionName, ulong simHandle)
         {
@@ -159,9 +174,11 @@ namespace RadegastWeb.Services
                     try
                     {
                         using var context = _dbContextFactory.CreateDbContext();
+                        ConfigureContextForBulkOperations(context);
                         
                         // Try to find existing record for this avatar/region/date
                         var existingRecord = await context.VisitorStats
+                            .AsTracking() // Only track this specific record
                             .FirstOrDefaultAsync(vs => vs.AvatarId == avatarId && 
                                 vs.RegionName == regionName && 
                                 vs.VisitDate == today);
@@ -233,6 +250,9 @@ namespace RadegastWeb.Services
                         
                         await context.SaveChangesAsync();
                         
+                        // Clear change tracker to free memory immediately
+                        context.ChangeTracker.Clear();
+                        
                         // Success - break out of retry loop
                         break;
                     }
@@ -249,7 +269,9 @@ namespace RadegastWeb.Services
                                 avatarId, regionName, today);
                             
                             using var contextRetry = _dbContextFactory.CreateDbContext();
+                            ConfigureContextForBulkOperations(contextRetry);
                             var existingRecord = await contextRetry.VisitorStats
+                                .AsTracking() // Only track this specific record
                                 .FirstOrDefaultAsync(vs => vs.AvatarId == avatarId && 
                                     vs.RegionName == regionName && 
                                     vs.VisitDate == today);
@@ -281,6 +303,7 @@ namespace RadegastWeb.Services
                                 }
                                 
                                 await contextRetry.SaveChangesAsync();
+                                contextRetry.ChangeTracker.Clear();
                                 _logger.LogDebug("Successfully updated existing record for visitor {AvatarId} in {RegionName} after constraint violation", 
                                     avatarId, regionName);
                             }
@@ -620,6 +643,113 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error cleaning up old visitor records");
+            }
+        }
+
+        /// <summary>
+        /// Records multiple visitors in a single batch operation for improved performance during bulk operations
+        /// </summary>
+        public async Task RecordVisitorBatchAsync(IEnumerable<(string AvatarId, string RegionName, ulong SimHandle, string? AvatarName, string? DisplayName)> visitors)
+        {
+            if (visitors == null || !visitors.Any())
+                return;
+
+            var visitorList = visitors.ToList();
+            var sltNow = _sltTimeService.GetCurrentSLT();
+            var today = sltNow.Date;
+            var now = DateTime.UtcNow;
+
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                
+                // Group visitors by unique key to handle duplicates
+                var groupedVisitors = visitorList
+                    .GroupBy(v => $"{v.AvatarId}:{v.RegionName}:{today:yyyy-MM-dd}")
+                    .Select(g => g.First()) // Take first of each group
+                    .ToList();
+
+                // Batch fetch existing records
+                var avatarIds = groupedVisitors.Select(v => v.AvatarId).ToList();
+                var regionNames = groupedVisitors.Select(v => v.RegionName).Distinct().ToList();
+                
+                var existingRecords = await context.VisitorStats
+                    .Where(vs => avatarIds.Contains(vs.AvatarId) && 
+                                regionNames.Contains(vs.RegionName) && 
+                                vs.VisitDate == today)
+                    .ToDictionaryAsync(vs => $"{vs.AvatarId}:{vs.RegionName}:{vs.VisitDate:yyyy-MM-dd}");
+
+                var recordsToAdd = new List<VisitorStats>();
+                var recordsToUpdate = new List<VisitorStats>();
+
+                foreach (var visitor in groupedVisitors)
+                {
+                    var key = $"{visitor.AvatarId}:{visitor.RegionName}:{today:yyyy-MM-dd}";
+                    var regionX = (uint)(visitor.SimHandle >> 32);
+                    var regionY = (uint)(visitor.SimHandle & 0xFFFFFFFF);
+
+                    if (existingRecords.TryGetValue(key, out var existing))
+                    {
+                        // Update existing record
+                        existing.LastSeenAt = now;
+                        
+                        // Update names if we have better ones
+                        if (!string.IsNullOrEmpty(visitor.AvatarName) && 
+                            visitor.AvatarName != "Unknown User" && 
+                            visitor.AvatarName != "Loading..." &&
+                            (string.IsNullOrEmpty(existing.AvatarName) || 
+                             existing.AvatarName == "Unknown User" ||
+                             existing.AvatarName == "Loading..."))
+                        {
+                            existing.AvatarName = visitor.AvatarName;
+                        }
+                        
+                        if (!string.IsNullOrEmpty(visitor.DisplayName) && 
+                            visitor.DisplayName != "Loading..." &&
+                            visitor.DisplayName != "???" &&
+                            (string.IsNullOrEmpty(existing.DisplayName) || 
+                             existing.DisplayName == "Loading..." ||
+                             existing.DisplayName == "???"))
+                        {
+                            existing.DisplayName = visitor.DisplayName;
+                        }
+                        
+                        recordsToUpdate.Add(existing);
+                    }
+                    else
+                    {
+                        // Add new record
+                        var newRecord = new VisitorStats
+                        {
+                            AvatarId = visitor.AvatarId,
+                            RegionName = visitor.RegionName,
+                            SimHandle = visitor.SimHandle,
+                            VisitDate = today,
+                            FirstSeenAt = now,
+                            LastSeenAt = now,
+                            AvatarName = visitor.AvatarName,
+                            DisplayName = visitor.DisplayName,
+                            RegionX = regionX,
+                            RegionY = regionY
+                        };
+                        
+                        recordsToAdd.Add(newRecord);
+                    }
+                }
+
+                if (recordsToAdd.Count > 0)
+                {
+                    context.VisitorStats.AddRange(recordsToAdd);
+                }
+
+                await context.SaveChangesAsync();
+                
+                _logger.LogDebug("Batch processed {TotalCount} visitors: {AddedCount} new, {UpdatedCount} updated", 
+                    groupedVisitors.Count, recordsToAdd.Count, recordsToUpdate.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in batch visitor recording for {Count} visitors", visitorList.Count);
             }
         }
         
