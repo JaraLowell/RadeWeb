@@ -337,6 +337,9 @@ namespace RadegastWeb.Controllers
         {
             try
             {
+                // MEMORY FIX: Limit dashboard query complexity to prevent memory issues
+                days = Math.Min(days, 90); // Cap at 90 days maximum
+                
                 // Get current SLT date and calculate date ranges in SLT
                 var currentSLT = _sltTimeService.GetCurrentSLT().Date;
                 var endDate = currentSLT;
@@ -351,14 +354,15 @@ namespace RadegastWeb.Controllers
                 var utcStartDate7 = TimeZoneInfo.ConvertTimeToUtc(startDate7, sltTimeZone);
                 var utcStartDateToday = TimeZoneInfo.ConvertTimeToUtc(startDateToday, sltTimeZone);
 
-                // Get stats for different time periods
-                List<VisitorStatsSummaryDto> stats30Days;
-                List<VisitorStatsSummaryDto> stats7Days;
-                List<VisitorStatsSummaryDto> statsToday;
+                // MEMORY FIX: Get stats for different time periods with explicit disposal
+                List<VisitorStatsSummaryDto> stats30Days = null!;
+                List<VisitorStatsSummaryDto> stats7Days = null!;
+                List<VisitorStatsSummaryDto> statsToday = null!;
+                List<UniqueVisitorDto> recentVisitors = null!;
 
                 if (!string.IsNullOrEmpty(region))
                 {
-                    // Get stats for specific region
+                    // Get stats for specific region (more efficient)
                     var regionStats30 = await _statsService.GetRegionStatsAsync(region, utcStartDate30, utcEndDate);
                     var regionStats7 = await _statsService.GetRegionStatsAsync(region, utcStartDate7, utcEndDate);
                     var regionStatsToday = await _statsService.GetRegionStatsAsync(region, utcStartDateToday, utcEndDate);
@@ -369,14 +373,19 @@ namespace RadegastWeb.Controllers
                 }
                 else
                 {
-                    // Get stats for all regions
+                    // MEMORY FIX: Execute these sequentially to reduce memory pressure
                     stats30Days = await _statsService.GetAllRegionStatsAsync(utcStartDate30, utcEndDate);
+                    GC.Collect(0, GCCollectionMode.Optimized); // Force cleanup between operations
+                    
                     stats7Days = await _statsService.GetAllRegionStatsAsync(utcStartDate7, utcEndDate);
+                    GC.Collect(0, GCCollectionMode.Optimized);
+                    
                     statsToday = await _statsService.GetAllRegionStatsAsync(utcStartDateToday, utcEndDate);
+                    GC.Collect(0, GCCollectionMode.Optimized);
                 }
 
-                // Get recent visitors for the past 7 days (for Recent Visitors section)
-                var recentVisitors = await _statsService.GetUniqueVisitorsAsync(utcStartDate7, utcEndDate, region);
+                // MEMORY FIX: Get recent visitors with limited scope
+                recentVisitors = await _statsService.GetUniqueVisitorsAsync(utcStartDate7, utcEndDate, region);
 
                 var totalVisitors30Days = stats30Days.Sum(s => s.TotalUniqueVisitors);
                 var totalVisitors7Days = stats7Days.Sum(s => s.TotalUniqueVisitors);

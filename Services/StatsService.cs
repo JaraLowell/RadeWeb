@@ -478,6 +478,9 @@ namespace RadegastWeb.Services
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
+                // Configure context for memory efficiency
+                ConfigureContextForBulkOperations(context);
+                
                 // Convert UTC input dates to SLT for database querying
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
                 var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
@@ -487,6 +490,7 @@ namespace RadegastWeb.Services
                     .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate)
                     .Select(vs => vs.RegionName)
                     .Distinct()
+                    .Take(50) // Limit to prevent excessive memory usage
                     .ToListAsync();
                 
                 var results = new List<VisitorStatsSummaryDto>();
@@ -494,7 +498,16 @@ namespace RadegastWeb.Services
                 {
                     var regionStats = await GetRegionStatsAsync(region, startDate, endDate);
                     results.Add(regionStats);
+                    
+                    // Force garbage collection of intermediate objects
+                    if (results.Count % 10 == 0)
+                    {
+                        GC.Collect(0, GCCollectionMode.Optimized);
+                    }
                 }
+                
+                // Clear context to release memory immediately
+                context.ChangeTracker.Clear();
                 
                 return results.OrderBy(r => r.RegionName).ToList();
             }
@@ -511,6 +524,9 @@ namespace RadegastWeb.Services
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
+                // Configure context for memory efficiency
+                ConfigureContextForBulkOperations(context);
+                
                 // Convert UTC input dates to SLT for database querying
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
                 var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
@@ -524,73 +540,88 @@ namespace RadegastWeb.Services
                     query = query.Where(vs => vs.RegionName == regionName);
                 }
                 
-                // Get ALL historical data before the start date to determine truly new vs returning visitors
-                // For "true unique" determination, we look back 60 days from the start date
+                // MEMORY FIX: Limit historical data lookup to prevent massive memory allocation
+                // For "true unique" determination, we look back 60 days from the start date but limit results
                 var trueUniqueThresholdDate = sltStartDate.AddDays(-60);
                 var historicalVisitors = await context.VisitorStats
                     .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
                         vs.VisitDate < trueUniqueThresholdDate)
                     .Select(vs => vs.AvatarId)
                     .Distinct()
+                    .Take(10000) // Limit to prevent excessive memory usage
                     .ToListAsync();
                 
                 var historicalVisitorSet = new HashSet<string>(historicalVisitors);
                 
-                // Get all visitor stats and process in memory to avoid SQLite limitations
-                var allVisitorStats = await query.ToListAsync();
-                
-                // Get historical data to determine visitor types (look back from start date for visitor classification)
-                var historicalData = await context.VisitorStats
-                    .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
-                        vs.VisitDate < sltStartDate)
+                // MEMORY FIX: Limit current period data and add pagination
+                var allVisitorStats = await query
+                    .OrderByDescending(vs => vs.LastSeenAt)
+                    .Take(5000) // Limit to most recent 5000 records to prevent memory issues
                     .ToListAsync();
                 
+                // MEMORY FIX: Limit historical data for visitor classification
+                var historicalData = await context.VisitorStats
+                    .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
+                        vs.VisitDate < sltStartDate && vs.VisitDate >= sltStartDate.AddDays(-90)) // Only look back 90 days max
+                    .OrderByDescending(vs => vs.VisitDate)
+                    .Take(5000) // Limit historical data
+                    .ToListAsync();
+                
+                // MEMORY FIX: Use more efficient dictionary creation and limit size
                 var lastVisitDates = historicalData
                     .GroupBy(vs => vs.AvatarId)
+                    .Take(2000) // Limit to prevent excessive memory usage
                     .ToDictionary(g => g.Key, g => g.Max(vs => vs.VisitDate));
                 
-                // Group by avatar ID and process in memory
-                var visitors = allVisitorStats
-                    .GroupBy(vs => vs.AvatarId)
-                    .Select(g =>
+                // MEMORY FIX: Process visitors in batches to reduce memory pressure
+                var visitors = new List<UniqueVisitorDto>();
+                var visitorGroups = allVisitorStats.GroupBy(vs => vs.AvatarId).Take(1000); // Limit total unique visitors
+                
+                foreach (var g in visitorGroups)
+                {
+                    var latestRecord = g.OrderByDescending(vs => vs.LastSeenAt).First();
+                    var isTrueUnique = !historicalVisitorSet.Contains(g.Key);
+                    
+                    // Determine visitor type
+                    VisitorType visitorType;
+                    if (isTrueUnique)
                     {
-                        var latestRecord = g.OrderByDescending(vs => vs.LastSeenAt).First();
-                        var isTrueUnique = !historicalVisitorSet.Contains(g.Key);
-                        
-                        // Determine visitor type
-                        VisitorType visitorType;
-                        if (isTrueUnique)
-                        {
-                            visitorType = VisitorType.Brand_New;
-                        }
-                        else if (lastVisitDates.ContainsKey(g.Key))
-                        {
-                            var daysSinceLastVisit = (sltStartDate - lastVisitDates[g.Key]).TotalDays;
-                            visitorType = daysSinceLastVisit > 30 ? VisitorType.Returning : VisitorType.Regular;
-                        }
-                        else
-                        {
-                            visitorType = VisitorType.Returning; // Default for edge cases
-                        }
-                        
-                        return new UniqueVisitorDto
-                        {
-                            AvatarId = g.Key,
-                            AvatarName = latestRecord.AvatarName,
-                            DisplayName = latestRecord.DisplayName,
-                            FirstSeen = g.Min(vs => vs.FirstSeenAt),
-                            LastSeen = g.Max(vs => vs.LastSeenAt),
-                            VisitCount = g.Count(),
-                            RegionsVisited = g.Select(vs => vs.RegionName).Distinct().ToList(),
-                            IsTrueUnique = isTrueUnique,
-                            VisitorType = visitorType,
-                            SLTFirstSeen = _sltTimeService.FormatSLTWithDate(g.Min(vs => vs.FirstSeenAt), "MMM dd, yyyy HH:mm"),
-                            SLTLastSeen = _sltTimeService.FormatSLTWithDate(g.Max(vs => vs.LastSeenAt), "MMM dd, yyyy HH:mm")
-                        };
-                    })
-                    .ToList();
+                        visitorType = VisitorType.Brand_New;
+                    }
+                    else if (lastVisitDates.ContainsKey(g.Key))
+                    {
+                        var daysSinceLastVisit = (sltStartDate - lastVisitDates[g.Key]).TotalDays;
+                        visitorType = daysSinceLastVisit > 30 ? VisitorType.Returning : VisitorType.Regular;
+                    }
+                    else
+                    {
+                        visitorType = VisitorType.Returning; // Default for edge cases
+                    }
+                    
+                    visitors.Add(new UniqueVisitorDto
+                    {
+                        AvatarId = g.Key,
+                        AvatarName = latestRecord.AvatarName,
+                        DisplayName = latestRecord.DisplayName,
+                        FirstSeen = g.Min(vs => vs.FirstSeenAt),
+                        LastSeen = g.Max(vs => vs.LastSeenAt),
+                        VisitCount = g.Count(),
+                        RegionsVisited = g.Select(vs => vs.RegionName).Distinct().Take(10).ToList(), // Limit regions per visitor
+                        IsTrueUnique = isTrueUnique,
+                        VisitorType = visitorType,
+                        SLTFirstSeen = _sltTimeService.FormatSLTWithDate(g.Min(vs => vs.FirstSeenAt), "MMM dd, yyyy HH:mm"),
+                        SLTLastSeen = _sltTimeService.FormatSLTWithDate(g.Max(vs => vs.LastSeenAt), "MMM dd, yyyy HH:mm")
+                    });
+                }
 
-                // Enhance names using the global display name cache
+                // Clear context to release memory immediately
+                context.ChangeTracker.Clear();
+                
+                // Clear large temporary collections to help garbage collection
+                historicalVisitorSet.Clear();
+                lastVisitDates.Clear();
+
+                // Enhance names using the global display name cache (async operation)
                 await EnhanceVisitorNamesAsync(visitors);
                 
                 return visitors.OrderByDescending(v => v.LastSeen).ToList();
