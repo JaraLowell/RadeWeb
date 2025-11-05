@@ -33,6 +33,14 @@ namespace RadegastWeb.Services
         Task UpdateLastSitTargetAsync(Guid accountId, string targetUuid);
 
         /// <summary>
+        /// Updates the last sit target and captures current presence status for an account
+        /// </summary>
+        /// <param name="accountId">Account ID</param>
+        /// <param name="targetUuid">UUID of the object sat on</param>
+        /// <param name="presenceService">Presence service to get current status</param>
+        Task UpdateLastSitTargetWithPresenceAsync(Guid accountId, string targetUuid, IPresenceService presenceService);
+
+        /// <summary>
         /// Schedules auto-sit execution after login
         /// </summary>
         /// <param name="accountId">Account ID</param>
@@ -59,13 +67,15 @@ namespace RadegastWeb.Services
     public class AutoSitService : IAutoSitService, IDisposable
     {
         private readonly ILogger<AutoSitService> _logger;
+        private readonly IPresenceService _presenceService;
         private readonly Dictionary<Guid, Timer> _autoSitTimers = new();
         private readonly object _lock = new();
         private bool _disposed;
 
-        public AutoSitService(ILogger<AutoSitService> logger)
+        public AutoSitService(ILogger<AutoSitService> logger, IPresenceService presenceService)
         {
             _logger = logger;
+            _presenceService = presenceService;
         }
 
         public async Task<AutoSitConfig?> GetAutoSitConfigAsync(Guid accountId)
@@ -128,6 +138,40 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error updating last sit target for account {AccountId}", accountId);
+            }
+        }
+
+        /// <summary>
+        /// Updates the last sit target and captures current presence status for an account
+        /// </summary>
+        /// <param name="accountId">Account ID</param>
+        /// <param name="targetUuid">UUID of the object sat on</param>
+        /// <param name="presenceService">Presence service to get current status</param>
+        public async Task UpdateLastSitTargetWithPresenceAsync(Guid accountId, string targetUuid, IPresenceService presenceService)
+        {
+            try
+            {
+                var config = await GetAutoSitConfigAsync(accountId) ?? new AutoSitConfig();
+                config.TargetUuid = targetUuid;
+                
+                // Capture current presence status
+                if (config.RestorePresenceStatus)
+                {
+                    var currentStatus = presenceService.GetAccountStatus(accountId);
+                    config.LastPresenceStatus = currentStatus.ToString();
+                    config.PresenceStatusCapturedAt = DateTime.UtcNow;
+                    
+                    _logger.LogInformation("Captured presence status {Status} for account {AccountId} when sitting on {TargetUuid}", 
+                                         currentStatus, accountId, targetUuid);
+                }
+                
+                await SaveAutoSitConfigAsync(accountId, config);
+                
+                _logger.LogInformation("Updated last sit target for account {AccountId} to {TargetUuid} with presence status", accountId, targetUuid);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating last sit target with presence for account {AccountId}", accountId);
             }
         }
 
@@ -239,6 +283,12 @@ namespace RadegastWeb.Services
                     if (success)
                     {
                         _logger.LogInformation("Auto-sit successful for account {AccountId} on object {TargetUuid}", accountId, targetUuid);
+                        
+                        // Restore presence status if configured and available
+                        if (config.RestorePresenceStatus && !string.IsNullOrEmpty(config.LastPresenceStatus))
+                        {
+                            await RestorePresenceStatusAsync(accountId, config.LastPresenceStatus);
+                        }
                     }
                     else
                     {
@@ -273,6 +323,52 @@ namespace RadegastWeb.Services
                     timer.Dispose();
                     _autoSitTimers.Remove(accountId);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Restores the presence status for an account
+        /// </summary>
+        /// <param name="accountId">Account ID</param>
+        /// <param name="presenceStatus">Status to restore (Online, Away, Busy)</param>
+        private async Task RestorePresenceStatusAsync(Guid accountId, string presenceStatus)
+        {
+            try
+            {
+                // Add delay to ensure the sit action is completed first
+                await Task.Delay(2000);
+
+                _logger.LogInformation("Restoring presence status {Status} for account {AccountId} after auto-sit", presenceStatus, accountId);
+
+                switch (presenceStatus.ToLower())
+                {
+                    case "away":
+                        await _presenceService.SetAwayAsync(accountId, true);
+                        _logger.LogInformation("Successfully restored Away status for account {AccountId}", accountId);
+                        break;
+                    
+                    case "busy":
+                        await _presenceService.SetBusyAsync(accountId, true);
+                        _logger.LogInformation("Successfully restored Busy status for account {AccountId}", accountId);
+                        break;
+                    
+                    case "online":
+                        // Online is the default state, but ensure both away and busy are cleared
+                        await _presenceService.SetAwayAsync(accountId, false);
+                        await _presenceService.SetBusyAsync(accountId, false);
+                        _logger.LogInformation("Successfully restored Online status for account {AccountId}", accountId);
+                        break;
+                    
+                    default:
+                        _logger.LogWarning("Unknown presence status {Status} for account {AccountId}, defaulting to Online", presenceStatus, accountId);
+                        await _presenceService.SetAwayAsync(accountId, false);
+                        await _presenceService.SetBusyAsync(accountId, false);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error restoring presence status {Status} for account {AccountId}", presenceStatus, accountId);
             }
         }
 

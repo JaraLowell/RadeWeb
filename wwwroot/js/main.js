@@ -199,6 +199,11 @@ class RadegastWebClient {
             this.connection.on("SitStandSuccess", (message) => {
                 this.showAlert(message, "success");
                 this.refreshSittingStatus();
+                
+                // Refresh auto-sit status to show captured presence status
+                if (message.includes("Sitting on object")) {
+                    setTimeout(() => this.refreshAutoSitStatus(), 1000); // Small delay to ensure backend processing is complete
+                }
             });
 
             this.connection.on("SitStandError", (error) => {
@@ -1647,6 +1652,10 @@ class RadegastWebClient {
 
         document.getElementById('autoSitDelay').addEventListener('change', (e) => {
             this.updateAutoSitDelay(parseInt(e.target.value));
+        });
+
+        document.getElementById('autoSitRestorePresence').addEventListener('change', (e) => {
+            this.updateAutoSitPresenceRestore(e.target.checked);
         });
 
         document.getElementById('autoSitResitBtn').addEventListener('click', () => {
@@ -3464,7 +3473,9 @@ class RadegastWebClient {
                 // Update UI elements
                 document.getElementById('autoSitEnabled').checked = config.enabled || false;
                 document.getElementById('autoSitDelay').value = config.delaySeconds || 180;
+                document.getElementById('autoSitRestorePresence').checked = config.restorePresenceStatus !== false; // Default to true
                 document.getElementById('autoSitLastTarget').textContent = config.targetUuid || 'None';
+                document.getElementById('autoSitLastStatus').textContent = config.lastPresenceStatus || 'Online';
                 
                 // Show/hide settings based on enabled state
                 this.toggleAutoSitSettings(config.enabled || false);
@@ -3535,6 +3546,34 @@ class RadegastWebClient {
         }
     }
 
+    async updateAutoSitPresenceRestore(enabled) {
+        if (!this.currentAccountId) return;
+
+        try {
+            // Get current config first
+            const getResponse = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit`);
+            if (!getResponse.ok) return;
+            
+            const config = await getResponse.json();
+            config.restorePresenceStatus = enabled;
+
+            // Update config
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(config)
+            });
+
+            if (response.ok) {
+                console.log("Auto-sit presence restore updated to", enabled);
+            }
+        } catch (error) {
+            console.error("Error updating auto-sit presence restore:", error);
+        }
+    }
+
     async resitNow() {
         if (!this.currentAccountId) {
             this.showAlert("No account selected", "warning");
@@ -3568,6 +3607,11 @@ class RadegastWebClient {
     toggleAutoSitSettings(show) {
         const settings = document.getElementById('autoSitSettings');
         settings.style.display = show ? 'block' : 'none';
+    }
+
+    async refreshAutoSitStatus() {
+        // Reload auto-sit config to show updated presence status
+        await this.loadAutoSitConfig();
     }
 
     updateSittingStatus(status) {

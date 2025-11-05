@@ -3129,16 +3129,16 @@ namespace RadegastWeb.Core
                         _client.Self.Sit();
                         _logger.LogInformation("Requested to sit on object {ObjectId} for account {AccountId}", target, _accountId);
                         
-                        // Track the sit target for auto-sit functionality
+                        // Track the sit target for auto-sit functionality with presence status
                         _ = Task.Run(async () =>
                         {
                             try
                             {
-                                await _autoSitService.UpdateLastSitTargetAsync(Guid.Parse(_accountId), target.ToString());
+                                await _autoSitService.UpdateLastSitTargetWithPresenceAsync(Guid.Parse(_accountId), target.ToString(), _presenceService);
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogWarning(ex, "Error updating last sit target for account {AccountId}", _accountId);
+                                _logger.LogWarning(ex, "Error updating last sit target with presence for account {AccountId}", _accountId);
                             }
                         });
                     }

@@ -20,10 +20,10 @@ namespace RadegastWeb.Models
         public string? TargetUuid { get; set; }
 
         /// <summary>
-        /// Delay in seconds before attempting to auto-sit after login (default: 180 = 3 minutes)
+        /// Delay in seconds before attempting to auto-sit after login (default: 120 = 2 minutes)
         /// </summary>
         [JsonPropertyName("delaySeconds")]
-        public int DelaySeconds { get; set; } = 180;
+        public int DelaySeconds { get; set; } = 120;
 
         /// <summary>
         /// When this configuration was last updated
@@ -38,9 +38,27 @@ namespace RadegastWeb.Models
         public int MaxRetries { get; set; } = 3;
 
         /// <summary>
-        /// Delay between retry attempts in seconds (default: 60)
+        /// Delay between retry attempts in seconds (default: 30)
         /// </summary>
         [JsonPropertyName("retryDelaySeconds")]
-        public int RetryDelaySeconds { get; set; } = 60;
+        public int RetryDelaySeconds { get; set; } = 30;
+
+        /// <summary>
+        /// Whether to restore presence status when auto-sitting (default: true)
+        /// </summary>
+        [JsonPropertyName("restorePresenceStatus")]
+        public bool RestorePresenceStatus { get; set; } = true;
+
+        /// <summary>
+        /// Last presence status when sitting (Online, Away, Busy)
+        /// </summary>
+        [JsonPropertyName("lastPresenceStatus")]
+        public string? LastPresenceStatus { get; set; }
+
+        /// <summary>
+        /// When the presence status was last captured
+        /// </summary>
+        [JsonPropertyName("presenceStatusCapturedAt")]
+        public DateTime? PresenceStatusCapturedAt { get; set; }
     }
 }
