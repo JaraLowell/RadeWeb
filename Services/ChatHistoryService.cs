@@ -136,8 +136,11 @@ namespace RadegastWeb.Services
             {
                 using var context = CreateDbContext();
                 
+                // MEMORY FIX: Limit session data to prevent excessive memory usage
                 var sessions = await context.ChatMessages
                     .Where(m => m.AccountId == accountId && !string.IsNullOrEmpty(m.SessionId) && m.SessionId != "local-chat")
+                    .OrderByDescending(m => m.Timestamp)
+                    .Take(1000) // Limit to most recent 1000 messages to prevent memory issues
                     .GroupBy(m => m.SessionId)
                     .Select(g => new 
                     {
@@ -145,7 +148,11 @@ namespace RadegastWeb.Services
                         FirstMessage = g.OrderBy(m => m.Timestamp).First(),
                         LastActivity = g.Max(m => m.Timestamp)
                     })
+                    .Take(50) // Limit to 50 most recent sessions
                     .ToListAsync();
+                
+                // Clear context to release memory immediately
+                context.ChangeTracker.Clear();
 
                 var result = sessions.Select(s => new ChatSessionDto
                 {
@@ -179,17 +186,20 @@ namespace RadegastWeb.Services
                 using var context = CreateDbContext();
                 
                 var cutoffDate = DateTime.UtcNow - olderThan;
-                var oldMessages = await context.ChatMessages
+                
+                // MEMORY FIX: Use ExecuteDeleteAsync for efficient bulk deletion without loading into memory
+                var deletedCount = await context.ChatMessages
                     .Where(m => m.Timestamp < cutoffDate)
-                    .ToListAsync();
+                    .ExecuteDeleteAsync();
 
-                if (oldMessages.Any())
+                if (deletedCount > 0)
                 {
-                    context.ChatMessages.RemoveRange(oldMessages);
-                    await context.SaveChangesAsync();
-                    
                     _logger.LogInformation("Cleaned up {Count} old chat messages older than {CutoffDate}",
-                        oldMessages.Count, cutoffDate);
+                        deletedCount, cutoffDate);
+                }
+                else
+                {
+                    _logger.LogDebug("No old chat messages found to clean up older than {CutoffDate}", cutoffDate);
                 }
             }
             catch (Exception ex)

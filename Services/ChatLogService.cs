@@ -200,6 +200,7 @@ namespace RadegastWeb.Services
                 var logFiles = Directory.GetFiles(accountLogsDir, "*.txt")
                     .Select(f => Path.GetFileName(f))
                     .OrderBy(f => f)
+                    .Take(500) // Limit to prevent memory issues with thousands of files
                     .ToList();
 
                 return Task.FromResult<IEnumerable<string>>(logFiles);
@@ -222,29 +223,31 @@ namespace RadegastWeb.Services
                     return string.Empty;
                 }
 
+                // Cap maxLines to prevent excessive memory usage
+                maxLines = Math.Min(maxLines, 1000);
+
                 var lines = new List<string>();
                 
                 await _fileLock.WaitAsync();
                 try
                 {
                     using var reader = new StreamReader(logFilePath, Encoding.UTF8);
+                    
+                    // For memory efficiency, use a circular buffer approach
+                    var circularBuffer = new Queue<string>(maxLines);
                     string? line;
-                    var allLines = new List<string>();
                     
                     while ((line = await reader.ReadLineAsync()) != null)
                     {
-                        allLines.Add(line);
+                        if (circularBuffer.Count >= maxLines)
+                        {
+                            circularBuffer.Dequeue(); // Remove oldest line
+                        }
+                        circularBuffer.Enqueue(line);
                     }
                     
-                    // Get the last maxLines
-                    if (allLines.Count > maxLines)
-                    {
-                        lines = allLines.Skip(allLines.Count - maxLines).ToList();
-                    }
-                    else
-                    {
-                        lines = allLines;
-                    }
+                    // Convert to list for final result
+                    lines = circularBuffer.ToList();
                 }
                 finally
                 {

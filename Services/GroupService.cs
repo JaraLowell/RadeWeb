@@ -179,7 +179,17 @@ namespace RadegastWeb.Services
             {
                 var groups = await GetCachedGroupsAsync(accountId);
                 var ignoredGroups = _ignoredGroups.GetValueOrDefault(accountId, new HashSet<UUID>());
-                return groups.Values.Select(g => GroupDtoExtensions.FromGroup(g, accountId, ignoredGroups.Contains(g.ID)));
+                
+                // MEMORY FIX: Convert to list immediately to avoid holding references to large collections
+                var result = groups.Values
+                    .Take(100) // Limit to prevent excessive memory usage
+                    .Select(g => GroupDtoExtensions.FromGroup(g, accountId, ignoredGroups.Contains(g.ID)))
+                    .ToList();
+                
+                // Clear temporary references to help garbage collection
+                groups = null!;
+                
+                return result;
             }
             catch (Exception ex)
             {
