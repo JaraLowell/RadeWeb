@@ -370,14 +370,20 @@ namespace RadegastWeb.Services
             try
             {
                 using var context = _dbContextFactory.CreateDbContext();
-                var notice = await context.Notices
-                    .FirstOrDefaultAsync(n => n.Id == Guid.Parse(noticeId) && n.AccountId == accountId);
+                
+                // Use ExecuteUpdateAsync for direct database update to avoid concurrency issues
+                int updatedRows = await context.Notices
+                    .Where(n => n.Id == Guid.Parse(noticeId) && n.AccountId == accountId)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(n => n.IsAcknowledged, true));
 
-                if (notice != null)
+                if (updatedRows > 0)
                 {
-                    notice.IsAcknowledged = true;
-                    await context.SaveChangesAsync();
                     _logger.LogInformation("Acknowledged notice {NoticeId} for account {AccountId}", noticeId, accountId);
+                }
+                else
+                {
+                    _logger.LogWarning("Notice {NoticeId} not found for account {AccountId} during acknowledgment", noticeId, accountId);
                 }
             }
             catch (Exception ex)
@@ -442,14 +448,20 @@ namespace RadegastWeb.Services
             try
             {
                 using var context = _dbContextFactory.CreateDbContext();
-                var notice = await context.Notices
-                    .FirstOrDefaultAsync(n => n.Id == Guid.Parse(noticeId) && n.AccountId == accountId);
+                
+                // Use ExecuteUpdateAsync for direct database update to avoid concurrency issues
+                int updatedRows = await context.Notices
+                    .Where(n => n.Id == Guid.Parse(noticeId) && n.AccountId == accountId)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(n => n.IsRead, true));
 
-                if (notice != null)
+                if (updatedRows > 0)
                 {
-                    notice.IsRead = true;
-                    await context.SaveChangesAsync();
                     _logger.LogInformation("Marked notice {NoticeId} as read for account {AccountId}", noticeId, accountId);
+                }
+                else
+                {
+                    _logger.LogWarning("Notice {NoticeId} not found for account {AccountId} when marking as read", noticeId, accountId);
                 }
             }
             catch (Exception ex)
@@ -463,14 +475,19 @@ namespace RadegastWeb.Services
             try
             {
                 using var context = _dbContextFactory.CreateDbContext();
-                var notice = await context.Notices
-                    .FirstOrDefaultAsync(n => n.Id == Guid.Parse(noticeId) && n.AccountId == accountId);
+                
+                // Use ExecuteDeleteAsync for direct database deletion to avoid concurrency issues
+                int deletedRows = await context.Notices
+                    .Where(n => n.Id == Guid.Parse(noticeId) && n.AccountId == accountId)
+                    .ExecuteDeleteAsync();
 
-                if (notice != null)
+                if (deletedRows > 0)
                 {
-                    context.Notices.Remove(notice);
-                    await context.SaveChangesAsync();
                     _logger.LogInformation("Dismissed notice {NoticeId} for account {AccountId}", noticeId, accountId);
+                }
+                else
+                {
+                    _logger.LogWarning("Notice {NoticeId} not found for account {AccountId} during dismissal", noticeId, accountId);
                 }
             }
             catch (Exception ex)
@@ -608,34 +625,138 @@ namespace RadegastWeb.Services
         /// </summary>
         public async Task<int> CleanupAccountNoticesAsync(Guid accountId)
         {
+            int totalDeleted = 0;
+            int maxRetries = 3;
+            
+            for (int retry = 0; retry < maxRetries; retry++)
+            {
+                try
+                {
+                    using var context = _dbContextFactory.CreateDbContext();
+                    
+                    // Use ExecuteDeleteAsync for direct database deletion (more efficient and avoids concurrency issues)
+                    // This is available in EF Core 7+ and executes a direct DELETE SQL command
+                    int deletedCount = await context.Notices
+                        .Where(n => n.AccountId == accountId)
+                        .ExecuteDeleteAsync();
+                    
+                    totalDeleted += deletedCount;
+                    
+                    if (deletedCount > 0)
+                    {
+                        _logger.LogInformation("Cleaned up {Count} notices for disconnected account {AccountId}", 
+                            deletedCount, accountId);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("No notices to cleanup for account {AccountId}", accountId);
+                    }
+                    
+                    return totalDeleted;
+                }
+                catch (DbUpdateConcurrencyException ex)
+                {
+                    _logger.LogWarning(ex, "Concurrency conflict while cleaning notices for account {AccountId}, attempt {Retry}/{MaxRetries}", 
+                        accountId, retry + 1, maxRetries);
+                    
+                    if (retry == maxRetries - 1)
+                    {
+                        // On final retry, try the fallback batch method
+                        return await CleanupAccountNoticesBatchAsync(accountId);
+                    }
+                    
+                    // Wait a bit before retrying
+                    await Task.Delay(100 * (retry + 1));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error cleaning up notices for account {AccountId} on attempt {Retry}", 
+                        accountId, retry + 1);
+                    
+                    if (retry == maxRetries - 1)
+                    {
+                        return totalDeleted;
+                    }
+                    
+                    await Task.Delay(100 * (retry + 1));
+                }
+            }
+            
+            return totalDeleted;
+        }
+        
+        /// <summary>
+        /// Fallback method for cleaning notices in batches if ExecuteDeleteAsync fails
+        /// </summary>
+        private async Task<int> CleanupAccountNoticesBatchAsync(Guid accountId)
+        {
+            int totalDeleted = 0;
+            const int batchSize = 50;
+            
             try
             {
                 using var context = _dbContextFactory.CreateDbContext();
                 
-                var accountNotices = await context.Notices
-                    .Where(n => n.AccountId == accountId)
-                    .ToListAsync();
+                bool hasMore = true;
+                while (hasMore)
+                {
+                    // Get a batch of notice IDs only to minimize memory usage
+                    var noticeIds = await context.Notices
+                        .Where(n => n.AccountId == accountId)
+                        .Select(n => n.Id)
+                        .Take(batchSize)
+                        .ToListAsync();
+                    
+                    if (!noticeIds.Any())
+                    {
+                        hasMore = false;
+                        break;
+                    }
+                    
+                    try
+                    {
+                        // Delete this batch by ID to avoid concurrency issues
+                        int deletedInBatch = await context.Notices
+                            .Where(n => noticeIds.Contains(n.Id))
+                            .ExecuteDeleteAsync();
+                        
+                        totalDeleted += deletedInBatch;
+                        
+                        _logger.LogDebug("Deleted batch of {BatchDeleted} notices for account {AccountId}", 
+                            deletedInBatch, accountId);
+                        
+                        // If we deleted fewer than expected, some may have been deleted by other operations
+                        if (deletedInBatch < noticeIds.Count)
+                        {
+                            _logger.LogDebug("Expected to delete {Expected} notices but deleted {Actual} - some may have been deleted by other operations", 
+                                noticeIds.Count, deletedInBatch);
+                        }
+                        
+                        // If we got less than batch size, we're probably done
+                        if (noticeIds.Count < batchSize)
+                        {
+                            hasMore = false;
+                        }
+                    }
+                    catch (DbUpdateConcurrencyException ex)
+                    {
+                        _logger.LogWarning(ex, "Concurrency conflict in batch cleanup for account {AccountId}, continuing with next batch", accountId);
+                        // Continue to next batch - some notices may have been deleted by other operations
+                    }
+                }
                 
-                if (accountNotices.Any())
+                if (totalDeleted > 0)
                 {
-                    context.Notices.RemoveRange(accountNotices);
-                    await context.SaveChangesAsync();
-                    
-                    _logger.LogInformation("Cleaned up {Count} notices for disconnected account {AccountId}", 
-                        accountNotices.Count, accountId);
-                    
-                    return accountNotices.Count;
+                    _logger.LogInformation("Batch cleanup completed: {Count} notices deleted for account {AccountId}", 
+                        totalDeleted, accountId);
                 }
-                else
-                {
-                    _logger.LogDebug("No notices to cleanup for account {AccountId}", accountId);
-                    return 0;
-                }
+                
+                return totalDeleted;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error cleaning up notices for account {AccountId}", accountId);
-                return 0;
+                _logger.LogError(ex, "Error in batch cleanup for account {AccountId}", accountId);
+                return totalDeleted;
             }
         }
         
@@ -645,33 +766,60 @@ namespace RadegastWeb.Services
         /// </summary>
         public async Task<int> CleanupOldNoticesAsync(int keepDays = 7)
         {
-            try
+            int maxRetries = 3;
+            
+            for (int retry = 0; retry < maxRetries; retry++)
             {
-                using var context = _dbContextFactory.CreateDbContext();
-                
-                var cutoffDate = DateTime.UtcNow.AddDays(-keepDays);
-                var oldNotices = await context.Notices
-                    .Where(n => n.Timestamp < cutoffDate)
-                    .ToListAsync();
-                
-                if (oldNotices.Any())
+                try
                 {
-                    context.Notices.RemoveRange(oldNotices);
-                    await context.SaveChangesAsync();
+                    using var context = _dbContextFactory.CreateDbContext();
                     
-                    _logger.LogInformation("Cleaned up {Count} old notices older than {Days} days", 
-                        oldNotices.Count, keepDays);
+                    var cutoffDate = DateTime.UtcNow.AddDays(-keepDays);
                     
-                    return oldNotices.Count;
+                    // Use ExecuteDeleteAsync for direct database deletion
+                    int deletedCount = await context.Notices
+                        .Where(n => n.Timestamp < cutoffDate)
+                        .ExecuteDeleteAsync();
+                    
+                    if (deletedCount > 0)
+                    {
+                        _logger.LogInformation("Cleaned up {Count} old notices older than {Days} days", 
+                            deletedCount, keepDays);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("No old notices found to cleanup (older than {Days} days)", keepDays);
+                    }
+                    
+                    return deletedCount;
                 }
-                
-                return 0;
+                catch (DbUpdateConcurrencyException ex)
+                {
+                    _logger.LogWarning(ex, "Concurrency conflict while cleaning old notices, attempt {Retry}/{MaxRetries}", 
+                        retry + 1, maxRetries);
+                    
+                    if (retry == maxRetries - 1)
+                    {
+                        _logger.LogError("Failed to cleanup old notices after {MaxRetries} retries due to concurrency conflicts", maxRetries);
+                        return 0;
+                    }
+                    
+                    await Task.Delay(200 * (retry + 1));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error cleaning up old notices on attempt {Retry}", retry + 1);
+                    
+                    if (retry == maxRetries - 1)
+                    {
+                        return 0;
+                    }
+                    
+                    await Task.Delay(200 * (retry + 1));
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error cleaning up old notices");
-                return 0;
-            }
+            
+            return 0;
         }
 
         public async Task SendNoticeAcknowledgmentToSecondLifeAsync(Guid accountId, InstantMessage originalMessage, bool hasAttachment)
