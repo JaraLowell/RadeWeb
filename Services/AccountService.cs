@@ -846,22 +846,22 @@ namespace RadegastWeb.Services
             }
         }
 
-        public Task<IEnumerable<ChatSessionDto>> GetChatSessionsAsync(Guid accountId)
+        public async Task<IEnumerable<ChatSessionDto>> GetChatSessionsAsync(Guid accountId)
         {
             if (!_instances.TryGetValue(accountId, out var instance))
             {
-                return Task.FromResult(Enumerable.Empty<ChatSessionDto>());
+                return Enumerable.Empty<ChatSessionDto>();
             }
 
             try
             {
-                var sessions = instance.GetChatSessions();
-                return Task.FromResult(sessions);
+                var sessions = await instance.GetChatSessionsAsync();
+                return sessions;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting chat sessions for account {AccountId}", accountId);
-                return Task.FromResult(Enumerable.Empty<ChatSessionDto>());
+                return Enumerable.Empty<ChatSessionDto>();
             }
         }
 

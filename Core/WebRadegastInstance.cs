@@ -1069,9 +1069,43 @@ namespace RadegastWeb.Core
             };
         }
 
-        public IEnumerable<ChatSessionDto> GetChatSessions()
+        public async Task<IEnumerable<ChatSessionDto>> GetChatSessionsAsync()
         {
-            return _chatSessions.Values.OrderByDescending(s => s.LastActivity);
+            try
+            {
+                // MEMORY FIX: Query database for recent sessions instead of keeping everything in memory
+                var recentSessions = await _chatHistoryService.GetRecentSessionsAsync(Guid.Parse(_accountId));
+                
+                // Merge with any active in-memory sessions (for things like ongoing IMs)
+                var activeSessions = _chatSessions.Values.ToList();
+                
+                // Create a combined list, preferring database data but including any newer active sessions
+                var combinedSessions = new Dictionary<string, ChatSessionDto>();
+                
+                // Add database sessions first
+                foreach (var session in recentSessions)
+                {
+                    combinedSessions[session.SessionId] = session;
+                }
+                
+                // Update with any newer active sessions from memory
+                foreach (var activeSession in activeSessions)
+                {
+                    if (!combinedSessions.ContainsKey(activeSession.SessionId) || 
+                        combinedSessions[activeSession.SessionId].LastActivity < activeSession.LastActivity)
+                    {
+                        combinedSessions[activeSession.SessionId] = activeSession;
+                    }
+                }
+                
+                return combinedSessions.Values.OrderByDescending(s => s.LastActivity);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting chat sessions for account {AccountId}", _accountId);
+                // Fallback to in-memory sessions only
+                return _chatSessions.Values.OrderByDescending(s => s.LastActivity);
+            }
         }
 
         /// <summary>
@@ -1266,6 +1300,10 @@ namespace RadegastWeb.Core
                     }
                 }
 
+                // MEMORY FIX: Clean up old in-memory chat sessions to prevent unbounded growth
+                var chatSessionsCleared = CleanupOldChatSessions();
+                totalCleaned += chatSessionsCleared;
+
                 // Clean up network message queues (if accessible)
                 try
                 {
@@ -1293,6 +1331,44 @@ namespace RadegastWeb.Core
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during LibOpenMetaverse periodic cleanup for account {AccountId}", _accountId);
+            }
+        }
+
+        /// <summary>
+        /// Clean up old chat sessions from memory to prevent unbounded growth
+        /// Keeps only sessions that have been active in the last 2 hours
+        /// </summary>
+        private int CleanupOldChatSessions()
+        {
+            try
+            {
+                var cutoffTime = DateTime.UtcNow.AddHours(-2); // Keep sessions active within last 2 hours
+                var sessionsToRemove = _chatSessions
+                    .Where(kvp => kvp.Value.LastActivity < cutoffTime)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                var removedCount = 0;
+                foreach (var sessionId in sessionsToRemove)
+                {
+                    if (_chatSessions.TryRemove(sessionId, out _))
+                    {
+                        removedCount++;
+                    }
+                }
+
+                if (removedCount > 0)
+                {
+                    _logger.LogDebug("Cleaned up {RemovedCount} old chat sessions from memory for account {AccountId}", 
+                        removedCount, _accountId);
+                }
+
+                return removedCount;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error during chat session cleanup for account {AccountId}", _accountId);
+                return 0;
             }
         }
 

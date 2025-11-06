@@ -944,6 +944,57 @@ namespace RadegastWeb.Hubs
             }
         }
 
+        /// <summary>
+        /// Load recent chat history for any session from database (last 48 hours or 1000 messages)
+        /// MEMORY FIX: Query database instead of storing everything in memory
+        /// Works for all chat types: local-chat, group-{groupId}, im-{avatarId}
+        /// </summary>
+        public async Task LoadRecentChatForSession(string accountId, string sessionId)
+        {
+            if (!IsAuthenticated())
+            {
+                _logger.LogWarning("Unauthenticated attempt to load chat for session {SessionId}, account {AccountId}", sessionId, accountId);
+                Context.Abort();
+                return;
+            }
+
+            try
+            {
+                if (Guid.TryParse(accountId, out var accountGuid))
+                {
+                    IEnumerable<ChatMessageDto> recentMessages;
+                    
+                    // Handle local chat specially since it can have null/empty session IDs
+                    if (sessionId == "local-chat")
+                    {
+                        recentMessages = await _chatHistoryService.GetRecentLocalChatAsync(accountGuid);
+                        await Clients.Caller.RecentLocalChatLoaded(accountId, recentMessages.ToList());
+                    }
+                    else
+                    {
+                        recentMessages = await _chatHistoryService.GetRecentChatForSessionAsync(accountGuid, sessionId);
+                        await Clients.Caller.ChatHistoryLoaded(accountId, sessionId, recentMessages.ToList());
+                    }
+                    
+                    _logger.LogInformation("Loaded {MessageCount} recent chat messages for session {SessionId}, account {AccountId}", 
+                        recentMessages.Count(), sessionId, accountId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error loading recent chat for session {SessionId} via SignalR for account {AccountId}", sessionId, accountId);
+            }
+        }
+
+        /// <summary>
+        /// Load recent local chat history from database (last 48 hours or 1000 messages)
+        /// MEMORY FIX: Query database instead of storing everything in memory
+        /// </summary>
+        public async Task LoadRecentLocalChat(string accountId)
+        {
+            await LoadRecentChatForSession(accountId, "local-chat");
+        }
+
         public async Task ClearChatHistory(string accountId, string sessionId)
         {
             if (!IsAuthenticated())
@@ -2046,6 +2097,7 @@ namespace RadegastWeb.Hubs
         Task GroupSessionUpdated(ChatSessionDto session);
         Task ChatHistoryLoaded(string accountId, string sessionId, List<ChatMessageDto> messages);
         Task RecentSessionsLoaded(string accountId, List<ChatSessionDto> sessions);
+        Task RecentLocalChatLoaded(string accountId, List<ChatMessageDto> messages);
         Task NoticeReceived(NoticeReceivedEventDto noticeEvent);
         Task RecentNoticesLoaded(string accountId, List<NoticeDto> notices);
         Task UnreadNoticesCountLoaded(string accountId, int count);

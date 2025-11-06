@@ -13,6 +13,8 @@ namespace RadegastWeb.Services
         Task CleanupOldMessagesAsync(TimeSpan olderThan);
         Task<bool> ClearChatHistoryAsync(Guid accountId, string sessionId);
         Task<IEnumerable<string>> GetSessionIdsForAccountAsync(Guid accountId);
+        Task<IEnumerable<ChatMessageDto>> GetRecentChatForSessionAsync(Guid accountId, string sessionId);
+        Task<IEnumerable<ChatMessageDto>> GetRecentLocalChatAsync(Guid accountId);
     }
 
     public class ChatHistoryService : IChatHistoryService
@@ -284,6 +286,106 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error getting session IDs for account {AccountId}", accountId);
                 return Enumerable.Empty<string>();
+            }
+        }
+
+        /// <summary>
+        /// Get recent chat history for any session type (last 48 hours or 1000 messages, whichever is smaller)
+        /// MEMORY FIX: Query database directly instead of storing in memory
+        /// </summary>
+        public async Task<IEnumerable<ChatMessageDto>> GetRecentChatForSessionAsync(Guid accountId, string sessionId)
+        {
+            try
+            {
+                using var context = CreateDbContext();
+                
+                var cutoffTime = DateTime.UtcNow.AddHours(-48); // Last 48 hours
+                
+                var messages = await context.ChatMessages
+                    .Where(m => m.AccountId == accountId && 
+                               m.SessionId == sessionId &&
+                               m.Timestamp >= cutoffTime)
+                    .OrderByDescending(m => m.Timestamp)
+                    .Take(1000) // Max 1000 messages
+                    .Select(m => new ChatMessageDto
+                    {
+                        SenderName = m.SenderName,
+                        Message = m.Message,
+                        ChatType = m.ChatType,
+                        Channel = m.Channel,
+                        Timestamp = m.Timestamp,
+                        RegionName = m.RegionName,
+                        AccountId = m.AccountId,
+                        SenderId = m.SenderId,
+                        TargetId = m.TargetId,
+                        SessionId = m.SessionId ?? sessionId,
+                        SessionName = m.SessionName,
+                        SLTTime = _sltTimeService.FormatSLT(m.Timestamp, "HH:mm:ss"),
+                        SLTDateTime = _sltTimeService.FormatSLTWithDate(m.Timestamp, "MMM dd, HH:mm:ss")
+                    })
+                    .ToListAsync();
+
+                // Clear context to release memory immediately
+                context.ChangeTracker.Clear();
+
+                // Return in chronological order (oldest first)
+                return messages.OrderBy(m => m.Timestamp);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting recent chat for session {SessionId}, account {AccountId}", sessionId, accountId);
+                return Enumerable.Empty<ChatMessageDto>();
+            }
+        }
+
+        /// <summary>
+        /// Get recent local chat history for an account (last 48 hours or 1000 messages, whichever is smaller)
+        /// MEMORY FIX: Query database directly instead of storing in memory
+        /// </summary>
+        public async Task<IEnumerable<ChatMessageDto>> GetRecentLocalChatAsync(Guid accountId)
+        {
+            // Local chat uses "local-chat" as session ID, but sometimes it's stored as null/empty
+            // So we need a special query for local chat that handles both cases
+            try
+            {
+                using var context = CreateDbContext();
+                
+                var cutoffTime = DateTime.UtcNow.AddHours(-48); // Last 48 hours
+                
+                var messages = await context.ChatMessages
+                    .Where(m => m.AccountId == accountId && 
+                               (m.SessionId == "local-chat" || string.IsNullOrEmpty(m.SessionId)) &&
+                               m.Timestamp >= cutoffTime)
+                    .OrderByDescending(m => m.Timestamp)
+                    .Take(1000) // Max 1000 messages
+                    .Select(m => new ChatMessageDto
+                    {
+                        SenderName = m.SenderName,
+                        Message = m.Message,
+                        ChatType = m.ChatType,
+                        Channel = m.Channel,
+                        Timestamp = m.Timestamp,
+                        RegionName = m.RegionName,
+                        AccountId = m.AccountId,
+                        SenderId = m.SenderId,
+                        TargetId = m.TargetId,
+                        SessionId = m.SessionId ?? "local-chat",
+                        SessionName = m.SessionName,
+                        SLTTime = _sltTimeService.FormatSLT(m.Timestamp, "HH:mm:ss"),
+                        SLTDateTime = _sltTimeService.FormatSLTWithDate(m.Timestamp, "MMM dd, HH:mm:ss")
+                    })
+                    .ToListAsync();
+
+                // Clear context to release memory immediately
+                context.ChangeTracker.Clear();
+
+                // Return in chronological order (oldest first)
+                return messages.OrderBy(m => m.Timestamp);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting recent local chat for account {AccountId}", accountId);
+                return Enumerable.Empty<ChatMessageDto>();
             }
         }
     }
