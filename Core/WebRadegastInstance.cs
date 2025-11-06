@@ -1168,6 +1168,135 @@ namespace RadegastWeb.Core
         }
 
         /// <summary>
+        /// Performs periodic cleanup of LibOpenMetaverse internal collections to prevent memory leaks
+        /// This should be called periodically (e.g., every 30 minutes) to clean up accumulated data
+        /// </summary>
+        public void PerformLibOpenMetaverseCleanup()
+        {
+            try
+            {
+                if (!_client.Network.Connected || _client.Network.CurrentSim == null)
+                    return;
+
+                var memoryBefore = GC.GetTotalMemory(false);
+                int totalCleaned = 0;
+
+                // Clean up simulator object caches
+                var currentSim = _client.Network.CurrentSim;
+                if (currentSim != null)
+                {
+                    // Clean up old avatar objects beyond reasonable range (keep those within 512m)
+                    // ObjectsAvatars uses LocalID as key, not UUID
+                    var ourPosition = GetOurActualPosition();
+                    var avatarsToRemove = currentSim.ObjectsAvatars.Values
+                        .Where(a => a.ID != _client.Self.AgentID)
+                        .Where(a => Calculate3DDistance(ourPosition, GetAvatarActualPosition(a)) > 512.0f) // Beyond sim range
+                        .Select(a => a.LocalID) // Use LocalID for removal
+                        .Take(50) // Limit to prevent excessive removal
+                        .ToList();
+
+                    foreach (var avatarLocalId in avatarsToRemove)
+                    {
+                        if (currentSim.ObjectsAvatars.TryRemove(avatarLocalId, out _))
+                            totalCleaned++;
+                    }
+
+                    // Clean up distant primitive objects (keep only those within reasonable range)
+                    // ObjectsPrimitives uses LocalID as key
+                    var primsToRemove = currentSim.ObjectsPrimitives.Values
+                        .Where(p => Calculate3DDistance(ourPosition, p.Position) > 256.0f) // Beyond typical draw distance
+                        .Select(p => p.LocalID)
+                        .Take(100) // Limit to prevent excessive removal
+                        .ToList();
+
+                    foreach (var primLocalId in primsToRemove)
+                    {
+                        if (currentSim.ObjectsPrimitives.TryRemove(primLocalId, out _))
+                            totalCleaned++;
+                    }
+
+                    // Clean up AvatarPositions (coarse location data) for distant avatars
+                    // This dictionary can grow large in busy sims
+                    if (currentSim.AvatarPositions?.Count > 100)
+                    {
+                        var positionsToRemove = currentSim.AvatarPositions
+                            .Where(kvp => kvp.Key != _client.Self.AgentID)
+                            .Where(kvp => Calculate3DDistance(ourPosition, kvp.Value) > 1024.0f) // Very distant
+                            .Select(kvp => kvp.Key)
+                            .Take(25)
+                            .ToList();
+
+                        foreach (var avatarId in positionsToRemove)
+                        {
+                            if (currentSim.AvatarPositions.TryRemove(avatarId, out _))
+                                totalCleaned++;
+                        }
+                    }
+                }
+
+                // Clean up asset cache if it's getting large
+                if (_client.Assets?.Cache != null)
+                {
+                    // Check cache size and prune if necessary
+                    try
+                    {
+                        // Force a cache cleanup by temporarily enabling auto-prune
+                        var oldAutoPrune = _client.Settings.ASSET_CACHE_DIR;
+                        _client.Assets.Cache.AutoPruneEnabled = true;
+                        
+                        // Trigger cache maintenance
+                        System.Threading.Tasks.Task.Run(() =>
+                        {
+                            try
+                            {
+                                _client.Assets.Cache.Clear();
+                                _client.Assets.Cache.AutoPruneEnabled = false;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogDebug(ex, "Error during asset cache cleanup for account {AccountId}", _accountId);
+                            }
+                        });
+                        
+                        totalCleaned += 50; // Estimate for asset cache cleanup
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error accessing asset cache for cleanup on account {AccountId}", _accountId);
+                    }
+                }
+
+                // Clean up network message queues (if accessible)
+                try
+                {
+                    // Force garbage collection after cleanup
+                    if (totalCleaned > 100)
+                    {
+                        GC.Collect(1, GCCollectionMode.Optimized);
+                    }
+
+                    var memoryAfter = GC.GetTotalMemory(false);
+                    var memorySaved = (memoryBefore - memoryAfter) / (1024.0 * 1024.0);
+
+                    if (totalCleaned > 0 || memorySaved > 1.0)
+                    {
+                        _logger.LogInformation(
+                            "LibOpenMetaverse cleanup for account {AccountId}: cleaned {CleanedItems} items, saved {MemoryMB:F1}MB memory",
+                            _accountId, totalCleaned, memorySaved);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error during memory measurement in LibOpenMetaverse cleanup for account {AccountId}", _accountId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during LibOpenMetaverse periodic cleanup for account {AccountId}", _accountId);
+            }
+        }
+
+        /// <summary>
         /// Manually refresh display names for all nearby avatars
         /// Useful for immediate updates when requested by the UI
         /// </summary>

@@ -64,6 +64,7 @@ namespace RadegastWeb.Services
                 _lastDayCheck = sltTimeService.GetCurrentSLT().Date;
                 
                 var lastPeriodicRecording = DateTime.UtcNow;
+                var lastLibOpenMetaverseCleanup = DateTime.UtcNow;
 
                 while (!stoppingToken.IsCancellationRequested && !_isShuttingDown)
                 {
@@ -80,6 +81,13 @@ namespace RadegastWeb.Services
                         {
                             await TriggerPeriodicAvatarRecordingAsync(stoppingToken);
                             lastPeriodicRecording = now;
+                        }
+                        
+                        // Periodic LibOpenMetaverse cleanup (every 30 minutes) to prevent memory leaks
+                        if (now - lastLibOpenMetaverseCleanup >= TimeSpan.FromMinutes(30))
+                        {
+                            await PerformLibOpenMetaverseCleanupAsync(stoppingToken);
+                            lastLibOpenMetaverseCleanup = now;
                         }
                         
                         // Periodic cleanup of disconnected accounts (every 5 minutes) to ensure proper status
@@ -1245,6 +1253,45 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Error unsubscribing from events for account {AccountId}", accountId);
+            }
+        }
+
+        /// <summary>
+        /// Perform LibOpenMetaverse internal collection cleanup on all connected accounts
+        /// This helps prevent memory leaks in the underlying OpenMetaverse library
+        /// </summary>
+        private async Task PerformLibOpenMetaverseCleanupAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+
+                var accounts = await accountService.GetAccountsAsync();
+                var cleanedAccounts = 0;
+                
+                foreach (var account in accounts)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
+                        
+                    var instance = accountService.GetInstance(account.Id);
+                    if (instance?.IsConnected == true)
+                    {
+                        // Perform cleanup on connected instances
+                        instance.PerformLibOpenMetaverseCleanup();
+                        cleanedAccounts++;
+                    }
+                }
+
+                if (cleanedAccounts > 0)
+                {
+                    _logger.LogInformation("Performed LibOpenMetaverse cleanup on {CleanedAccounts} connected accounts", cleanedAccounts);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during periodic LibOpenMetaverse cleanup");
             }
         }
 

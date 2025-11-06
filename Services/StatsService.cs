@@ -84,7 +84,7 @@ namespace RadegastWeb.Services
     /// <summary>
     /// Service to track and manage visitor statistics
     /// </summary>
-    public class StatsService : IStatsService
+    public class StatsService : IStatsService, IDisposable
     {
         private readonly IDbContextFactory<RadegastDbContext> _dbContextFactory;
         private readonly ILogger<StatsService> _logger;
@@ -98,6 +98,7 @@ namespace RadegastWeb.Services
         // Cache for recent visitor recordings to prevent too frequent database writes
         private readonly ConcurrentDictionary<string, DateTime> _recentRecordings = new();
         private readonly TimeSpan _recordingCooldown = TimeSpan.FromSeconds(30); // Don't record same avatar twice within 30 seconds (much more responsive)
+        private readonly Timer _recordingCleanupTimer;
         
         public StatsService(IDbContextFactory<RadegastDbContext> dbContextFactory, ILogger<StatsService> logger, IGlobalDisplayNameCache globalDisplayNameCache, ISLTimeService sltTimeService)
         {
@@ -105,6 +106,9 @@ namespace RadegastWeb.Services
             _logger = logger;
             _globalDisplayNameCache = globalDisplayNameCache;
             _sltTimeService = sltTimeService;
+            
+            // Initialize cleanup timer to run every 5 minutes to prevent unbounded growth
+            _recordingCleanupTimer = new Timer(CleanupRecentRecordings, null, (int)TimeSpan.FromMinutes(5).TotalMilliseconds, (int)TimeSpan.FromMinutes(5).TotalMilliseconds);
         }
 
         /// <summary>
@@ -325,18 +329,6 @@ namespace RadegastWeb.Services
                 if (!isWithinCooldown)
                 {
                     _recentRecordings.AddOrUpdate(cacheKey, now, (key, oldValue) => now);
-                    
-                    // Clean up cache entries older than 24 hours to prevent memory bloat (run occasionally)
-                    if (_recentRecordings.Count > 1000 && new Random().Next(100) == 0) // 1% chance on each call
-                    {
-                        var cutoff = DateTime.UtcNow.AddHours(-24);
-                        var keysToRemove = _recentRecordings.Where(kvp => kvp.Value < cutoff).Select(kvp => kvp.Key).ToList();
-                        foreach (var key in keysToRemove)
-                        {
-                            _recentRecordings.TryRemove(key, out _);
-                        }
-                        _logger.LogDebug("Cleaned up {Count} old cache entries", keysToRemove.Count);
-                    }
                 }
                 else
                 {
@@ -674,6 +666,43 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error cleaning up old visitor records");
+            }
+        }
+
+        /// <summary>
+        /// Timer callback to periodically clean up the recent recordings cache to prevent memory leaks
+        /// </summary>
+        private void CleanupRecentRecordings(object? state)
+        {
+            try
+            {
+                var cutoffTime = DateTime.UtcNow.AddMinutes(-30); // Clean entries older than 30 minutes (our cooldown is 30 seconds)
+                var keysToRemove = _recentRecordings
+                    .Where(kvp => kvp.Value < cutoffTime)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                foreach (var key in keysToRemove)
+                {
+                    _recentRecordings.TryRemove(key, out _);
+                }
+
+                if (keysToRemove.Count > 0)
+                {
+                    _logger.LogDebug("Cleaned up {Count} expired recent recording entries. Total remaining: {Total}", 
+                        keysToRemove.Count, _recentRecordings.Count);
+                }
+
+                // Also log if the dictionary is growing too large
+                if (_recentRecordings.Count > 10000)
+                {
+                    _logger.LogWarning("Recent recordings cache has {Count} entries - this may indicate a memory leak", 
+                        _recentRecordings.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during scheduled cleanup of recent recordings cache");
             }
         }
 
@@ -1312,6 +1341,11 @@ namespace RadegastWeb.Services
             var fallbackConverted = TimeZoneInfo.ConvertTimeFromUtc(fallbackUtc, sltTimeZone).Date;
             _logger.LogDebug("Date {Date} is old, assuming UTC and converting to SLT: {Converted}", dateOnly, fallbackConverted);
             return fallbackConverted;
+        }
+
+        public void Dispose()
+        {
+            _recordingCleanupTimer?.Dispose();
         }
     }
 }
