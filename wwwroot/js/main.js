@@ -200,9 +200,9 @@ class RadegastWebClient {
                 this.showAlert(message, "success");
                 this.refreshSittingStatus();
                 
-                // Refresh auto-sit status to show captured presence status
+                // Only refresh auto-sit status if sitting on object AND auto-sit is enabled
                 if (message.includes("Sitting on object")) {
-                    setTimeout(() => this.refreshAutoSitStatus(), 1000); // Small delay to ensure backend processing is complete
+                    this.refreshAutoSitStatusIfEnabled();
                 }
             });
 
@@ -3612,6 +3612,18 @@ class RadegastWebClient {
     async refreshAutoSitStatus() {
         // Reload auto-sit config to show updated presence status
         await this.loadAutoSitConfig();
+    }
+
+    async refreshAutoSitStatusIfEnabled() {
+        // Only refresh if auto-sit is currently enabled
+        try {
+            const autoSitEnabled = document.getElementById('autoSitEnabled');
+            if (autoSitEnabled && autoSitEnabled.checked) {
+                setTimeout(() => this.refreshAutoSitStatus(), 1000); // Small delay to ensure backend processing is complete
+            }
+        } catch (error) {
+            console.error("Error checking auto-sit enabled status:", error);
+        }
     }
 
     updateSittingStatus(status) {

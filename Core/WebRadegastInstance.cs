@@ -3334,12 +3334,12 @@ namespace RadegastWeb.Core
                         _client.Self.Sit();
                         _logger.LogInformation("Requested to sit on object {ObjectId} for account {AccountId}", target, _accountId);
                         
-                        // Track the sit target for auto-sit functionality with presence status
+                        // Track the sit target for auto-sit functionality with presence status (only if auto-sit is enabled)
                         _ = Task.Run(async () =>
                         {
                             try
                             {
-                                await _autoSitService.UpdateLastSitTargetWithPresenceAsync(Guid.Parse(_accountId), target.ToString(), _presenceService);
+                                await _autoSitService.UpdateLastSitTargetWithPresenceIfEnabledAsync(Guid.Parse(_accountId), target.ToString(), _presenceService);
                             }
                             catch (Exception ex)
                             {

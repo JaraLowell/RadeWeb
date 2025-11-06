@@ -41,6 +41,14 @@ namespace RadegastWeb.Services
         Task UpdateLastSitTargetWithPresenceAsync(Guid accountId, string targetUuid, IPresenceService presenceService);
 
         /// <summary>
+        /// Updates the last sit target and captures current presence status, but only if auto-sit is enabled
+        /// </summary>
+        /// <param name="accountId">Account ID</param>
+        /// <param name="targetUuid">UUID of the object sat on</param>
+        /// <param name="presenceService">Presence service to get current status</param>
+        Task UpdateLastSitTargetWithPresenceIfEnabledAsync(Guid accountId, string targetUuid, IPresenceService presenceService);
+
+        /// <summary>
         /// Schedules auto-sit execution after login
         /// </summary>
         /// <param name="accountId">Account ID</param>
@@ -172,6 +180,43 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error updating last sit target with presence for account {AccountId}", accountId);
+            }
+        }
+
+        public async Task UpdateLastSitTargetWithPresenceIfEnabledAsync(Guid accountId, string targetUuid, IPresenceService presenceService)
+        {
+            try
+            {
+                var config = await GetAutoSitConfigAsync(accountId);
+                
+                // Only update if auto-sit is enabled
+                if (config == null || !config.Enabled)
+                {
+                    _logger.LogDebug("Auto-sit not enabled for account {AccountId}, skipping sit target update", accountId);
+                    return;
+                }
+                
+                // Update the configuration with new target and presence status
+                config.TargetUuid = targetUuid;
+                
+                // Capture current presence status
+                if (config.RestorePresenceStatus)
+                {
+                    var currentStatus = presenceService.GetAccountStatus(accountId);
+                    config.LastPresenceStatus = currentStatus.ToString();
+                    config.PresenceStatusCapturedAt = DateTime.UtcNow;
+                    
+                    _logger.LogInformation("Captured presence status {Status} for account {AccountId} when sitting on {TargetUuid} (auto-sit enabled)", 
+                                         currentStatus, accountId, targetUuid);
+                }
+                
+                await SaveAutoSitConfigAsync(accountId, config);
+                
+                _logger.LogInformation("Updated last sit target for account {AccountId} to {TargetUuid} with presence status (auto-sit enabled)", accountId, targetUuid);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating last sit target with presence for account {AccountId} (auto-sit enabled check)", accountId);
             }
         }
 
