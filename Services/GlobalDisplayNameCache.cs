@@ -64,7 +64,7 @@ namespace RadegastWeb.Services
         private readonly TimeSpan _memoryCacheExpiry = TimeSpan.FromHours(2); // Short-term memory cache
         private readonly TimeSpan _databaseCacheExpiry = TimeSpan.FromHours(48); // Long-term database cache
         private readonly TimeSpan _saveInterval = TimeSpan.FromSeconds(30);
-        private readonly TimeSpan _cleanupInterval = TimeSpan.FromMinutes(30);
+        private readonly TimeSpan _cleanupInterval = TimeSpan.FromMinutes(5); // More frequent cleanup to prevent growth
         
         private readonly Timer _saveTimer;
         private readonly Timer _cleanupTimer;
@@ -769,6 +769,7 @@ namespace RadegastWeb.Services
 
         public void CleanExpiredCache()
         {
+            // MEMORY FIX: More aggressive cleanup to prevent unbounded growth
             // Clean expired entries from memory cache (2-hour expiry)
             var expired = _globalNameCache.Where(kvp => DateTime.UtcNow - kvp.Value.CachedAt > _memoryCacheExpiry)
                                          .Select(kvp => kvp.Key)
@@ -784,6 +785,28 @@ namespace RadegastWeb.Services
             if (expired.Count > 0)
             {
                 _logger.LogDebug("Cleaned {Count} expired display names from memory cache", expired.Count);
+            }
+
+            // MEMORY FIX: Trim cache to reasonable size if it's grown too large
+            const int maxCacheSize = 10000; // Reasonable limit for concurrent users
+            if (_globalNameCache.Count > maxCacheSize)
+            {
+                var entriesToRemove = _globalNameCache.Count - maxCacheSize;
+                var oldestEntries = _globalNameCache
+                    .OrderBy(kvp => kvp.Value.CachedAt)
+                    .Take(entriesToRemove)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+                
+                foreach (var key in oldestEntries)
+                {
+                    _globalNameCache.TryRemove(key, out _);
+                    var cacheKey = $"global_display_name_{key}";
+                    _memoryCache.Remove(cacheKey);
+                }
+                
+                _logger.LogInformation("Trimmed {Count} oldest display names from cache to maintain size limit ({MaxSize})", 
+                    entriesToRemove, maxCacheSize);
             }
         }
 

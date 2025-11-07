@@ -48,6 +48,10 @@ namespace RadegastWeb.Core
         private readonly ConcurrentDictionary<UUID, CoarseLocationAvatar> _coarseLocationAvatars = new();
         private readonly ConcurrentDictionary<UUID, ulong> _avatarSimHandles = new();
         
+        // Track recent name requests to prevent excessive duplicate requests
+        private readonly ConcurrentDictionary<UUID, DateTime> _recentNameRequests = new();
+        private readonly TimeSpan _nameRequestCooldown = TimeSpan.FromMinutes(5); // Don't request same name more than once per 5 minutes
+        
         // Track which avatars we've already sent proximity alerts for to prevent spam
         private readonly ConcurrentDictionary<UUID, DateTime> _proximityAlertedAvatars = new();
         
@@ -416,6 +420,7 @@ namespace RadegastWeb.Core
                 _groups.Clear();
                 _coarseLocationAvatars.Clear(); // Clear coarse location avatars
                 _avatarSimHandles.Clear(); // Clear avatar sim handles
+                _recentNameRequests.Clear(); // Clear name request tracking
                 
                 // Stop any periodic timers
                 _displayNameRefreshTimer?.Dispose();
@@ -876,34 +881,8 @@ namespace RadegastWeb.Core
                 else
                 {
                     // IMMEDIATELY request the display name (like Radegast does)
-                    if (_client.Network.Connected)
-                    {
-                        _client.Avatars.RequestAvatarNames(new List<UUID> { avatar.ID });
-                        
-                        // Request display names with callback
-                        _client.Avatars.GetDisplayNames(new List<UUID> { avatar.ID }, (success, names, badIDs) =>
-                        {
-                            if (success && names != null && names.Any())
-                            {
-                                _ = Task.Run(async () =>
-                                {
-                                    try
-                                    {
-                                        var nameDict = new Dictionary<UUID, AgentDisplayName>();
-                                        foreach (var name in names)
-                                        {
-                                            nameDict[name.ID] = name;
-                                        }
-                                        await _globalDisplayNameCache.UpdateDisplayNamesAsync(nameDict);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogDebug(ex, "Error updating display names from immediate request");
-                                    }
-                                });
-                            }
-                        });
-                    }
+                    // Use deduplicated request to prevent cache bloat
+                    RequestAvatarNamesWithDeduplication(avatar.ID);
                     
                     // Also trigger background preload
                     _ = Task.Run(async () =>
@@ -1004,34 +983,8 @@ namespace RadegastWeb.Core
                 else
                 {
                     // IMMEDIATELY request the display name for coarse avatars too
-                    if (_client.Network.Connected)
-                    {
-                        _client.Avatars.RequestAvatarNames(new List<UUID> { coarseAvatar.ID });
-                        
-                        // Request display names with callback
-                        _client.Avatars.GetDisplayNames(new List<UUID> { coarseAvatar.ID }, (success, names, badIDs) =>
-                        {
-                            if (success && names != null && names.Any())
-                            {
-                                _ = Task.Run(async () =>
-                                {
-                                    try
-                                    {
-                                        var nameDict = new Dictionary<UUID, AgentDisplayName>();
-                                        foreach (var name in names)
-                                        {
-                                            nameDict[name.ID] = name;
-                                        }
-                                        await _globalDisplayNameCache.UpdateDisplayNamesAsync(nameDict);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogDebug(ex, "Error updating display names from immediate coarse request");
-                                    }
-                                });
-                            }
-                        });
-                    }
+                    // Use deduplicated request to prevent cache bloat
+                    RequestAvatarNamesWithDeduplication(coarseAvatar.ID);
                     
                     // Also trigger background load for fallback
                     _ = Task.Run(async () =>
@@ -1357,9 +1310,44 @@ namespace RadegastWeb.Core
                     }
                 }
 
+                // MEMORY FIX: Also cleanup old avatar tracking data periodically
+                var avatarCutoffTime = DateTime.UtcNow.AddMinutes(-15); // Clean avatars not seen for 15 minutes
+                var staleAvatarsToRemove = _nearbyAvatars
+                    .Where(kvp => !_coarseLocationAvatars.ContainsKey(kvp.Key)) // Don't remove if still in coarse tracking
+                    .Take(50) // Limit cleanup to prevent performance impact
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                foreach (var avatarId in staleAvatarsToRemove)
+                {
+                    _nearbyAvatars.TryRemove(avatarId, out _);
+                    _proximityAlertedAvatars.TryRemove(avatarId, out _);
+                    _previousAvatarPositions.TryRemove(avatarId, out _);
+                    removedCount++;
+                }
+
+                // MEMORY FIX: Cleanup coarse location avatars that are very old
+                var coarseAvatarsToRemove = _coarseLocationAvatars
+                    .Where(kvp => DateTime.UtcNow - kvp.Value.LastUpdate > TimeSpan.FromMinutes(30))
+                    .Take(50) // Limit cleanup
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                foreach (var avatarId in coarseAvatarsToRemove)
+                {
+                    _coarseLocationAvatars.TryRemove(avatarId, out _);
+                    _avatarSimHandles.TryRemove(avatarId, out _);
+                    _proximityAlertedAvatars.TryRemove(avatarId, out _);
+                    _previousAvatarPositions.TryRemove(avatarId, out _);
+                    removedCount++;
+                }
+
+                // MEMORY FIX: Cleanup old name request tracking
+                CleanupOldNameRequests();
+
                 if (removedCount > 0)
                 {
-                    _logger.LogDebug("Cleaned up {RemovedCount} old chat sessions from memory for account {AccountId}", 
+                    _logger.LogDebug("Cleaned up {RemovedCount} old chat sessions and stale avatar data from memory for account {AccountId}", 
                         removedCount, _accountId);
                 }
 
@@ -1367,7 +1355,7 @@ namespace RadegastWeb.Core
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Error during chat session cleanup for account {AccountId}", _accountId);
+                _logger.LogWarning(ex, "Error during cleanup for account {AccountId}", _accountId);
                 return 0;
             }
         }
@@ -1450,6 +1438,86 @@ namespace RadegastWeb.Core
             {
                 _logger.LogError(ex, "Error getting display name loading status for account {AccountId}", _accountId);
                 return (_nearbyAvatars.Count, 0, _nearbyAvatars.Count);
+            }
+        }
+
+        /// <summary>
+        /// Request avatar names with deduplication to prevent cache bloat
+        /// Only requests names that haven't been requested recently
+        /// </summary>
+        private void RequestAvatarNamesWithDeduplication(UUID avatarId)
+        {
+            if (!_client.Network.Connected)
+                return;
+
+            // Check if we've already requested this name recently
+            if (_recentNameRequests.TryGetValue(avatarId, out var lastRequest))
+            {
+                if (DateTime.UtcNow - lastRequest < _nameRequestCooldown)
+                {
+                    // Skip request - too recent
+                    return;
+                }
+            }
+
+            // Update request time
+            _recentNameRequests.AddOrUpdate(avatarId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
+
+            // Perform the actual request
+            _client.Avatars.RequestAvatarNames(new List<UUID> { avatarId });
+            
+            // Request display names with callback to update global cache
+            _client.Avatars.GetDisplayNames(new List<UUID> { avatarId }, (success, names, badIDs) =>
+            {
+                if (success && names != null && names.Any())
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            var nameDict = new Dictionary<UUID, AgentDisplayName>();
+                            foreach (var name in names)
+                            {
+                                nameDict[name.ID] = name;
+                            }
+                            await _globalDisplayNameCache.UpdateDisplayNamesAsync(nameDict);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Error updating display names from deduplicated request");
+                        }
+                    });
+                }
+            });
+        }
+
+        /// <summary>
+        /// Cleanup old name request tracking to prevent memory leaks
+        /// </summary>
+        private void CleanupOldNameRequests()
+        {
+            try
+            {
+                var cutoffTime = DateTime.UtcNow.Subtract(_nameRequestCooldown).AddMinutes(-5); // Extra buffer
+                var expiredKeys = _recentNameRequests
+                    .Where(kvp => kvp.Value < cutoffTime)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+
+                foreach (var key in expiredKeys)
+                {
+                    _recentNameRequests.TryRemove(key, out _);
+                }
+
+                if (expiredKeys.Count > 0)
+                {
+                    _logger.LogDebug("Cleaned up {Count} old name request tracking entries for account {AccountId}", 
+                        expiredKeys.Count, _accountId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error cleaning up old name requests for account {AccountId}", _accountId);
             }
         }
 
@@ -1596,6 +1664,7 @@ namespace RadegastWeb.Core
             _groups.Clear();
             _coarseLocationAvatars.Clear(); // Clear coarse location avatars
             _avatarSimHandles.Clear(); // Clear avatar sim handles
+            _recentNameRequests.Clear(); // Clear name request tracking
             
             // Remove account from stats service region tracking
             _statsService.RemoveAccountRegion(Guid.Parse(_accountId));
@@ -1681,6 +1750,7 @@ namespace RadegastWeb.Core
             _groups.Clear();
             _coarseLocationAvatars.Clear(); // Clear coarse location avatars
             _avatarSimHandles.Clear(); // Clear avatar sim handles
+            _recentNameRequests.Clear(); // Clear name request tracking
             
             // Remove account from stats service region tracking
             _statsService.RemoveAccountRegion(Guid.Parse(_accountId));
@@ -1701,6 +1771,7 @@ namespace RadegastWeb.Core
             _previousAvatarPositions.Clear(); // Clear position tracking for new sim
             _coarseLocationAvatars.Clear(); // Clear coarse location avatars from previous sim
             _avatarSimHandles.Clear(); // Clear sim handles
+            _recentNameRequests.Clear(); // Clear name request tracking for new sim
             
             // Proactively start loading display names for the new region
             _ = Task.Run(async () =>
@@ -1802,26 +1873,8 @@ namespace RadegastWeb.Core
                 if (string.IsNullOrEmpty(cachedName) || cachedName == "Loading..." || 
                     cachedName == "???" || cachedName == avatarName)
                 {
-                    // Immediately request both legacy and display names (fire and forget like Radegast)
-                    if (_client.Network.Connected)
-                    {
-                        _client.Avatars.RequestAvatarNames(new List<UUID> { e.Avatar.ID });
-                        
-                        // Fire and forget display name request
-                        _ = Task.Run(async () => 
-                        {
-                            try
-                            {
-                                await _globalDisplayNameCache.RequestDisplayNamesAsync(
-                                    new List<string> { e.Avatar.ID.ToString() }, 
-                                    Guid.Parse(_accountId));
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogDebug(ex, "Error requesting display name for new avatar");
-                            }
-                        });
-                    }
+                    // Use deduplicated request to prevent cache bloat
+                    RequestAvatarNamesWithDeduplication(e.Avatar.ID);
                     
                     displayName = avatarName; // Use fallback for now
                 }
@@ -2106,24 +2159,10 @@ namespace RadegastWeb.Core
                         _coarseLocationAvatars.TryAdd(avatarPos.Key, coarseAvatar);
                         
                         // IMMEDIATELY request name for new coarse avatar (like Radegast does)
-                        if (_client.Network.Connected && (avatarName.StartsWith("Resolving...") || avatarName == "Loading..." || avatarName == "???"))
+                        if (avatarName.StartsWith("Resolving...") || avatarName == "Loading..." || avatarName == "???")
                         {
-                            _client.Avatars.RequestAvatarNames(new List<UUID> { avatarPos.Key });
-                            
-                            // Fire and forget display name request
-                            _ = Task.Run(async () => 
-                            {
-                                try
-                                {
-                                    await _globalDisplayNameCache.RequestDisplayNamesAsync(
-                                        new List<string> { avatarPos.Key.ToString() }, 
-                                        Guid.Parse(_accountId));
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogDebug(ex, "Error requesting display name for new coarse avatar");
-                                }
-                            });
+                            // Use deduplicated request to prevent cache bloat
+                            RequestAvatarNamesWithDeduplication(avatarPos.Key);
                         }
                     }
 

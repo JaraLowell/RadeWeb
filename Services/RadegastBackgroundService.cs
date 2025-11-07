@@ -16,6 +16,7 @@ namespace RadegastWeb.Services
         private IPresenceService? _presenceService;
         private IRegionInfoService? _regionInfoService;
         private IGroupService? _groupService;
+        private IMemoryManagementService? _memoryManagementService;
         private volatile bool _isShuttingDown = false;
         private DateTime _lastDayCheck = DateTime.MinValue; // Will be initialized properly in ExecuteAsync
         
@@ -59,6 +60,9 @@ namespace RadegastWeb.Services
                 _groupService = scope.ServiceProvider.GetRequiredService<IGroupService>();
                 _groupService.GroupsUpdated += OnGroupsUpdated;
 
+                _memoryManagementService = scope.ServiceProvider.GetRequiredService<IMemoryManagementService>();
+                _memoryManagementService.RegisterPeriodicCleanup();
+
                 // Initialize _lastDayCheck with current SLT date
                 var sltTimeService = scope.ServiceProvider.GetRequiredService<ISLTimeService>();
                 _lastDayCheck = sltTimeService.GetCurrentSLT().Date;
@@ -88,6 +92,9 @@ namespace RadegastWeb.Services
                         {
                             await PerformLibOpenMetaverseCleanupAsync(stoppingToken);
                             lastLibOpenMetaverseCleanup = now;
+                            
+                            // Also trigger memory management check after cleanup
+                            _memoryManagementService?.TriggerMemoryCleanupIfNeeded();
                         }
                         
                         // Periodic cleanup of disconnected accounts (every 5 minutes) to ensure proper status
@@ -237,10 +244,10 @@ namespace RadegastWeb.Services
                     {
                         _logger.LogInformation("Subscribing to events for account instance {AccountId}", account.Id);
                         
-                        // First, safely unsubscribe to prevent double subscriptions
+                        // CRITICAL FIX: Always unsubscribe first to prevent handler accumulation
                         SafeUnsubscribeFromInstance(account.Id, instance);
                         
-                        // Now subscribe
+                        // Now subscribe with single handlers to prevent accumulation
                         instance.ChatReceived += OnChatReceived;
                         instance.StatusChanged += OnStatusChanged;
                         instance.ConnectionChanged += OnConnectionChanged;
@@ -257,7 +264,14 @@ namespace RadegastWeb.Services
                         // Track instance with weak reference to prevent GC issues
                         _instanceReferences.AddOrUpdate(account.Id, 
                             new WeakReference<WebRadegastInstance>(instance),
-                            (key, old) => new WeakReference<WebRadegastInstance>(instance));
+                            (key, old) => {
+                                // Properly dispose old weak reference if it exists
+                                if (old.TryGetTarget(out var oldInstance))
+                                {
+                                    SafeUnsubscribeFromInstance(account.Id, oldInstance);
+                                }
+                                return new WeakReference<WebRadegastInstance>(instance);
+                            });
                         
                         // Mark as subscribed and record the time
                         _subscribedInstances.TryAdd(account.Id, true);

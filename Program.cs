@@ -161,6 +161,9 @@ builder.Services.AddSingleton<IDisplayNameService>(provider =>
 // Auto-sit service
 builder.Services.AddSingleton<IAutoSitService, AutoSitService>();
 
+// Memory management service for preventing memory leaks
+builder.Services.AddSingleton<IMemoryManagementService, MemoryManagementService>();
+
 // Register as singleton first, then as hosted service
 builder.Services.AddSingleton<RadegastBackgroundService>();
 builder.Services.AddHostedService<RadegastBackgroundService>(provider => provider.GetRequiredService<RadegastBackgroundService>());

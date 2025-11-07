@@ -12,15 +12,18 @@ namespace RadegastWeb.Controllers
         private readonly ILogger<MemoryController> _logger;
         private readonly IAccountService _accountService;
         private readonly IConnectionTrackingService _connectionTrackingService;
+        private readonly IMemoryManagementService _memoryManagementService;
 
         public MemoryController(
             ILogger<MemoryController> logger, 
             IAccountService accountService,
-            IConnectionTrackingService connectionTrackingService)
+            IConnectionTrackingService connectionTrackingService,
+            IMemoryManagementService memoryManagementService)
         {
             _logger = logger;
             _accountService = accountService;
             _connectionTrackingService = connectionTrackingService;
+            _memoryManagementService = memoryManagementService;
         }
 
         /// <summary>
@@ -96,9 +99,7 @@ namespace RadegastWeb.Controllers
             {
                 var memoryBefore = GC.GetTotalMemory(false);
                 
-                GC.Collect(2, GCCollectionMode.Aggressive, true);
-                GC.WaitForPendingFinalizers();
-                GC.Collect(2, GCCollectionMode.Aggressive, true);
+                _memoryManagementService.ForceGarbageCollection();
                 
                 var memoryAfter = GC.GetTotalMemory(true);
 
@@ -113,6 +114,34 @@ namespace RadegastWeb.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error forcing garbage collection");
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Trigger memory cleanup if needed based on usage thresholds
+        /// </summary>
+        [HttpPost("cleanup")]
+        public ActionResult<object> TriggerMemoryCleanup()
+        {
+            try
+            {
+                var memoryBefore = _memoryManagementService.GetCurrentMemoryUsageMB();
+                _memoryManagementService.TriggerMemoryCleanupIfNeeded();
+                var memoryAfter = _memoryManagementService.GetCurrentMemoryUsageMB();
+                
+                return Ok(new 
+                { 
+                    MemoryBeforeMB = memoryBefore,
+                    MemoryAfterMB = memoryAfter,
+                    SavedMB = memoryBefore - memoryAfter,
+                    CleanupTriggered = memoryBefore > 1200, // Warning threshold
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error triggering memory cleanup");
                 return StatusCode(500, "Internal server error");
             }
         }

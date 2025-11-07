@@ -687,16 +687,36 @@ namespace RadegastWeb.Services
                     _recentRecordings.TryRemove(key, out _);
                 }
 
+                // MEMORY FIX: Aggressive size limitation to prevent unbounded growth
+                const int maxCacheSize = 50000; // Reasonable limit for busy regions
+                if (_recentRecordings.Count > maxCacheSize)
+                {
+                    var entriesToRemove = _recentRecordings.Count - maxCacheSize;
+                    var oldestEntries = _recentRecordings
+                        .OrderBy(kvp => kvp.Value)
+                        .Take(entriesToRemove)
+                        .Select(kvp => kvp.Key)
+                        .ToList();
+                    
+                    foreach (var key in oldestEntries)
+                    {
+                        _recentRecordings.TryRemove(key, out _);
+                    }
+                    
+                    _logger.LogInformation("Trimmed {Count} oldest recording cache entries to maintain size limit ({MaxSize})", 
+                        entriesToRemove, maxCacheSize);
+                }
+
                 if (keysToRemove.Count > 0)
                 {
                     _logger.LogDebug("Cleaned up {Count} expired recent recording entries. Total remaining: {Total}", 
                         keysToRemove.Count, _recentRecordings.Count);
                 }
 
-                // Also log if the dictionary is growing too large
-                if (_recentRecordings.Count > 10000)
+                // Log warning if cache is still growing unusually large
+                if (_recentRecordings.Count > 30000)
                 {
-                    _logger.LogWarning("Recent recordings cache has {Count} entries - this may indicate a memory leak", 
+                    _logger.LogWarning("Recent recordings cache has {Count} entries - this may indicate heavy activity or potential memory leak", 
                         _recentRecordings.Count);
                 }
             }
