@@ -14,6 +14,7 @@ namespace RadegastWeb.Data
         public DbSet<GlobalDisplayName> GlobalDisplayNames { get; set; }
         public DbSet<Notice> Notices { get; set; }
         public DbSet<VisitorStats> VisitorStats { get; set; }
+        public DbSet<StatsDisplayName> StatsDisplayNames { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -154,6 +155,20 @@ namespace RadegastWeb.Data
                 // Create index for cleanup operations
                 entity.HasIndex(e => e.FirstSeenAt)
                       .HasDatabaseName("IX_VisitorStats_FirstSeenAt");
+            });
+
+            // Configure StatsDisplayName entity
+            modelBuilder.Entity<StatsDisplayName>(entity =>
+            {
+                entity.HasKey(e => e.AvatarId);
+                entity.Property(e => e.AvatarId).IsRequired().HasMaxLength(36);
+                entity.Property(e => e.DisplayName).HasMaxLength(200);
+                entity.Property(e => e.AvatarName).HasMaxLength(200);
+                entity.Property(e => e.LastUpdated).IsRequired();
+
+                // Create index for efficient lookups by update time
+                entity.HasIndex(e => e.LastUpdated)
+                      .HasDatabaseName("IX_StatsDisplayName_LastUpdated");
             });
         }
 

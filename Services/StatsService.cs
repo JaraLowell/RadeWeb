@@ -90,6 +90,7 @@ namespace RadegastWeb.Services
         private readonly ILogger<StatsService> _logger;
         private readonly IGlobalDisplayNameCache _globalDisplayNameCache;
         private readonly ISLTimeService _sltTimeService;
+        private readonly IStatsNameCache _statsNameCache;
         
         // Thread-safe dictionary to track which accounts are monitoring which regions
         // This prevents duplicate recording when multiple accounts are in the same region
@@ -100,12 +101,13 @@ namespace RadegastWeb.Services
         private readonly TimeSpan _recordingCooldown = TimeSpan.FromSeconds(30); // Don't record same avatar twice within 30 seconds (much more responsive)
         private readonly Timer _recordingCleanupTimer;
         
-        public StatsService(IDbContextFactory<RadegastDbContext> dbContextFactory, ILogger<StatsService> logger, IGlobalDisplayNameCache globalDisplayNameCache, ISLTimeService sltTimeService)
+        public StatsService(IDbContextFactory<RadegastDbContext> dbContextFactory, ILogger<StatsService> logger, IGlobalDisplayNameCache globalDisplayNameCache, ISLTimeService sltTimeService, IStatsNameCache statsNameCache)
         {
             _dbContextFactory = dbContextFactory;
             _logger = logger;
             _globalDisplayNameCache = globalDisplayNameCache;
             _sltTimeService = sltTimeService;
+            _statsNameCache = statsNameCache;
             
             // Initialize cleanup timer to run every 5 minutes to prevent unbounded growth
             _recordingCleanupTimer = new Timer(CleanupRecentRecordings, null, (int)TimeSpan.FromMinutes(5).TotalMilliseconds, (int)TimeSpan.FromMinutes(5).TotalMilliseconds);
@@ -198,6 +200,13 @@ namespace RadegastWeb.Services
                                 await context.SaveChangesAsync();
                                 _logger.LogDebug("Updated LastSeenAt for {AvatarId} ({AvatarName}) in {RegionName} during cooldown", 
                                     avatarId, avatarName ?? "Unknown", regionName);
+                                
+                                // MEMORY FIX: Still update stats cache during cooldown if we have names
+                                if (!string.IsNullOrEmpty(avatarName) || !string.IsNullOrEmpty(displayName))
+                                {
+                                    await _statsNameCache.StoreNameAsync(avatarId, displayName, avatarName);
+                                }
+                                
                                 return; // Exit early during cooldown - we've updated LastSeenAt which was the main goal
                             }
                             
@@ -254,6 +263,13 @@ namespace RadegastWeb.Services
                         
                         await context.SaveChangesAsync();
                         
+                        // MEMORY FIX: Store names in persistent stats cache for historical display
+                        // This prevents the need to resolve thousands of names on stats page load
+                        if (!string.IsNullOrEmpty(avatarName) || !string.IsNullOrEmpty(displayName))
+                        {
+                            await _statsNameCache.StoreNameAsync(avatarId, displayName, avatarName);
+                        }
+                        
                         // Clear change tracker to free memory immediately
                         context.ChangeTracker.Clear();
                         
@@ -308,6 +324,13 @@ namespace RadegastWeb.Services
                                 
                                 await contextRetry.SaveChangesAsync();
                                 contextRetry.ChangeTracker.Clear();
+                                
+                                // MEMORY FIX: Store names in persistent stats cache
+                                if (!string.IsNullOrEmpty(avatarName) || !string.IsNullOrEmpty(displayName))
+                                {
+                                    await _statsNameCache.StoreNameAsync(avatarId, displayName, avatarName);
+                                }
+                                
                                 _logger.LogDebug("Successfully updated existing record for visitor {AvatarId} in {RegionName} after constraint violation", 
                                     avatarId, regionName);
                             }
@@ -613,8 +636,25 @@ namespace RadegastWeb.Services
                 historicalVisitorSet.Clear();
                 lastVisitDates.Clear();
 
-                // Enhance names using the global display name cache (async operation)
-                await EnhanceVisitorNamesAsync(visitors);
+                // MEMORY FIX: Use persistent stats names instead of mass enhancement
+                // Get names from stats cache for all visitors efficiently
+                var avatarIds = visitors.Select(v => v.AvatarId).ToList();
+                var statsNames = await _statsNameCache.GetBestNamesAsync(avatarIds);
+                
+                // Apply stats names to visitors
+                foreach (var visitor in visitors)
+                {
+                    if (statsNames.TryGetValue(visitor.AvatarId, out var bestName))
+                    {
+                        // Update display name from stats cache if we don't have a good one
+                        if (string.IsNullOrEmpty(visitor.DisplayName) || 
+                            visitor.DisplayName == "Loading..." || 
+                            visitor.DisplayName == "???")
+                        {
+                            visitor.DisplayName = bestName;
+                        }
+                    }
+                }
                 
                 return visitors.OrderByDescending(v => v.LastSeen).ToList();
             }
@@ -662,6 +702,10 @@ namespace RadegastWeb.Services
                 {
                     _recentRecordings.TryRemove(key, out _);
                 }
+                
+                // MEMORY FIX: Also cleanup old stats display names (60 days retention)
+                // This prevents the stats names table from growing indefinitely
+                await _statsNameCache.CleanupOldNamesAsync(60);
             }
             catch (Exception ex)
             {
@@ -1039,8 +1083,24 @@ namespace RadegastWeb.Services
                     })
                     .ToList();
                 
-                // Enhance names
-                await EnhanceVisitorNamesAsync(uniqueVisitors);
+                // MEMORY FIX: Use persistent stats names instead of mass enhancement
+                var visitorAvatarIds = uniqueVisitors.Select(v => v.AvatarId).ToList();
+                var visitorStatsNames = await _statsNameCache.GetBestNamesAsync(visitorAvatarIds);
+                
+                // Apply stats names to visitors
+                foreach (var visitor in uniqueVisitors)
+                {
+                    if (visitorStatsNames.TryGetValue(visitor.AvatarId, out var bestName))
+                    {
+                        // Update display name from stats cache if we don't have a good one
+                        if (string.IsNullOrEmpty(visitor.DisplayName) || 
+                            visitor.DisplayName == "Loading..." || 
+                            visitor.DisplayName == "???")
+                        {
+                            visitor.DisplayName = bestName;
+                        }
+                    }
+                }
                 
                 // Create daily breakdown
                 var seenInPeriod = new HashSet<string>();

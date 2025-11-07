@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using RadegastWeb.Data;
 
@@ -10,9 +11,11 @@ using RadegastWeb.Data;
 namespace RadegastWeb.Migrations
 {
     [DbContext(typeof(RadegastDbContext))]
-    partial class RadegastDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251107095053_AddStatsDisplayNames")]
+    partial class AddStatsDisplayNames
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.9");

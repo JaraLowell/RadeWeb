@@ -154,6 +154,9 @@ builder.Services.AddSingleton<IGroupInvitationService, GroupInvitationService>()
 builder.Services.AddSingleton<IGlobalDisplayNameCache, GlobalDisplayNameCache>();
 builder.Services.AddSingleton<IMasterDisplayNameService, MasterDisplayNameService>();
 
+// Stats-specific name cache for persistent historical names
+builder.Services.AddSingleton<IStatsNameCache, StatsNameCache>();
+
 // Compatibility adapter for existing IDisplayNameService interface
 builder.Services.AddSingleton<IDisplayNameService>(provider => 
     new DisplayNameServiceCompatibilityAdapter(provider.GetRequiredService<IMasterDisplayNameService>()));
