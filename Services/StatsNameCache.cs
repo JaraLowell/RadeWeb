@@ -35,6 +35,11 @@ namespace RadegastWeb.Services
         /// Clean up names for avatars not seen in visitor stats for more than specified days
         /// </summary>
         Task CleanupOldNamesAsync(int keepDays = 60);
+        
+        /// <summary>
+        /// Populate stats names from existing GlobalDisplayNames cache for historical visitors
+        /// </summary>
+        Task PopulateFromGlobalCacheAsync();
     }
 
     /// <summary>
@@ -238,6 +243,70 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error cleaning up old stats display names");
+            }
+        }
+
+        public async Task PopulateFromGlobalCacheAsync()
+        {
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                
+                // Get all avatar IDs from VisitorStats that don't have entries in StatsDisplayNames
+                var existingStatsNames = await context.StatsDisplayNames
+                    .Select(sdn => sdn.AvatarId)
+                    .ToListAsync();
+                
+                var visitorAvatarIds = await context.VisitorStats
+                    .Select(vs => vs.AvatarId)
+                    .Distinct()
+                    .Where(avatarId => !existingStatsNames.Contains(avatarId))
+                    .ToListAsync();
+                
+                if (!visitorAvatarIds.Any())
+                {
+                    _logger.LogInformation("No missing stats names to populate from global cache");
+                    return;
+                }
+                
+                _logger.LogInformation("Populating {Count} missing stats names from global display names cache", visitorAvatarIds.Count);
+                
+                // Get corresponding GlobalDisplayNames for these avatars
+                var globalNames = await context.GlobalDisplayNames
+                    .Where(gdn => visitorAvatarIds.Contains(gdn.AvatarId))
+                    .ToListAsync();
+                
+                var statsNamesToAdd = new List<StatsDisplayName>();
+                
+                foreach (var globalName in globalNames)
+                {
+                    var statsName = new StatsDisplayName
+                    {
+                        AvatarId = globalName.AvatarId,
+                        DisplayName = globalName.DisplayNameValue,
+                        AvatarName = globalName.LegacyFullName,
+                        LastUpdated = DateTime.UtcNow
+                    };
+                    
+                    statsNamesToAdd.Add(statsName);
+                }
+                
+                if (statsNamesToAdd.Any())
+                {
+                    context.StatsDisplayNames.AddRange(statsNamesToAdd);
+                    await context.SaveChangesAsync();
+                    
+                    _logger.LogInformation("Populated {Count} stats names from global display names cache", 
+                        statsNamesToAdd.Count);
+                }
+                else
+                {
+                    _logger.LogInformation("No global display names found to populate into stats cache");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error populating stats names from global cache");
             }
         }
 

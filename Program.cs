@@ -172,6 +172,9 @@ builder.Services.AddSingleton<RadegastBackgroundService>();
 builder.Services.AddHostedService<RadegastBackgroundService>(provider => provider.GetRequiredService<RadegastBackgroundService>());
 builder.Services.AddHostedService<MasterDisplayNameService>();
 
+// Stats name cache initialization service
+builder.Services.AddHostedService<StatsNameCacheInitializationService>();
+
 // Add logging configuration with additional filters
 builder.Services.AddLogging(logging =>
 {

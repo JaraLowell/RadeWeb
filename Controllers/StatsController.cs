@@ -16,14 +16,16 @@ namespace RadegastWeb.Controllers
         private readonly ISLTimeService _sltTimeService;
         private readonly IMasterDisplayNameService _displayNameService;
         private readonly INoticeService _noticeService;
+        private readonly IStatsNameCache _statsNameCache;
 
-        public StatsController(IStatsService statsService, ILogger<StatsController> logger, ISLTimeService sltTimeService, IMasterDisplayNameService displayNameService, INoticeService noticeService)
+        public StatsController(IStatsService statsService, ILogger<StatsController> logger, ISLTimeService sltTimeService, IMasterDisplayNameService displayNameService, INoticeService noticeService, IStatsNameCache statsNameCache)
         {
             _statsService = statsService;
             _logger = logger;
             _sltTimeService = sltTimeService;
             _displayNameService = displayNameService;
             _noticeService = noticeService;
+            _statsNameCache = statsNameCache;
         }
 
         /// <summary>
@@ -202,6 +204,24 @@ namespace RadegastWeb.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during cleanup operation");
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Populate stats names from global display names cache (admin function)
+        /// </summary>
+        [HttpPost("populate-names")]
+        public async Task<IActionResult> PopulateStatsNames()
+        {
+            try
+            {
+                await _statsNameCache.PopulateFromGlobalCacheAsync();
+                return Ok(new { message = "Stats names population completed" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during stats names population");
                 return StatusCode(500, "Internal server error");
             }
         }
