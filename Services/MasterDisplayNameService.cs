@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading.Channels;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using OpenMetaverse;
 using RadegastWeb.Models;
@@ -42,6 +43,7 @@ namespace RadegastWeb.Services
         Task LoadCacheAsync();
         Task SaveCacheAsync();
         void CleanExpiredCache();
+        Task<int> CleanupOldCachedNamesAsync(int keepDays = 60);
         
         // Events
         event EventHandler<DisplayNameChangedEventArgs>? DisplayNameChanged;
@@ -1178,6 +1180,42 @@ namespace RadegastWeb.Services
         public void CleanExpiredCache()
         {
             _globalCache.CleanExpiredCache();
+        }
+
+        public async Task<int> CleanupOldCachedNamesAsync(int keepDays = 60)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                using var context = scope.ServiceProvider.GetRequiredService<Data.RadegastDbContext>();
+                
+                var cutoffDate = DateTime.UtcNow.AddDays(-keepDays);
+                
+                // Use ExecuteDeleteAsync for efficient bulk deletion
+                int deletedCount = await context.GlobalDisplayNames
+                    .Where(n => n.CachedAt < cutoffDate)
+                    .ExecuteDeleteAsync();
+                
+                if (deletedCount > 0)
+                {
+                    _logger.LogInformation("Cleaned up {Count} old cached display names older than {Days} days", 
+                        deletedCount, keepDays);
+                        
+                    // Clear memory cache for deleted entries to avoid stale data
+                    _globalCache.CleanExpiredCache();
+                }
+                else
+                {
+                    _logger.LogDebug("No old cached display names found to cleanup (older than {Days} days)", keepDays);
+                }
+                
+                return deletedCount;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleaning up old cached display names");
+                return 0;
+            }
         }
 
         #endregion

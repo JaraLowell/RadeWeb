@@ -567,5 +567,31 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, "Internal server error");
             }
         }
+
+        /// <summary>
+        /// Clean up old cached display names (admin function)
+        /// </summary>
+        [HttpPost("cleanup/displaynames")]
+        public async Task<IActionResult> CleanupOldDisplayNames([FromQuery] int keepDays = 60)
+        {
+            try
+            {
+                if (keepDays < 1)
+                {
+                    return BadRequest("Keep days must be at least 1");
+                }
+
+                int deletedCount = await _displayNameService.CleanupOldCachedNamesAsync(keepDays);
+                return Ok(new { 
+                    message = $"Display name cleanup completed, deleted names cached longer than {keepDays} days ago",
+                    deletedCount = deletedCount
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during old display names cleanup");
+                return StatusCode(500, "Internal server error");
+            }
+        }
     }
 }

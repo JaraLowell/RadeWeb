@@ -885,6 +885,47 @@ namespace RadegastWeb.Services
                         }, cancellationToken));
                     }
                     
+                    // Clean up old chat messages (keep last 30 days)
+                    var chatHistoryService = scope.ServiceProvider.GetService<IChatHistoryService>();
+                    if (chatHistoryService != null)
+                    {
+                        maintenanceTasks.Add(Task.Run(async () =>
+                        {
+                            try
+                            {
+                                _logger.LogInformation("Starting daily cleanup of old chat messages");
+                                await chatHistoryService.CleanupOldMessagesAsync(TimeSpan.FromDays(30));
+                                _logger.LogInformation("Daily maintenance: cleaned up old chat messages older than 30 days");
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error during daily cleanup of old chat messages");
+                            }
+                        }, cancellationToken));
+                    }
+                    
+                    // Clean up old global display names (keep last 60 days)
+                    var masterDisplayNameService = scope.ServiceProvider.GetService<IMasterDisplayNameService>();
+                    if (masterDisplayNameService != null)
+                    {
+                        maintenanceTasks.Add(Task.Run(async () =>
+                        {
+                            try
+                            {
+                                _logger.LogInformation("Starting daily cleanup of old display names");
+                                var deletedCount = await masterDisplayNameService.CleanupOldCachedNamesAsync(60);
+                                if (deletedCount > 0)
+                                {
+                                    _logger.LogInformation("Daily maintenance: cleaned up {DeletedCount} old display names", deletedCount);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex, "Error during daily cleanup of old display names");
+                            }
+                        }, cancellationToken));
+                    }
+                    
                     // Wait for all maintenance tasks to complete with timeout
                     try
                     {
