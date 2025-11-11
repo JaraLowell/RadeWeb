@@ -464,7 +464,7 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
-        /// Clean up notices for a specific account (admin function)
+        /// Clean up notices for a specific account (admin function) - removes ALL notices
         /// </summary>
         [HttpDelete("notices/account/{accountId}")]
         public async Task<IActionResult> CleanupAccountNotices(Guid accountId)
@@ -473,13 +473,41 @@ namespace RadegastWeb.Controllers
             {
                 int deletedCount = await _noticeService.CleanupAccountNoticesAsync(accountId);
                 return Ok(new { 
-                    message = $"Cleanup completed for account {accountId}", 
+                    message = $"Complete cleanup for account {accountId} - ALL notices removed", 
                     deletedCount = deletedCount 
                 });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during notice cleanup for account {AccountId}", accountId);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Smart cleanup of notices for a specific account (admin function) - keeps recent notices
+        /// </summary>
+        [HttpPost("notices/account/{accountId}/cleanup")]
+        public async Task<IActionResult> SmartCleanupAccountNotices(Guid accountId, [FromQuery] int maxKeepCount = 50, [FromQuery] int maxKeepHours = 48)
+        {
+            try
+            {
+                if (maxKeepCount < 1 || maxKeepHours < 1)
+                {
+                    return BadRequest("maxKeepCount and maxKeepHours must be at least 1");
+                }
+
+                int deletedCount = await _noticeService.CleanupOldAccountNoticesAsync(accountId, maxKeepCount, maxKeepHours);
+                return Ok(new { 
+                    message = $"Smart cleanup completed for account {accountId} - kept up to {maxKeepCount} notices newer than {maxKeepHours} hours", 
+                    deletedCount = deletedCount,
+                    maxKeepCount = maxKeepCount,
+                    maxKeepHours = maxKeepHours
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during smart notice cleanup for account {AccountId}", accountId);
                 return StatusCode(500, "Internal server error");
             }
         }

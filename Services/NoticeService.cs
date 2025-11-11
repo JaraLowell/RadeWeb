@@ -17,6 +17,7 @@ namespace RadegastWeb.Services
         Task SendNoticeAcknowledgmentToSecondLifeAsync(Guid accountId, InstantMessage originalMessage, bool hasAttachment);
         void CleanupAccount(Guid accountId);
         Task<int> CleanupAccountNoticesAsync(Guid accountId);
+        Task<int> CleanupOldAccountNoticesAsync(Guid accountId, int maxKeepCount = 50, int maxKeepHours = 48);
         Task<int> CleanupOldNoticesAsync(int keepDays = 7);
         Task<int> GetTotalNoticeCountAsync();
         Task<Dictionary<Guid, int>> GetAccountNoticeCountsAsync();
@@ -615,8 +616,8 @@ namespace RadegastWeb.Services
 
         public void CleanupAccount(Guid accountId)
         {
-            // Clean up all notices for the account when it disconnects
-            _ = Task.Run(async () => await CleanupAccountNoticesAsync(accountId));
+            // Clean up old notices for the account when it disconnects, but keep recent ones
+            _ = Task.Run(async () => await CleanupOldAccountNoticesAsync(accountId, maxKeepCount: 50, maxKeepHours: 48));
         }
         
         /// <summary>
@@ -671,6 +672,95 @@ namespace RadegastWeb.Services
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error cleaning up notices for account {AccountId} on attempt {Retry}", 
+                        accountId, retry + 1);
+                    
+                    if (retry == maxRetries - 1)
+                    {
+                        return totalDeleted;
+                    }
+                    
+                    await Task.Delay(100 * (retry + 1));
+                }
+            }
+            
+            return totalDeleted;
+        }
+        
+        /// <summary>
+        /// Smart cleanup of account notices that keeps recent notices but removes old ones
+        /// This prevents losing all notices when an avatar logs out, while still managing storage
+        /// </summary>
+        /// <param name="accountId">The account ID to clean notices for</param>
+        /// <param name="maxKeepCount">Maximum number of recent notices to keep</param>
+        /// <param name="maxKeepHours">Maximum age in hours for notices to keep</param>
+        public async Task<int> CleanupOldAccountNoticesAsync(Guid accountId, int maxKeepCount = 50, int maxKeepHours = 48)
+        {
+            int totalDeleted = 0;
+            int maxRetries = 3;
+            
+            for (int retry = 0; retry < maxRetries; retry++)
+            {
+                try
+                {
+                    using var context = _dbContextFactory.CreateDbContext();
+                    
+                    var cutoffDate = DateTime.UtcNow.AddHours(-maxKeepHours);
+                    
+                    // Get notices for this account ordered by timestamp (newest first)
+                    var notices = await context.Notices
+                        .Where(n => n.AccountId == accountId)
+                        .OrderByDescending(n => n.Timestamp)
+                        .Select(n => new { n.Id, n.Timestamp })
+                        .ToListAsync();
+                    
+                    // Find notices to delete: either beyond maxKeepCount or older than cutoffDate
+                    var noticesToDelete = notices
+                        .Skip(maxKeepCount) // Skip the newest maxKeepCount notices
+                        .Union(notices.Where(n => n.Timestamp < cutoffDate)) // Union with notices older than cutoff
+                        .Select(n => n.Id)
+                        .Distinct()
+                        .ToList();
+                    
+                    if (noticesToDelete.Any())
+                    {
+                        // Use ExecuteDeleteAsync for direct database deletion
+                        int deletedCount = await context.Notices
+                            .Where(n => noticesToDelete.Contains(n.Id))
+                            .ExecuteDeleteAsync();
+                        
+                        totalDeleted += deletedCount;
+                        
+                        var keptCount = notices.Count - deletedCount;
+                        _logger.LogInformation(
+                            "Smart cleanup for account {AccountId}: deleted {DeletedCount} old notices, kept {KeptCount} recent notices (max {MaxKeepCount}, max {MaxKeepHours}h old)", 
+                            accountId, deletedCount, keptCount, maxKeepCount, maxKeepHours);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("No old notices to cleanup for account {AccountId} (total: {TotalCount}, max keep: {MaxKeepCount}, max age: {MaxKeepHours}h)", 
+                            accountId, notices.Count, maxKeepCount, maxKeepHours);
+                    }
+                    
+                    return totalDeleted;
+                }
+                catch (DbUpdateConcurrencyException ex)
+                {
+                    _logger.LogWarning(ex, "Concurrency conflict while cleaning old notices for account {AccountId}, attempt {Retry}/{MaxRetries}", 
+                        accountId, retry + 1, maxRetries);
+                    
+                    if (retry == maxRetries - 1)
+                    {
+                        // On final retry, try the fallback batch method with old cleanup logic
+                        _logger.LogWarning("Falling back to complete cleanup for account {AccountId} after smart cleanup failures", accountId);
+                        return await CleanupAccountNoticesBatchAsync(accountId);
+                    }
+                    
+                    // Wait a bit before retrying
+                    await Task.Delay(100 * (retry + 1));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error in smart cleanup for account {AccountId} on attempt {Retry}", 
                         accountId, retry + 1);
                     
                     if (retry == maxRetries - 1)
