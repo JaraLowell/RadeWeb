@@ -2837,6 +2837,9 @@ namespace RadegastWeb.Core
 
         private async void Self_AlertMessage(object? sender, AlertMessageEventArgs e)
         {
+            // Check for region restart messages and handle them specially
+            await HandleRegionRestartIfDetected(e.Message);
+            
             // Process region notices through the notice service
             await _noticeService.ProcessRegionAlertAsync(Guid.Parse(_accountId), e.Message);
             
@@ -2854,6 +2857,85 @@ namespace RadegastWeb.Core
             };
 
             ChatReceived?.Invoke(this, chatMessage);
+        }
+
+        /// <summary>
+        /// Detects region restart messages and handles them by notifying relay avatar and initiating logout
+        /// </summary>
+        /// <param name="message">The alert message to check for restart notifications</param>
+        private async Task HandleRegionRestartIfDetected(string message)
+        {
+            try
+            {
+                // Check for region restart message pattern: 
+                // "Region "{region_name}" will restart in 5 minutes. If you stay in this region, you will be logged out"
+                var restartPattern = @"Region\s+""(.+?)""\s+will\s+restart\s+in\s+\d+\s+minutes?\.\s+If\s+you\s+stay\s+in\s+this\s+region,?\s+you\s+will\s+be\s+logged\s+out";
+                var match = System.Text.RegularExpressions.Regex.Match(message, restartPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                
+                if (match.Success)
+                {
+                    var regionName = match.Groups[1].Value;
+                    _logger.LogWarning("Region restart detected for region '{RegionName}' - Account {AccountId}", regionName, _accountId);
+                    
+                    // Check if relay avatar is configured
+                    if (!string.IsNullOrEmpty(AccountInfo.AvatarRelayUuid) && 
+                        AccountInfo.AvatarRelayUuid != "00000000-0000-0000-0000-000000000000")
+                    {
+                        await SendRelayRestartNotification(regionName, message);
+                    }
+                    
+                    // Initiate logout and cleanup after a short delay to ensure relay notification is sent
+                    _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(async _ =>
+                    {
+                        try
+                        {
+                            _logger.LogInformation("Initiating logout for account {AccountId} due to region restart in {RegionName}", 
+                                _accountId, regionName);
+                            await DisconnectAsync();
+                        }
+                        catch (Exception logoutEx)
+                        {
+                            _logger.LogError(logoutEx, "Error during automatic logout for region restart - Account {AccountId}", _accountId);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling region restart detection for account {AccountId}", _accountId);
+            }
+        }
+
+        /// <summary>
+        /// Sends an IM notification to the relay avatar about the impending region restart
+        /// </summary>
+        /// <param name="regionName">Name of the region that's restarting</param>
+        /// <param name="originalMessage">The original restart message from the system</param>
+        private async Task SendRelayRestartNotification(string regionName, string originalMessage)
+        {
+            try
+            {
+                if (!UUID.TryParse(AccountInfo.AvatarRelayUuid, out UUID relayUuid))
+                {
+                    _logger.LogWarning("Invalid relay UUID '{RelayUuid}' for account {AccountId}", 
+                        AccountInfo.AvatarRelayUuid, _accountId);
+                    return;
+                }
+                
+                var notificationMessage = $"[REGION RESTART] Avatar {AccountInfo.FirstName} {AccountInfo.LastName} in region '{regionName}' - {originalMessage}. Auto-logging out to avoid disconnection.";
+                
+                _logger.LogInformation("Sending region restart notification to relay avatar {RelayUuid} for account {AccountId}", 
+                    relayUuid, _accountId);
+                
+                // Send the IM to the relay avatar
+                await Task.Run(() => _client.Self.InstantMessage(relayUuid, notificationMessage));
+                
+                _logger.LogInformation("Successfully sent region restart notification to relay avatar for account {AccountId}", _accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending region restart notification to relay avatar for account {AccountId}", _accountId);
+            }
         }
 
         private async void Groups_CurrentGroups(object? sender, CurrentGroupsEventArgs e)
