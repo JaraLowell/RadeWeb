@@ -3382,6 +3382,20 @@ namespace RadegastWeb.Core
         public uint SittingOnLocalId => _client.Self.SittingOn;
 
         /// <summary>
+        /// Gets the UUID of the object the avatar is currently sitting on, or null if not sitting on an object
+        /// </summary>
+        public UUID? CurrentSittingObjectUuid
+        {
+            get
+            {
+                var localId = SittingOnLocalId;
+                if (localId == 0) return null;
+                
+                return GetObjectUUIDFromLocalID(localId);
+            }
+        }
+
+        /// <summary>
         /// Gets whether the avatar is currently in away mode
         /// </summary>
         public bool IsAway 

@@ -76,14 +76,16 @@ namespace RadegastWeb.Services
     {
         private readonly ILogger<AutoSitService> _logger;
         private readonly IPresenceService _presenceService;
+        private readonly IServiceProvider _serviceProvider;
         private readonly Dictionary<Guid, Timer> _autoSitTimers = new();
         private readonly object _lock = new();
         private bool _disposed;
 
-        public AutoSitService(ILogger<AutoSitService> logger, IPresenceService presenceService)
+        public AutoSitService(ILogger<AutoSitService> logger, IPresenceService presenceService, IServiceProvider serviceProvider)
         {
             _logger = logger;
             _presenceService = presenceService;
+            _serviceProvider = serviceProvider;
         }
 
         public async Task<AutoSitConfig?> GetAutoSitConfigAsync(Guid accountId)
@@ -185,39 +187,10 @@ namespace RadegastWeb.Services
 
         public async Task UpdateLastSitTargetWithPresenceIfEnabledAsync(Guid accountId, string targetUuid, IPresenceService presenceService)
         {
-            try
-            {
-                var config = await GetAutoSitConfigAsync(accountId);
-                
-                // Only update if auto-sit is enabled
-                if (config == null || !config.Enabled)
-                {
-                    _logger.LogDebug("Auto-sit not enabled for account {AccountId}, skipping sit target update", accountId);
-                    return;
-                }
-                
-                // Update the configuration with new target and presence status
-                config.TargetUuid = targetUuid;
-                
-                // Capture current presence status
-                if (config.RestorePresenceStatus)
-                {
-                    var currentStatus = presenceService.GetAccountStatus(accountId);
-                    config.LastPresenceStatus = currentStatus.ToString();
-                    config.PresenceStatusCapturedAt = DateTime.UtcNow;
-                    
-                    _logger.LogInformation("Captured presence status {Status} for account {AccountId} when sitting on {TargetUuid} (auto-sit enabled)", 
-                                         currentStatus, accountId, targetUuid);
-                }
-                
-                await SaveAutoSitConfigAsync(accountId, config);
-                
-                _logger.LogInformation("Updated last sit target for account {AccountId} to {TargetUuid} with presence status (auto-sit enabled)", accountId, targetUuid);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error updating last sit target with presence for account {AccountId} (auto-sit enabled check)", accountId);
-            }
+            // According to the requirements, the JSON should only be updated when the auto-sit toggle is changed,
+            // not when the user sits on different objects. This method is now effectively a no-op
+            // to maintain backward compatibility but prevent unwanted config updates.
+            _logger.LogDebug("Auto-sit config update skipped for account {AccountId} - config should only be updated when toggle is changed", accountId);
         }
 
         public async Task ScheduleAutoSitAsync(Guid accountId, WebRadegastInstance instance)
@@ -282,13 +255,56 @@ namespace RadegastWeb.Services
         {
             var config = await GetAutoSitConfigAsync(accountId) ?? new AutoSitConfig();
             config.Enabled = enabled;
-            await SaveAutoSitConfigAsync(accountId, config);
             
-            if (!enabled)
+            // When enabling auto-sit, capture the current state (presence and sit target)
+            if (enabled)
+            {
+                // Capture current presence status
+                if (config.RestorePresenceStatus)
+                {
+                    var currentStatus = _presenceService.GetAccountStatus(accountId);
+                    config.LastPresenceStatus = currentStatus.ToString();
+                    config.PresenceStatusCapturedAt = DateTime.UtcNow;
+                    
+                    _logger.LogInformation("Captured presence status {Status} for account {AccountId} when enabling auto-sit", 
+                                         currentStatus, accountId);
+                }
+                
+                // Capture current sitting target if sitting on an object
+                try
+                {
+                    // Get the account instance to check current sitting state
+                    using var scope = _serviceProvider?.CreateScope();
+                    if (scope != null)
+                    {
+                        var accountService = scope.ServiceProvider.GetService<IAccountService>();
+                        if (accountService != null)
+                        {
+                            var instance = accountService.GetInstance(accountId);
+                            if (instance != null && instance.IsConnected && instance.IsSitting)
+                            {
+                                var objectUuid = instance.CurrentSittingObjectUuid;
+                                if (objectUuid.HasValue)
+                                {
+                                    config.TargetUuid = objectUuid.Value.ToString();
+                                    _logger.LogInformation("Captured sit target {TargetUuid} for account {AccountId} when enabling auto-sit", 
+                                                         config.TargetUuid, accountId);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error capturing current sit target for account {AccountId} when enabling auto-sit", accountId);
+                }
+            }
+            else
             {
                 CancelAutoSit(accountId);
             }
-
+            
+            await SaveAutoSitConfigAsync(accountId, config);
             _logger.LogInformation("Set auto-sit enabled={Enabled} for account {AccountId}", enabled, accountId);
         }
 
