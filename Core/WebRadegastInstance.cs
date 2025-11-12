@@ -2885,7 +2885,7 @@ namespace RadegastWeb.Core
                     }
                     
                     // Initiate logout and cleanup after a short delay to ensure relay notification is sent
-                    _ = Task.Delay(TimeSpan.FromSeconds(2)).ContinueWith(async _ =>
+                    _ = Task.Delay(TimeSpan.FromSeconds(10)).ContinueWith(async _ =>
                     {
                         try
                         {

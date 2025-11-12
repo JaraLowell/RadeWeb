@@ -847,15 +847,9 @@ namespace RadegastWeb.Hubs
                 
                 try
                 {
-                    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    
                     // Try direct instance method first to bypass AccountService layer
                     var avatars = await instance.GetNearbyAvatarsAsync().WaitAsync(TimeSpan.FromSeconds(3)); // 3 second timeout
-                    
-                    stopwatch.Stop();
                     avatarList = avatars.ToList();
-                    _logger.LogInformation("Retrieved {Count} nearby avatars for account {AccountId} in {ElapsedMs}ms", 
-                        avatarList.Count, accountId, stopwatch.ElapsedMilliseconds);
                 }
                 catch (TimeoutException)
                 {
@@ -882,9 +876,6 @@ namespace RadegastWeb.Hubs
                 }
                 
                 // Always send the response, even if empty
-                _logger.LogInformation("Sending {Count} nearby avatars to connection {ConnectionId} for account {AccountId}", 
-                    avatarList.Count, Context.ConnectionId, accountId);
-                
                 await Clients.Caller.NearbyAvatarsUpdated(avatarList);
                 
                 // Also broadcast to the group if this connection is properly in the group
@@ -893,9 +884,6 @@ namespace RadegastWeb.Hubs
                     await Clients.Group($"account_{accountId}").NearbyAvatarsUpdated(avatarList);
                     _logger.LogDebug("Also broadcasted {Count} avatars to group account_{AccountId}", avatarList.Count, accountId);
                 }
-                
-                _logger.LogInformation("✓ GetNearbyAvatars completed successfully for account {AccountId}, sent {Count} avatars", 
-                    accountId, avatarList.Count);
             }
             catch (Exception ex)
             {
