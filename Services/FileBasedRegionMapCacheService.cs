@@ -114,11 +114,65 @@ namespace RadegastWeb.Services
             return mapData;
         }
 
+        public async Task<byte[]?> GetRegionMapWithNameAsync(ulong regionX, ulong regionY, string regionName)
+        {
+            if (_disposed || string.IsNullOrEmpty(regionName))
+                return await GetRegionMapAsync(regionX, regionY); // Fallback to coordinate-only cache
+
+            // Check if we have a cached version with the specific region name
+            var cachedData = await ReadCachedMapWithNameAsync(regionX, regionY, regionName);
+            if (cachedData != null && IsMapCacheWithNameValid(regionX, regionY, regionName))
+            {
+                _logger.LogDebug("Cache hit for region map {RegionName} at ({RegionX}, {RegionY})", regionName, regionX, regionY);
+                return cachedData;
+            }
+
+            _logger.LogDebug("Cache miss for region map {RegionName} at ({RegionX}, {RegionY})", regionName, regionX, regionY);
+            
+            // Download and cache the map with region name
+            var mapData = await DownloadRegionMapAsync(regionX, regionY);
+            if (mapData != null)
+            {
+                CacheRegionMapWithName(regionX, regionY, regionName, mapData);
+            }
+
+            return mapData;
+        }
+
         public void CacheRegionMap(ulong regionX, ulong regionY, byte[] imageData)
         {
             // This method is kept for interface compatibility but doesn't cache
             // since we need account context for file-based caching
             _logger.LogDebug("CacheRegionMap called without account context - skipping cache");
+        }
+
+        public void CacheRegionMapWithName(ulong regionX, ulong regionY, string regionName, byte[] imageData)
+        {
+            if (_disposed || imageData == null || imageData.Length == 0 || string.IsNullOrEmpty(regionName))
+                return;
+
+            try
+            {
+                // Create a global cache directory for region-name-specific maps
+                var globalCacheDir = Path.Combine(_dataRoot, "global_maps");
+                if (!Directory.Exists(globalCacheDir))
+                {
+                    Directory.CreateDirectory(globalCacheDir);
+                }
+                
+                var mapFilePath = GetMapFilePathWithName(regionX, regionY, regionName);
+                
+                // Write the image data
+                File.WriteAllBytes(mapFilePath, imageData);
+                
+                _logger.LogDebug("Cached region map for {RegionName} at ({RegionX}, {RegionY}), size: {SizeKB}KB", 
+                    regionName, regionX, regionY, imageData.Length / 1024);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error caching region map for {RegionName} at ({RegionX}, {RegionY})", 
+                    regionName, regionX, regionY);
+            }
         }
 
         public async Task CacheRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY, byte[] imageData)
@@ -378,6 +432,59 @@ namespace RadegastWeb.Services
         private static string GetCacheKey(ulong regionX, ulong regionY)
         {
             return $"region_map_{regionX}_{regionY}";
+        }
+        
+        private string GetMapFilePathWithName(ulong regionX, ulong regionY, string regionName)
+        {
+            var globalCacheDir = Path.Combine(_dataRoot, "global_maps");
+            if (!Directory.Exists(globalCacheDir))
+            {
+                Directory.CreateDirectory(globalCacheDir);
+            }
+            
+            // Sanitize region name for file system
+            var sanitizedName = regionName.Replace(" ", "_").Replace("/", "_").Replace("\\", "_")
+                                         .Replace(":", "_").Replace("*", "_").Replace("?", "_")
+                                         .Replace("<", "_").Replace(">", "_").Replace("|", "_");
+            
+            return Path.Combine(globalCacheDir, $"region_{regionX}_{regionY}_{sanitizedName}.jpg");
+        }
+        
+        private async Task<byte[]?> ReadCachedMapWithNameAsync(ulong regionX, ulong regionY, string regionName)
+        {
+            try
+            {
+                var mapFilePath = GetMapFilePathWithName(regionX, regionY, regionName);
+                
+                if (!File.Exists(mapFilePath))
+                    return null;
+                
+                return await File.ReadAllBytesAsync(mapFilePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error reading cached map for region {RegionName} at ({RegionX}, {RegionY})", 
+                    regionName, regionX, regionY);
+                return null;
+            }
+        }
+        
+        private bool IsMapCacheWithNameValid(ulong regionX, ulong regionY, string regionName)
+        {
+            try
+            {
+                var mapFilePath = GetMapFilePathWithName(regionX, regionY, regionName);
+                
+                if (!File.Exists(mapFilePath))
+                    return false;
+                
+                var fileInfo = new FileInfo(mapFilePath);
+                return DateTime.UtcNow - fileInfo.LastWriteTimeUtc < _cacheExpiry;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private async Task SaveMetadataAsync(Guid accountId)

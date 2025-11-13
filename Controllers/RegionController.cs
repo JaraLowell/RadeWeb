@@ -124,8 +124,12 @@ namespace RadegastWeb.Controllers
                 _logger.LogDebug("Getting region map for {RegionName} at ({RegionX}, {RegionY})", 
                     currentSim.Name, regionX, regionY);
 
-                // Try to get the map from cache first (account-specific)
-                var imageBytes = await _regionMapCacheService.GetRegionMapForAccountAsync(accountId, regionX, regionY);
+                // Check if we have a cached map for this specific region name and coordinates
+                // This prevents returning maps from different regions that happen to have the same coordinates
+                var regionSpecificCacheKey = $"{currentSim.Name}_{regionX}_{regionY}";
+                
+                // Try to get the map from cache first (region-specific to prevent coordinate collisions)
+                var imageBytes = await _regionMapCacheService.GetRegionMapWithNameAsync(regionX, regionY, currentSim.Name);
                 
                 if (imageBytes == null || imageBytes.Length == 0)
                 {

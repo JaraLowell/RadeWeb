@@ -2893,7 +2893,11 @@ class RadegastWebClient {
                 
                 // Refresh minimap if region changed (teleport/login to new region)
                 if (window.miniMap && previousRegion !== regionInfo.name) {
-                    window.miniMap.refresh();
+                    console.log(`Region changed from "${previousRegion}" to "${regionInfo.name}" - refreshing minimap after delay`);
+                    // Add a brief delay to allow the backend to update its region information
+                    setTimeout(() => {
+                        window.miniMap.refresh();
+                    }, 750); // 750ms delay to ensure backend cache is updated
                 }
             }
         }

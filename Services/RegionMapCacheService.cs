@@ -11,7 +11,9 @@ namespace RadegastWeb.Services
     {
         Task<byte[]?> GetRegionMapAsync(ulong regionX, ulong regionY);
         Task<byte[]?> GetRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY);
+        Task<byte[]?> GetRegionMapWithNameAsync(ulong regionX, ulong regionY, string regionName);
         void CacheRegionMap(ulong regionX, ulong regionY, byte[] imageData);
+        void CacheRegionMapWithName(ulong regionX, ulong regionY, string regionName, byte[] imageData);
         Task CacheRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY, byte[] imageData);
         bool IsRegionMapCached(ulong regionX, ulong regionY);
         bool IsRegionMapCachedForAccount(Guid accountId, ulong regionX, ulong regionY);
@@ -220,6 +222,13 @@ namespace RadegastWeb.Services
         {
             return $"region_map_{regionX}_{regionY}";
         }
+        
+        private static string GetCacheKeyWithName(ulong regionX, ulong regionY, string regionName)
+        {
+            // Use region name in cache key to prevent coordinate collisions between different regions
+            var sanitizedName = regionName.Replace(" ", "_").Replace("/", "_").Replace("\\", "_");
+            return $"region_map_{regionX}_{regionY}_{sanitizedName}";
+        }
 
         private void RemoveOldestEntries(int countToRemove)
         {
@@ -289,6 +298,110 @@ namespace RadegastWeb.Services
             // This is a no-op since memory cache is shared
             _logger.LogDebug("Account-specific cleanup not supported in memory-based cache service");
             return Task.CompletedTask;
+        }
+        
+        public async Task<byte[]?> GetRegionMapWithNameAsync(ulong regionX, ulong regionY, string regionName)
+        {
+            if (_disposed || string.IsNullOrEmpty(regionName))
+                return await GetRegionMapAsync(regionX, regionY); // Fallback to coordinate-only cache
+
+            var cacheKey = GetCacheKeyWithName(regionX, regionY, regionName);
+            
+            // Check if we have the map in cache with the specific region name
+            if (_memoryCache.TryGetValue(cacheKey, out byte[]? cachedMap) && cachedMap != null)
+            {
+                // Check if cache is still valid
+                if (_cacheTimestamps.TryGetValue(cacheKey, out var cacheTime) && 
+                    DateTime.UtcNow - cacheTime < _cacheExpiry)
+                {
+                    _logger.LogDebug("Cache hit for region map {RegionName} at ({RegionX}, {RegionY})", regionName, regionX, regionY);
+                    return cachedMap;
+                }
+                else
+                {
+                    // Cache expired, remove it
+                    _memoryCache.Remove(cacheKey);
+                    _cacheTimestamps.TryRemove(cacheKey, out _);
+                    _logger.LogDebug("Cache expired for region map {RegionName} at ({RegionX}, {RegionY})", regionName, regionX, regionY);
+                }
+            }
+
+            // Not in cache or expired, need to download
+            _logger.LogDebug("Cache miss for region map {RegionName} at ({RegionX}, {RegionY})", regionName, regionX, regionY);
+            
+            try
+            {
+                var mapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
+                
+                _logger.LogDebug("Downloading region map from: {MapUrl} for region {RegionName}", mapUrl, regionName);
+                
+                using var httpClient = new HttpClient();
+                httpClient.Timeout = TimeSpan.FromSeconds(30);
+                
+                var response = await httpClient.GetAsync(mapUrl);
+                
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("Failed to download region map for {RegionName} from {MapUrl}. Status: {StatusCode}", 
+                        regionName, mapUrl, response.StatusCode);
+                    return null;
+                }
+
+                var imageBytes = await response.Content.ReadAsByteArrayAsync();
+                
+                // Cache the downloaded map with region name
+                CacheRegionMapWithName(regionX, regionY, regionName, imageBytes);
+                
+                _logger.LogDebug("Successfully downloaded and cached region map for {RegionName} at ({RegionX}, {RegionY}), size: {SizeKB}KB", 
+                    regionName, regionX, regionY, imageBytes.Length / 1024);
+                
+                return imageBytes;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error downloading region map for {RegionName} at ({RegionX}, {RegionY})", regionName, regionX, regionY);
+                return null;
+            }
+        }
+        
+        public void CacheRegionMapWithName(ulong regionX, ulong regionY, string regionName, byte[] imageData)
+        {
+            if (_disposed || imageData == null || imageData.Length == 0 || string.IsNullOrEmpty(regionName))
+                return;
+
+            lock (_lockObject)
+            {
+                // Check cache size limits before adding
+                if (_cacheTimestamps.Count >= _maxRegionCount)
+                {
+                    _logger.LogDebug("Cache at maximum region count ({MaxCount}), cleaning oldest entries", _maxRegionCount);
+                    RemoveOldestEntries(Math.Max(1, _maxRegionCount / 4)); // Remove 25% of entries
+                }
+
+                var estimatedCacheSize = GetEstimatedCacheSize();
+                if (estimatedCacheSize + imageData.Length > _maxCacheSize)
+                {
+                    _logger.LogDebug("Cache size limit reached ({CurrentSizeMB}MB + {NewSizeKB}KB > {MaxSizeMB}MB), cleaning cache", 
+                        estimatedCacheSize / (1024 * 1024), imageData.Length / 1024, _maxCacheSize / (1024 * 1024));
+                    RemoveOldestEntries(Math.Max(1, _maxRegionCount / 2)); // Remove 50% of entries
+                }
+
+                var cacheKey = GetCacheKeyWithName(regionX, regionY, regionName);
+                
+                // Use sliding expiration
+                var cacheOptions = new MemoryCacheEntryOptions
+                {
+                    SlidingExpiration = _cacheExpiry,
+                    Size = imageData.Length,
+                    Priority = CacheItemPriority.Normal
+                };
+
+                _memoryCache.Set(cacheKey, imageData, cacheOptions);
+                _cacheTimestamps[cacheKey] = DateTime.UtcNow;
+                
+                _logger.LogDebug("Cached region map for {RegionName} at ({RegionX}, {RegionY}), size: {SizeKB}KB", 
+                    regionName, regionX, regionY, imageData.Length / 1024);
+            }
         }
 
         public void Dispose()

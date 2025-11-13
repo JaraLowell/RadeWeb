@@ -185,12 +185,13 @@ namespace RadegastWeb.Services
             }
         }
 
-        public async Task UpdateLastSitTargetWithPresenceIfEnabledAsync(Guid accountId, string targetUuid, IPresenceService presenceService)
+        public Task UpdateLastSitTargetWithPresenceIfEnabledAsync(Guid accountId, string targetUuid, IPresenceService presenceService)
         {
             // According to the requirements, the JSON should only be updated when the auto-sit toggle is changed,
             // not when the user sits on different objects. This method is now effectively a no-op
             // to maintain backward compatibility but prevent unwanted config updates.
             _logger.LogDebug("Auto-sit config update skipped for account {AccountId} - config should only be updated when toggle is changed", accountId);
+            return Task.CompletedTask;
         }
 
         public async Task ScheduleAutoSitAsync(Guid accountId, WebRadegastInstance instance)

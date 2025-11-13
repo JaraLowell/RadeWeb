@@ -366,9 +366,13 @@ class MiniMap {
 
     updateMapInfo(regionInfo) {
         if (regionInfo.name !== this.regionName) {
-            // Region changed, reload the map
+            // Region changed, reload the map after a small delay to ensure backend has processed the change
             this.regionName = regionInfo.name;
-            this.loadRegionMap();
+            
+            // Add a brief delay to allow the backend to update its region information
+            setTimeout(() => {
+                this.loadRegionMap();
+            }, 500); // 500ms delay
         }
     }
 
