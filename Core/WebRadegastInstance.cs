@@ -522,7 +522,8 @@ namespace RadegastWeb.Core
                         // If the display name is still invalid, proactively request a fresh one
                         if (string.IsNullOrWhiteSpace(targetDisplayName) || targetDisplayName == "Loading..." || targetDisplayName == "???")
                         {
-                            targetDisplayName = "Unknown User"; // Temporary fallback
+                            // Use a more informative fallback that includes the UUID prefix
+                            targetDisplayName = $"Resolving... ({targetId.Substring(0, 8)})";
 
                             // Proactively request a proper display name for future use
                             _ = Task.Run(async () =>
@@ -2504,6 +2505,27 @@ namespace RadegastWeb.Core
             {
                 senderDisplayName = !string.IsNullOrWhiteSpace(e.IM.FromAgentName) ? e.IM.FromAgentName : GetBestAvatarName(e.IM.FromAgentID, e.IM.FromAgentName);
                 
+                // Special handling for relay messages - check if this is from a known relay avatar
+                // and use cached name if available to prevent "Unknown" from appearing
+                if (senderDisplayName.StartsWith("Resolving...") || senderDisplayName == "Unknown User")
+                {
+                    try
+                    {
+                        var cachedRelayName = await _displayNameService.GetDisplayNameAsync(Guid.Parse(_accountId), e.IM.FromAgentID.ToString());
+                        if (!string.IsNullOrWhiteSpace(cachedRelayName) && 
+                            cachedRelayName != "Loading..." && 
+                            cachedRelayName != "???" &&
+                            !cachedRelayName.StartsWith("Resolving..."))
+                        {
+                            senderDisplayName = cachedRelayName;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error getting cached relay name for IM sender {FromAgentId}", e.IM.FromAgentID);
+                    }
+                }
+                
                 // Proactively request a proper display name for future use
                 _ = Task.Run(async () =>
                 {
@@ -2837,6 +2859,13 @@ namespace RadegastWeb.Core
 
         private async void Self_AlertMessage(object? sender, AlertMessageEventArgs e)
         {
+            // Filter out relay message warnings for offline users
+            if (ShouldIgnoreAlertMessage(e.Message))
+            {
+                _logger.LogDebug("Ignoring filtered alert message for account {AccountId}: {Message}", _accountId, e.Message);
+                return;
+            }
+            
             // Check for region restart messages and handle them specially
             await HandleRegionRestartIfDetected(e.Message);
             
@@ -2936,6 +2965,49 @@ namespace RadegastWeb.Core
             {
                 _logger.LogError(ex, "Error sending region restart notification to relay avatar for account {AccountId}", _accountId);
             }
+        }
+
+        /// <summary>
+        /// Determines if an alert message should be ignored to prevent spam from common system warnings
+        /// </summary>
+        /// <param name="message">The alert message to check</param>
+        /// <returns>True if the message should be ignored, false if it should be processed</returns>
+        private bool ShouldIgnoreAlertMessage(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            var msg = message.Trim();
+
+            // Filter out offline user warnings that appear when sending IMs to offline users
+            // Common patterns include:
+            // - "User not online - message will be stored and delivered later."
+            // - "User not online - your message will be stored and delivered when they return"
+            if (msg.Contains("User not online", StringComparison.OrdinalIgnoreCase) &&
+                (msg.Contains("message will be stored", StringComparison.OrdinalIgnoreCase) ||
+                 msg.Contains("delivered later", StringComparison.OrdinalIgnoreCase) ||
+                 msg.Contains("delivered when", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            // Filter out similar offline message patterns
+            if (msg.Contains("not online", StringComparison.OrdinalIgnoreCase) &&
+                msg.Contains("stored", StringComparison.OrdinalIgnoreCase) &&
+                msg.Contains("delivered", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Filter out "Message queued for delivery" type messages
+            if (msg.Contains("message", StringComparison.OrdinalIgnoreCase) &&
+                msg.Contains("queued", StringComparison.OrdinalIgnoreCase) &&
+                msg.Contains("delivery", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private async void Groups_CurrentGroups(object? sender, CurrentGroupsEventArgs e)

@@ -41,6 +41,7 @@ namespace RadegastWeb.Services
             RegisterProcessor(new UrlProcessingProcessor(_serviceProvider, _logger), 10);
             RegisterProcessor(new AvatarCommandRelayProcessor(_serviceProvider, _logger), 15); // Process avatar command relays
             RegisterProcessor(new IMRelayProcessor(_serviceProvider, _logger), 16); // Process IM relays before database save
+            RegisterProcessor(new NameResolutionProcessor(_serviceProvider, _logger), 18); // Improve sender names before save
             RegisterProcessor(new DatabaseSaveProcessor(_serviceProvider, _logger), 20);
             RegisterProcessor(new SignalRBroadcastProcessor(_hubContext, _logger), 30);
             RegisterProcessor(new CorradeCommandProcessor(_serviceProvider, _logger), 40);
@@ -204,6 +205,130 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error processing URLs in chat message");
                 return ChatProcessingResult.CreateSuccess(); // Continue even if URL processing fails
+            }
+        }
+    }
+
+    /// <summary>
+    /// Processor for resolving and improving sender names in chat messages
+    /// Particularly useful for relay messages that may initially show as \"Unknown\"
+    /// </summary>
+    internal class NameResolutionProcessor : IChatMessageProcessor
+    {
+        private readonly IServiceProvider _serviceProvider;
+        private readonly ILogger _logger;
+
+        public NameResolutionProcessor(IServiceProvider serviceProvider, ILogger logger)
+        {
+            _serviceProvider = serviceProvider;
+            _logger = logger;
+        }
+
+        public string Name => "Name Resolution";
+        public int Priority => 18;
+
+        public async Task<ChatProcessingResult> ProcessAsync(ChatMessageDto message, ChatProcessingContext context)
+        {
+            // Only process IM messages that have a SenderId
+            if (message.ChatType != "IM" || string.IsNullOrEmpty(message.SenderId))
+                return ChatProcessingResult.CreateSuccess();
+
+            // Check if sender name needs improvement (is placeholder or generic)
+            var needsImprovement = string.IsNullOrWhiteSpace(message.SenderName) ||
+                                 message.SenderName == "Unknown" ||
+                                 message.SenderName == "Unknown User" ||
+                                 message.SenderName.StartsWith("Resolving...") ||
+                                 message.SenderName == "Loading..." ||
+                                 message.SenderName == "???";
+
+            if (!needsImprovement)
+                return ChatProcessingResult.CreateSuccess();
+
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var nameResolutionService = scope.ServiceProvider.GetRequiredService<INameResolutionService>();
+                var globalDisplayNameCache = scope.ServiceProvider.GetRequiredService<IGlobalDisplayNameCache>();
+
+                if (!UUID.TryParse(message.SenderId, out var senderUuid))
+                    return ChatProcessingResult.CreateSuccess();
+
+                // Try to get a better name from cache first (fast)
+                var cachedName = await globalDisplayNameCache.GetDisplayNameAsync(
+                    message.SenderId, NameDisplayMode.Smart, message.SenderName);
+                
+                string improvedName = message.SenderName;
+                
+                if (!string.IsNullOrWhiteSpace(cachedName) && 
+                    cachedName != "Loading..." && 
+                    cachedName != "???" &&
+                    !cachedName.StartsWith("Resolving..."))
+                {
+                    improvedName = cachedName;
+                    _logger.LogDebug("Improved sender name from '{OldName}' to '{NewName}' using cache for {SenderId}", 
+                        message.SenderName, improvedName, message.SenderId);
+                }
+                else
+                {
+                    // Try name resolution service (may be slower)
+                    try
+                    {
+                        var resolvedName = await nameResolutionService.ResolveAgentNameAsync(
+                            context.AccountId, senderUuid, ResolveType.AgentDefaultName, 2000); // 2 second timeout
+                        
+                        if (!string.IsNullOrWhiteSpace(resolvedName) && 
+                            resolvedName != "Loading..." && 
+                            resolvedName != "???" &&
+                            !resolvedName.StartsWith("Resolving...") &&
+                            resolvedName != senderUuid.ToString())
+                        {
+                            improvedName = resolvedName;
+                            _logger.LogDebug("Improved sender name from '{OldName}' to '{NewName}' using resolution service for {SenderId}", 
+                                message.SenderName, improvedName, message.SenderId);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error resolving sender name for {SenderId}", message.SenderId);
+                    }
+                }
+
+                // If we got a better name, create modified message
+                if (improvedName != message.SenderName)
+                {
+                    var sltTimeService = scope.ServiceProvider.GetRequiredService<ISLTimeService>();
+                    
+                    var modifiedMessage = new ChatMessageDto
+                    {
+                        SenderName = improvedName,
+                        Message = message.Message,
+                        ChatType = message.ChatType,
+                        Channel = message.Channel,
+                        Timestamp = message.Timestamp,
+                        RegionName = message.RegionName,
+                        AccountId = message.AccountId,
+                        SenderId = message.SenderId,
+                        TargetId = message.TargetId,
+                        SessionId = message.SessionId,
+                        SessionName = message.SessionName,
+                        SLTTime = sltTimeService.FormatSLT(message.Timestamp, "HH:mm:ss"),
+                        SLTDateTime = sltTimeService.FormatSLTWithDate(message.Timestamp, "MMM dd, HH:mm:ss")
+                    };
+                    
+                    return new ChatProcessingResult
+                    {
+                        Success = true,
+                        ContinueProcessing = true,
+                        ModifiedMessage = modifiedMessage
+                    };
+                }
+
+                return ChatProcessingResult.CreateSuccess();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in name resolution processor for sender {SenderId}", message.SenderId);
+                return ChatProcessingResult.CreateSuccess(); // Continue processing even if name resolution fails
             }
         }
     }
@@ -472,6 +597,7 @@ namespace RadegastWeb.Services
 
                 // Ensure relay avatar name is cached before sending IM
                 var nameResolutionService = scope.ServiceProvider.GetRequiredService<INameResolutionService>();
+                var globalDisplayNameCache = scope.ServiceProvider.GetRequiredService<IGlobalDisplayNameCache>();
                 
                 // Pre-cache the relay avatar's name so it shows correctly in our chat history
                 var relayAvatarName = await nameResolutionService.ResolveAgentNameAsync(
@@ -479,6 +605,14 @@ namespace RadegastWeb.Services
                     new UUID(account.AvatarRelayUuid), 
                     ResolveType.AgentDefaultName, 
                     3000); // 3 second timeout
+                
+                // Also cache in global display name cache for consistency
+                await globalDisplayNameCache.RequestDisplayNamesAsync(
+                    new List<string> { account.AvatarRelayUuid }, 
+                    context.AccountId);
+                
+                _logger.LogDebug("Cached relay avatar name '{RelayName}' for outgoing IM relay to {RelayUuid} on account {AccountId}", 
+                    relayAvatarName, account.AvatarRelayUuid, context.AccountId);
 
                 // Send the IM to the relay avatar
                 if (context.AccountInstance != null && context.AccountInstance.IsConnected)

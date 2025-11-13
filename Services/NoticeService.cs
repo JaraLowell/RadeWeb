@@ -163,6 +163,49 @@ namespace RadegastWeb.Services
             return false;
         }
 
+        /// <summary>
+        /// Determines if a region alert message should be ignored to prevent spam from common system warnings
+        /// </summary>
+        /// <param name="message">The alert message to check</param>
+        /// <returns>True if the message should be ignored, false if it should be processed</returns>
+        private bool ShouldIgnoreRegionAlert(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            var msg = message.Trim();
+
+            // Filter out offline user warnings that appear when sending IMs to offline users
+            // Common patterns include:
+            // - "User not online - message will be stored and delivered later."
+            // - "User not online - your message will be stored and delivered when they return"
+            if (msg.Contains("User not online", StringComparison.OrdinalIgnoreCase) &&
+                (msg.Contains("message will be stored", StringComparison.OrdinalIgnoreCase) ||
+                 msg.Contains("delivered later", StringComparison.OrdinalIgnoreCase) ||
+                 msg.Contains("delivered when", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            // Filter out similar offline message patterns
+            if (msg.Contains("not online", StringComparison.OrdinalIgnoreCase) &&
+                msg.Contains("stored", StringComparison.OrdinalIgnoreCase) &&
+                msg.Contains("delivered", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Filter out "Message queued for delivery" type messages
+            if (msg.Contains("message", StringComparison.OrdinalIgnoreCase) &&
+                msg.Contains("queued", StringComparison.OrdinalIgnoreCase) &&
+                msg.Contains("delivery", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
         private async Task<NoticeDto?> ProcessGroupNoticeAsync(Guid accountId, InstantMessage im)
         {
             try
@@ -333,6 +376,13 @@ namespace RadegastWeb.Services
         {
             try
             {
+                // Filter out relay message warnings for offline users to prevent spam
+                if (ShouldIgnoreRegionAlert(message))
+                {
+                    // Log at debug level since these are expected and frequent
+                    return null;
+                }
+
                 var notice = new NoticeDto
                 {
                     Id = Guid.NewGuid().ToString(),

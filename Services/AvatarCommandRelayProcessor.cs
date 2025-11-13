@@ -76,6 +76,37 @@ namespace RadegastWeb.Services
                     return ChatProcessingResult.CreateSuccess();
                 }
 
+                // Proactively cache the relay avatar's name to ensure it shows correctly in IM logs
+                // This prevents "Unknown" from appearing as the sender name for relay messages
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var nameResolutionService = scope.ServiceProvider.GetRequiredService<INameResolutionService>();
+                        var globalDisplayNameCache = scope.ServiceProvider.GetRequiredService<IGlobalDisplayNameCache>();
+                        
+                        // Try to resolve and cache the relay avatar's name
+                        var relayName = await nameResolutionService.ResolveAgentNameAsync(
+                            context.AccountId, 
+                            senderUuid, 
+                            ResolveType.AgentDefaultName, 
+                            3000); // 3 second timeout
+                        
+                        // Also cache in global display name cache for consistency
+                        await globalDisplayNameCache.RequestDisplayNamesAsync(
+                            new List<string> { senderUuid.ToString() }, 
+                            context.AccountId);
+                        
+                        _logger.LogDebug("Cached relay avatar name '{RelayName}' for {RelayUuid} on account {AccountId}", 
+                            relayName, senderUuid, context.AccountId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error caching relay avatar name for {RelayUuid} on account {AccountId}", 
+                            senderUuid, context.AccountId);
+                    }
+                });
+
                 // Ensure we have a connected account instance
                 if (context.AccountInstance == null || !context.AccountInstance.IsConnected)
                 {
