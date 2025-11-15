@@ -18,6 +18,7 @@ namespace RadegastWeb.Services
         // Command patterns
         private static readonly Regex SitCommandRegex = new(@"^//sit\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex StandCommandRegex = new(@"^//stand$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        private static readonly Regex TouchCommandRegex = new(@"^//touch\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex SayCommandRegex = new(@"^//say\s+(.+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly Regex ImCommandRegex = new(@"^//im\s+([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\s+(.+)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
@@ -204,6 +205,29 @@ namespace RadegastWeb.Services
                 }
             }
 
+            // Check for touch command: //touch uuid
+            var touchMatch = TouchCommandRegex.Match(trimmedCommand);
+            if (touchMatch.Success)
+            {
+                var targetUuidStr = touchMatch.Groups[1].Value;
+                if (UUID.TryParse(targetUuidStr, out var targetUuid))
+                {
+                    var success = accountInstance.TouchObject(targetUuid);
+                    if (success)
+                    {
+                        return Task.FromResult(RelayCommandResult.CreateSuccess($"Touched object {targetUuid}"));
+                    }
+                    else
+                    {
+                        return Task.FromResult(RelayCommandResult.CreateError($"Failed to touch object {targetUuid} - object not found or unreachable"));
+                    }
+                }
+                else
+                {
+                    return Task.FromResult(RelayCommandResult.CreateError($"Invalid UUID format: {targetUuidStr}"));
+                }
+            }
+
             // Check for say command: //say <message>
             var sayMatch = SayCommandRegex.Match(trimmedCommand);
             if (sayMatch.Success)
@@ -248,7 +272,7 @@ namespace RadegastWeb.Services
             // Check if the message starts with "//" - if so, it's an unrecognized command
             if (trimmedCommand.StartsWith("//"))
             {
-                return Task.FromResult(RelayCommandResult.CreateError($"Unknown command: {trimmedCommand}. Supported commands: //sit <uuid>, //stand, //say <message>, //im <uuid> <message>"));
+                return Task.FromResult(RelayCommandResult.CreateError($"Unknown command: {trimmedCommand}. Supported commands: //sit <uuid>, //stand, //touch <uuid>, //say <message>, //im <uuid> <message>"));
             }
 
             // Not a command - ignore silently (regular IM message, no feedback needed)

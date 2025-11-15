@@ -3729,6 +3729,66 @@ namespace RadegastWeb.Core
         }
         
         /// <summary>
+        /// Touch an object in Second Life by UUID
+        /// This simulates clicking on an object and is useful for re-triggering dialogs from seated objects
+        /// Based on Radegast's touch implementation using Grab/DeGrab sequence
+        /// </summary>
+        /// <param name="objectId">UUID of the object to touch</param>
+        /// <returns>True if touch request was sent successfully</returns>
+        public bool TouchObject(UUID objectId)
+        {
+            try
+            {
+                if (!_client.Network.Connected)
+                {
+                    _logger.LogWarning("Cannot touch object - not connected");
+                    return false;
+                }
+
+                // Check if object exists in current simulator
+                if (!IsObjectInRegion(objectId))
+                {
+                    _logger.LogWarning("Cannot touch object {ObjectId} - object not found in current region", objectId);
+                    return false;
+                }
+
+                // Get the primitive/object to find its LocalID
+                var prim = _client.Network.CurrentSim?.ObjectsPrimitives.Values.FirstOrDefault(p => p.ID == objectId);
+                if (prim == null)
+                {
+                    _logger.LogWarning("Cannot touch object {ObjectId} - primitive not found", objectId);
+                    return false;
+                }
+
+                // Check if the object is touchable
+                if ((prim.Flags & PrimFlags.Touch) == 0)
+                {
+                    _logger.LogInformation("Object {ObjectId} ({ObjectName}) may not be touchable - no touch flag set, but attempting anyway", 
+                        objectId, prim.Properties?.Name ?? "Unknown");
+                }
+
+                // Use the Radegast approach: Grab + DeGrab sequence to trigger touch events
+                // This is more reliable than using Touch() alone, especially for scripted objects
+                _client.Self.Grab(prim.LocalID, Vector3.Zero, Vector3.Zero, Vector3.Zero, 0, Vector3.Zero, Vector3.Zero, Vector3.Zero);
+                
+                // Small delay to ensure the grab is registered
+                System.Threading.Thread.Sleep(100);
+                
+                _client.Self.DeGrab(prim.LocalID, Vector3.Zero, Vector3.Zero, 0, Vector3.Zero, Vector3.Zero, Vector3.Zero);
+
+                _logger.LogInformation("Touched object {ObjectId} ({ObjectName}) for account {AccountId}", 
+                    objectId, prim.Properties?.Name ?? "Unknown", _accountId);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error touching object {ObjectId} for account {AccountId}", objectId, _accountId);
+                return false;
+            }
+        }
+        
+        /// <summary>
         /// Checks if an animation UUID is a known system animation that should not be stopped
         /// Based on OpenMetaverse's Animations class constants
         /// </summary>

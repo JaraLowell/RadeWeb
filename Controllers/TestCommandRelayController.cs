@@ -114,6 +114,7 @@ namespace RadegastWeb.Controllers
                     {
                         "//sit <uuid> - Sit on object with specified UUID",
                         "//stand - Stand up from current position",
+                        "//touch <uuid> - Touch object with specified UUID",
                         "//say <message> - Say message in local chat",
                         "//im <uuid> <message> - Send instant message to avatar"
                     },
@@ -150,6 +151,13 @@ namespace RadegastWeb.Controllers
                         syntax = "//stand",
                         description = "Make the avatar stand up from current position",
                         example = "//stand"
+                    },
+                    new
+                    {
+                        command = "//touch",
+                        syntax = "//touch <uuid>",
+                        description = "Touch the specified object to trigger dialogs or scripts",
+                        example = "//touch 12345678-1234-1234-1234-123456789abc"
                     },
                     new
                     {

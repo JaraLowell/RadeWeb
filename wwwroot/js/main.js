@@ -1634,6 +1634,10 @@ class RadegastWebClient {
             this.standUp();
         });
 
+        document.getElementById('touchSeatedBtn').addEventListener('click', () => {
+            this.touchSeatedObject();
+        });
+
         document.getElementById('validateObjectBtn').addEventListener('click', () => {
             this.validateObject();
         });
@@ -3424,6 +3428,36 @@ class RadegastWebClient {
         }
     }
 
+    async touchSeatedObject() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/objects/${this.currentAccountId}/touch-seated`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                }
+            );
+
+            if (response.ok) {
+                const result = await response.json();
+                this.showAlert(result.message, "success");
+            } else {
+                const error = await response.json();
+                this.showAlert("Failed to touch object: " + (error.message || "Unknown error"), "danger");
+            }
+        } catch (error) {
+            console.error("Error touching seated object:", error);
+            this.showAlert("Failed to touch seated object: " + error.message, "danger");
+        }
+    }
+
     async validateObject() {
         if (!this.currentAccountId) {
             this.showAlert("No account selected", "warning");
@@ -3633,21 +3667,28 @@ class RadegastWebClient {
     updateSittingStatus(status) {
         const statusBadge = document.getElementById('sittingStatus');
         const objectInfo = document.getElementById('sittingObjectInfo');
+        const touchSeatedSection = document.getElementById('touchSeatedSection');
         
         if (status.isSitting) {
             if (status.sittingOnGround) {
                 statusBadge.textContent = 'Sitting (Ground)';
                 statusBadge.className = 'badge sitting-status-sitting-ground';
                 objectInfo.textContent = 'Ground';
+                // Hide touch button when sitting on ground
+                touchSeatedSection.style.display = 'none';
             } else {
                 statusBadge.textContent = 'Sitting';
                 statusBadge.className = 'badge sitting-status-sitting';
                 objectInfo.textContent = status.sittingOnLocalId ? `LocalID: ${status.sittingOnLocalId}` : 'Unknown';
+                // Show touch button when sitting on an object
+                touchSeatedSection.style.display = 'block';
             }
         } else {
             statusBadge.textContent = 'Standing';
             statusBadge.className = 'badge sitting-status-standing';
             objectInfo.textContent = 'None';
+            // Hide touch button when standing
+            touchSeatedSection.style.display = 'none';
         }
     }
 
