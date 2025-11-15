@@ -4289,9 +4289,19 @@ class RadegastWebClient {
 
             // Call appropriate SignalR method based on request type
             if (requestType === 'FriendshipRequest') {
-                await this.connection.invoke("RespondToFriendshipRequest", this.currentAccountId, externalRequestId, accept);
+                const request = {
+                    AccountId: this.currentAccountId,
+                    RequestId: externalRequestId,
+                    Accept: accept
+                };
+                await this.connection.invoke("RespondToFriendshipRequest", request);
             } else if (requestType === 'GroupInvitation') {
-                await this.connection.invoke("RespondToGroupInvitation", this.currentAccountId, externalRequestId, accept);
+                const request = {
+                    AccountId: this.currentAccountId,
+                    InvitationId: externalRequestId,
+                    Accept: accept
+                };
+                await this.connection.invoke("RespondToGroupInvitation", request);
             }
 
             // Update the notice in our local array

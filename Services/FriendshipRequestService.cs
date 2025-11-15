@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using OpenMetaverse;
 using RadegastWeb.Core;
 using RadegastWeb.Data;
@@ -13,6 +14,8 @@ namespace RadegastWeb.Services
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly IAccountService _accountService;
+        private readonly IConnectionTrackingService _connectionTrackingService;
+        private readonly IOptions<InteractiveRequestsConfig> _config;
         private readonly ILogger<FriendshipRequestService> _logger;
         
         // In-memory store for active friendship requests (could be moved to database if needed)
@@ -24,10 +27,14 @@ namespace RadegastWeb.Services
         public FriendshipRequestService(
             IServiceProvider serviceProvider,
             IAccountService accountService,
+            IConnectionTrackingService connectionTrackingService,
+            IOptions<InteractiveRequestsConfig> config,
             ILogger<FriendshipRequestService> logger)
         {
             _serviceProvider = serviceProvider;
             _accountService = accountService;
+            _connectionTrackingService = connectionTrackingService;
+            _config = config;
             _logger = logger;
         }
         
@@ -119,8 +126,24 @@ namespace RadegastWeb.Services
             _logger.LogInformation("Stored friendship request {RequestId} from {FromAgentName} for account {AccountId}",
                 request.RequestId, request.FromAgentName, request.AccountId);
                 
-            // Fire the event
-            FriendshipRequestReceived?.Invoke(this, new FriendshipRequestEventArgs(request));
+            // Check if user is actively connected via web interface
+            if (_config.Value.AutoDeclineWhenDisconnected && !_connectionTrackingService.HasActiveConnections(request.AccountId))
+            {
+                _logger.LogInformation("No active web connections for account {AccountId}, auto-declining friendship request from {FromAgentName}",
+                    request.AccountId, request.FromAgentName);
+                
+                // Auto-decline in background after configured delay to ensure SL server is ready
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(_config.Value.AutoDeclineDelaySeconds * 1000);
+                    await AutoDeclineFriendshipRequestAsync(request);
+                });
+            }
+            else
+            {
+                // Fire the event only if user is connected or auto-decline is disabled
+                FriendshipRequestReceived?.Invoke(this, new FriendshipRequestEventArgs(request));
+            }
             
             return Task.FromResult(request);
         }
@@ -142,6 +165,29 @@ namespace RadegastWeb.Services
             }
             
             return Task.CompletedTask;
+        }
+        
+        private async Task AutoDeclineFriendshipRequestAsync(FriendshipRequestDto request)
+        {
+            try
+            {
+                // Auto-decline the friendship request
+                var declineRequest = new FriendshipRequestResponseRequest
+                {
+                    AccountId = request.AccountId,
+                    RequestId = request.RequestId,
+                    Accept = false
+                };
+                
+                await RespondToFriendshipRequestAsync(declineRequest);
+                _logger.LogInformation("Auto-declined friendship request {RequestId} from {FromAgentName} for disconnected account {AccountId}",
+                    request.RequestId, request.FromAgentName, request.AccountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error auto-declining friendship request {RequestId} for account {AccountId}",
+                    request.RequestId, request.AccountId);
+            }
         }
         
         private async Task UpdateInteractiveNoticeAsync(Guid accountId, string requestId, bool accepted)

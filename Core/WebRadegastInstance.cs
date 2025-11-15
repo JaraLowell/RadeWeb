@@ -1142,6 +1142,18 @@ namespace RadegastWeb.Core
             }
         }
 
+        /// <summary>
+        /// Requests current groups from Second Life server, triggering a cache refresh
+        /// </summary>
+        public void RefreshGroupsCache()
+        {
+            if (_client?.Groups != null && _client.Network.Connected)
+            {
+                _logger.LogDebug("Requesting current groups refresh for account {AccountId}", _accountId);
+                _client.Groups.RequestCurrentGroups();
+            }
+        }
+
         public void TriggerStatusUpdate()
         {
             UpdateStatus(Status);

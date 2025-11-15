@@ -97,6 +97,10 @@ builder.Services.Configure<AuthenticationConfig>(
     builder.Configuration.GetSection("Authentication"));
 builder.Services.AddSingleton<IAuthenticationService, AuthenticationService>();
 
+// Configure interactive requests (friendship and group invitations)
+builder.Services.Configure<InteractiveRequestsConfig>(
+    builder.Configuration.GetSection("InteractiveRequests"));
+
 // Add SignalR with improved configuration
 builder.Services.AddSignalR(options =>
 {
