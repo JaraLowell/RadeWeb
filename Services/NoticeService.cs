@@ -603,8 +603,18 @@ namespace RadegastWeb.Services
                 RequiresAcknowledgment = notice.RequiresAcknowledgment,
                 IsAcknowledged = notice.IsAcknowledged,
                 IsRead = notice.IsRead,
+                // Interactive notice fields
+                IsInteractive = notice.IsInteractive,
+                HasResponse = notice.HasResponse,
+                AcceptedResponse = notice.AcceptedResponse,
+                RespondedAt = notice.RespondedAt,
+                ExternalRequestId = notice.ExternalRequestId,
+                ExpiresAt = notice.ExpiresAt,
+                // SLT formatted timestamps
                 SLTTime = _slTimeService.FormatSLT(notice.Timestamp, "HH:mm:ss"),
-                SLTDateTime = _slTimeService.FormatSLTWithDate(notice.Timestamp, "MMM dd, HH:mm:ss")
+                SLTDateTime = _slTimeService.FormatSLTWithDate(notice.Timestamp, "MMM dd, HH:mm:ss"),
+                SLTExpiresAt = notice.ExpiresAt.HasValue ? _slTimeService.FormatSLTWithDate(notice.ExpiresAt.Value, "MMM dd, HH:mm:ss") : null,
+                SLTRespondedAt = notice.RespondedAt.HasValue ? _slTimeService.FormatSLTWithDate(notice.RespondedAt.Value, "MMM dd, HH:mm:ss") : null
             };
 
             // If GroupName is missing but GroupId is present, try to get it from group cache
@@ -635,7 +645,16 @@ namespace RadegastWeb.Services
                 AttachmentType = notice.AttachmentType,
                 RequiresAcknowledgment = notice.RequiresAcknowledgment,
                 IsAcknowledged = notice.IsAcknowledged,
-                IsRead = notice.IsRead
+                IsRead = notice.IsRead,
+                // Interactive notice fields
+                IsInteractive = notice.IsInteractive,
+                HasResponse = notice.HasResponse,
+                AcceptedResponse = notice.AcceptedResponse,
+                RespondedAt = notice.RespondedAt,
+                ExternalRequestId = notice.ExternalRequestId,
+                ExpiresAt = notice.ExpiresAt,
+                // Note: SLT formatted timestamps not included in this sync method
+                // Use ConvertToDtoAsync when SLT formatting is needed
             };
         }
 
