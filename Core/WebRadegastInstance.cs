@@ -388,6 +388,17 @@ namespace RadegastWeb.Core
             try
             {
                 UpdateStatus("Disconnecting...");
+                
+                // Check if sitting and stand up before logout
+                if (IsSitting)
+                {
+                    _logger.LogInformation("Avatar is sitting, standing up before logout for account {AccountId}", _accountId);
+                    SetSitting(false); // Stand up and stop animations
+                    
+                    // Small delay to allow the stand-up command to be processed
+                    await Task.Delay(500);
+                }
+                
                 await Task.Run(() => _client.Network.Logout());
                 
                 AccountInfo.IsConnected = false;
@@ -2932,6 +2943,17 @@ namespace RadegastWeb.Core
                         {
                             _logger.LogInformation("Initiating logout for account {AccountId} due to region restart in {RegionName}", 
                                 _accountId, regionName);
+                            
+                            // Check if sitting and stand up before logout
+                            if (IsSitting)
+                            {
+                                _logger.LogInformation("Avatar is sitting, standing up before region restart logout for account {AccountId}", _accountId);
+                                SetSitting(false); // Stand up and stop animations
+                                
+                                // Small delay to allow the stand-up command to be processed
+                                await Task.Delay(500);
+                            }
+                            
                             await DisconnectAsync();
                         }
                         catch (Exception logoutEx)
