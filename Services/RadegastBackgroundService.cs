@@ -885,7 +885,7 @@ namespace RadegastWeb.Services
                         }, cancellationToken));
                     }
                     
-                    // Clean up old chat messages (keep last 30 days)
+                    // Clean up old chat messages (keep last 7 days)
                     var chatHistoryService = scope.ServiceProvider.GetService<IChatHistoryService>();
                     if (chatHistoryService != null)
                     {
@@ -894,8 +894,7 @@ namespace RadegastWeb.Services
                             try
                             {
                                 _logger.LogInformation("Starting daily cleanup of old chat messages");
-                                await chatHistoryService.CleanupOldMessagesAsync(TimeSpan.FromDays(30));
-                                _logger.LogInformation("Daily maintenance: cleaned up old chat messages older than 30 days");
+                                await chatHistoryService.CleanupOldMessagesAsync(TimeSpan.FromDays(7));
                             }
                             catch (Exception ex)
                             {
