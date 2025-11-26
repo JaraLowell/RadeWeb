@@ -201,6 +201,11 @@ namespace RadegastWeb.Core
             _client.Groups.CurrentGroups += Groups_CurrentGroups;
             _client.Self.GroupChatJoined += Self_GroupChatJoined;
             
+            // Register Friends events for friendship management
+            _client.Friends.FriendshipResponse += Friends_FriendshipResponse;
+            _client.Friends.FriendOnline += Friends_FriendOnline;
+            _client.Friends.FriendOffline += Friends_FriendOffline;
+            
             // Register display name events for automatic cache updates
             _client.Avatars.UUIDNameReply += Avatars_UUIDNameReply;
             _client.Avatars.DisplayNameUpdate += Avatars_DisplayNameUpdate;
@@ -245,6 +250,11 @@ namespace RadegastWeb.Core
             _client.Self.AlertMessage -= Self_AlertMessage;
             _client.Network.SimChanged -= Network_SimChanged;
             _client.Objects.AvatarUpdate -= Objects_AvatarUpdate;
+            
+            // Unregister Friends events
+            _client.Friends.FriendshipResponse -= Friends_FriendshipResponse;
+            _client.Friends.FriendOnline -= Friends_FriendOnline;
+            _client.Friends.FriendOffline -= Friends_FriendOffline;
             _client.Objects.KillObject -= Objects_KillObject;
             _client.Objects.AvatarSitChanged -= Objects_AvatarSitChanged;
             _client.Grid.CoarseLocationUpdate -= Grid_CoarseLocationUpdate;
@@ -2473,6 +2483,21 @@ namespace RadegastWeb.Core
                 }
             }
 
+            // Handle friendship acceptance/decline notifications
+            if (e.IM.Dialog == InstantMessageDialog.FriendshipAccepted)
+            {
+                _logger.LogInformation("Friendship accepted from {FromAgentName} for account {AccountId}", e.IM.FromAgentName, _accountId);
+                // The Friends_FriendshipResponse event will handle the notification
+                return;
+            }
+            
+            if (e.IM.Dialog == InstantMessageDialog.FriendshipDeclined)
+            {
+                _logger.LogInformation("Friendship declined by {FromAgentName} for account {AccountId}", e.IM.FromAgentName, _accountId);
+                // The Friends_FriendshipResponse event will handle the notification
+                return;
+            }
+
             // Filter out typing indicators and other non-chat dialogs (except teleport requests which we handle)
             if (e.IM.Dialog == InstantMessageDialog.StartTyping ||
                 e.IM.Dialog == InstantMessageDialog.StopTyping ||
@@ -3127,6 +3152,124 @@ namespace RadegastWeb.Core
             else
             {
                 _logger.LogWarning("Failed to join group chat for session {SessionId}", e.SessionID);
+            }
+        }
+
+        /// <summary>
+        /// Handle friendship response events (when someone accepts/declines our friendship offer or we accept/decline theirs)
+        /// </summary>
+        private async void Friends_FriendshipResponse(object? sender, FriendshipResponseEventArgs e)
+        {
+            try
+            {
+                var agentName = await _nameResolutionService.ResolveAgentNameAsync(Guid.Parse(_accountId), e.AgentID);
+                
+                if (e.Accepted)
+                {
+                    _logger.LogInformation("Friendship accepted with {AgentName} ({AgentId}) for account {AccountId}", 
+                        agentName, e.AgentID, _accountId);
+                    
+                    // Send a notification to the web UI
+                    var chatMessage = new ChatMessageDto
+                    {
+                        SenderName = "System",
+                        Message = $"You are now friends with {agentName}.",
+                        Timestamp = DateTime.UtcNow,
+                        ChatType = "System",
+                        SessionId = "local-chat",
+                        SenderId = UUID.Zero.ToString(),
+                        AccountId = Guid.Parse(_accountId),
+                        SLTTime = _slTimeService.FormatSLT(DateTime.UtcNow, "HH:mm:ss")
+                    };
+                    
+                    ChatReceived?.Invoke(this, chatMessage);
+                }
+                else
+                {
+                    _logger.LogInformation("Friendship declined with {AgentName} ({AgentId}) for account {AccountId}", 
+                        agentName, e.AgentID, _accountId);
+                    
+                    // Send a notification to the web UI
+                    var chatMessage = new ChatMessageDto
+                    {
+                        SenderName = "System",
+                        Message = $"{agentName} declined your friendship offer.",
+                        Timestamp = DateTime.UtcNow,
+                        ChatType = "System",
+                        SessionId = "local-chat",
+                        SenderId = UUID.Zero.ToString(),
+                        AccountId = Guid.Parse(_accountId),
+                        SLTTime = _slTimeService.FormatSLT(DateTime.UtcNow, "HH:mm:ss")
+                    };
+                    
+                    ChatReceived?.Invoke(this, chatMessage);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling friendship response for account {AccountId}", _accountId);
+            }
+        }
+
+        /// <summary>
+        /// Handle friend coming online
+        /// </summary>
+        private async void Friends_FriendOnline(object? sender, FriendInfoEventArgs e)
+        {
+            try
+            {
+                var friendName = await _nameResolutionService.ResolveAgentNameAsync(Guid.Parse(_accountId), e.Friend.UUID);
+                _logger.LogDebug("Friend {FriendName} came online for account {AccountId}", friendName, _accountId);
+                
+                // Optionally send a notification to the web UI
+                var chatMessage = new ChatMessageDto
+                {
+                    SenderName = "System",
+                    Message = $"{friendName} is now online.",
+                    Timestamp = DateTime.UtcNow,
+                    ChatType = "System",
+                    SessionId = "local-chat",
+                    SenderId = UUID.Zero.ToString(),
+                    AccountId = Guid.Parse(_accountId),
+                    SLTTime = _slTimeService.FormatSLT(DateTime.UtcNow, "HH:mm:ss")
+                };
+                
+                ChatReceived?.Invoke(this, chatMessage);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling friend online event for account {AccountId}", _accountId);
+            }
+        }
+
+        /// <summary>
+        /// Handle friend going offline
+        /// </summary>
+        private async void Friends_FriendOffline(object? sender, FriendInfoEventArgs e)
+        {
+            try
+            {
+                var friendName = await _nameResolutionService.ResolveAgentNameAsync(Guid.Parse(_accountId), e.Friend.UUID);
+                _logger.LogDebug("Friend {FriendName} went offline for account {AccountId}", friendName, _accountId);
+                
+                // Optionally send a notification to the web UI
+                var chatMessage = new ChatMessageDto
+                {
+                    SenderName = "System",
+                    Message = $"{friendName} is now offline.",
+                    Timestamp = DateTime.UtcNow,
+                    ChatType = "System",
+                    SessionId = "local-chat",
+                    SenderId = UUID.Zero.ToString(),
+                    AccountId = Guid.Parse(_accountId),
+                    SLTTime = _slTimeService.FormatSLT(DateTime.UtcNow, "HH:mm:ss")
+                };
+                
+                ChatReceived?.Invoke(this, chatMessage);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling friend offline event for account {AccountId}", _accountId);
             }
         }
 

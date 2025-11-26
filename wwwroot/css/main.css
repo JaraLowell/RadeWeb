@@ -728,6 +728,7 @@ a {
     margin-bottom: 0.125rem;
     display: flex;
     align-items: center;
+    font-size: 0.9rem;
 }
 
 .account-name .service-icon {
