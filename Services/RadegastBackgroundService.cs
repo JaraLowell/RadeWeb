@@ -69,6 +69,7 @@ namespace RadegastWeb.Services
                 
                 var lastPeriodicRecording = DateTime.UtcNow;
                 var lastLibOpenMetaverseCleanup = DateTime.UtcNow;
+                var lastRegionStatsManagement = DateTime.UtcNow;
 
                 while (!stoppingToken.IsCancellationRequested && !_isShuttingDown)
                 {
@@ -95,6 +96,14 @@ namespace RadegastWeb.Services
                             
                             // Also trigger memory management check after cleanup
                             _memoryManagementService?.TriggerMemoryCleanupIfNeeded();
+                        }
+                        
+                        // MEMORY FIX: Periodic management of region stats updates (every 2 minutes)
+                        // Stop stats updates for accounts with no active web connections to prevent memory leaks
+                        if (now - lastRegionStatsManagement >= TimeSpan.FromMinutes(2))
+                        {
+                            await ManageRegionStatsUpdatesAsync(stoppingToken);
+                            lastRegionStatsManagement = now;
                         }
                         
                         // Periodic cleanup of disconnected accounts (every 5 minutes) to ensure proper status
@@ -1023,6 +1032,54 @@ namespace RadegastWeb.Services
         /// <summary>
         /// Periodic cleanup of accounts that may have disconnected unexpectedly
         /// </summary>
+        /// <summary>
+        /// MEMORY FIX: Manage region stats updates based on active SignalR connections
+        /// Stop updates for accounts with no active web connections to prevent memory leaks from
+        /// continuous SignalR broadcasts and timer operations
+        /// </summary>
+        private async Task ManageRegionStatsUpdatesAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                if (_regionInfoService == null)
+                    return;
+                    
+                using var scope = _serviceProvider.CreateScope();
+                var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+                
+                var accounts = await accountService.GetAccountsAsync();
+                
+                foreach (var account in accounts)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
+                        
+                    var instance = accountService.GetInstance(account.Id);
+                    if (instance?.IsConnected != true)
+                        continue; // Only manage stats for connected accounts
+                    
+                    var hasActiveConnections = _connectionTrackingService.HasActiveConnections(account.Id);
+                    
+                    if (hasActiveConnections)
+                    {
+                        // Has active connections - ensure stats updates are running
+                        // This is handled automatically by the RegionInfoService, so we just log
+                        _logger.LogTrace("Account {AccountId} has active connections, stats updates should be active", account.Id);
+                    }
+                    else
+                    {
+                        // No active connections - stop stats updates to save resources and prevent memory leaks
+                        _logger.LogDebug("Account {AccountId} has no active connections, stopping region stats updates to prevent memory leak", account.Id);
+                        await _regionInfoService.StopPeriodicUpdatesAsync(account.Id);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during periodic region stats management");
+            }
+        }
+
         private async Task CleanupDisconnectedAccountsAsync(CancellationToken cancellationToken)
         {
             try

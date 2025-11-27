@@ -28,10 +28,15 @@ namespace RadegastWeb.Services
         private readonly ConcurrentDictionary<Guid, RegionStatsDto> _regionStats = new();
         private readonly ConcurrentDictionary<Guid, Timer> _updateTimers = new();
         private readonly ConcurrentDictionary<Guid, bool> _isUpdating = new();
+        private readonly ConcurrentDictionary<Guid, DateTime> _lastBroadcastTime = new();
         private bool _disposed = false;
 
-        // Update interval in milliseconds (every 1 second, similar to Radegast)
-        private const int UpdateIntervalMs = 1000;
+        // MEMORY FIX: Update interval in milliseconds (reduced from 1 second to 5 seconds to reduce memory pressure)
+        // Frequent updates cause SignalR broadcast queuing and memory leaks
+        private const int UpdateIntervalMs = 5000;
+        
+        // MEMORY FIX: Minimum time between broadcasts to prevent SignalR queue buildup (1 second throttle)
+        private readonly TimeSpan _broadcastThrottleInterval = TimeSpan.FromSeconds(1);
 
         public event EventHandler<RegionStatsUpdatedEventArgs>? RegionStatsUpdated;
 
@@ -146,15 +151,32 @@ namespace RadegastWeb.Services
                 // Store the updated stats
                 _regionStats.AddOrUpdate(accountId, stats, (key, oldStats) => stats);
 
-                // Fire the updated event
-                RegionStatsUpdated?.Invoke(this, new RegionStatsUpdatedEventArgs
+                // MEMORY FIX: Throttle broadcasts to prevent SignalR message queue buildup
+                var now = DateTime.UtcNow;
+                var lastBroadcast = _lastBroadcastTime.GetValueOrDefault(accountId, DateTime.MinValue);
+                var timeSinceLastBroadcast = now - lastBroadcast;
+                
+                if (timeSinceLastBroadcast >= _broadcastThrottleInterval)
                 {
-                    AccountId = accountId,
-                    Stats = stats
-                });
+                    // Fire the updated event (throttled to prevent memory leaks)
+                    RegionStatsUpdated?.Invoke(this, new RegionStatsUpdatedEventArgs
+                    {
+                        AccountId = accountId,
+                        Stats = stats
+                    });
+                    
+                    _lastBroadcastTime.AddOrUpdate(accountId, now, (key, old) => now);
+                    
+                    _logger.LogDebug("Broadcasted region stats for account {AccountId}: {RegionName} (Dilation: {TimeDilation:F3}, FPS: {FPS})", 
+                        accountId, stats.RegionName, stats.TimeDilation, stats.FPS);
+                }
+                else
+                {
+                    _logger.LogTrace("Throttled region stats broadcast for account {AccountId} (last broadcast {Elapsed}ms ago)", 
+                        accountId, timeSinceLastBroadcast.TotalMilliseconds);
+                }
 
-                _logger.LogDebug("Updated region stats for account {AccountId}: {RegionName} (Dilation: {TimeDilation:F3}, FPS: {FPS})", 
-                    accountId, stats.RegionName, stats.TimeDilation, stats.FPS);
+
             }
             catch (Exception ex)
             {
@@ -218,9 +240,10 @@ namespace RadegastWeb.Services
                 // Stop periodic updates
                 _ = Task.Run(async () => await StopPeriodicUpdatesAsync(accountId));
 
-                // Remove stored stats
+                // MEMORY FIX: Remove stored stats and broadcast tracking
                 _regionStats.TryRemove(accountId, out _);
                 _isUpdating.TryRemove(accountId, out _);
+                _lastBroadcastTime.TryRemove(accountId, out _);
 
                 _logger.LogInformation("Cleaned up region stats for account {AccountId}", accountId);
             }
@@ -255,10 +278,11 @@ namespace RadegastWeb.Services
                 
                 Task.WaitAll(stopTasks.ToArray(), TimeSpan.FromSeconds(5));
 
-                // Clear all data
+                // MEMORY FIX: Clear all data including broadcast tracking
                 _regionStats.Clear();
                 _updateTimers.Clear();
                 _isUpdating.Clear();
+                _lastBroadcastTime.Clear();
 
                 _logger.LogInformation("RegionInfoService disposed");
             }
