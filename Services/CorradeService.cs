@@ -244,6 +244,9 @@ namespace RadegastWeb.Services
                 if (parameters.TryGetValue("target", out var targetValue))
                     command.TargetUuid = targetValue;
 
+                if (parameters.TryGetValue("agent", out var agentValue))
+                    command.Agent = agentValue;
+
                 // Validate required fields for "tell" command
                 if (command.Command.Equals("tell", StringComparison.OrdinalIgnoreCase))
                 {
@@ -311,6 +314,42 @@ namespace RadegastWeb.Services
 
                     command.IsValid = true;
                 }
+                // Validate required fields for "invite" command
+                else if (command.Command.Equals("invite", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (string.IsNullOrWhiteSpace(command.GroupUuid))
+                    {
+                        command.ValidationError = "Group UUID is required";
+                        return command;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(command.Password))
+                    {
+                        command.ValidationError = "Password is required";
+                        return command;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(command.Agent))
+                    {
+                        command.ValidationError = "Agent UUID is required for invite command";
+                        return command;
+                    }
+
+                    // Validate UUIDs
+                    if (!UUID.TryParse(command.GroupUuid, out _))
+                    {
+                        command.ValidationError = "Invalid group UUID format";
+                        return command;
+                    }
+
+                    if (!UUID.TryParse(command.Agent, out _))
+                    {
+                        command.ValidationError = "Invalid agent UUID format";
+                        return command;
+                    }
+
+                    command.IsValid = true;
+                }
                 else
                 {
                     command.ValidationError = $"Unsupported command: {command.Command}";
@@ -357,6 +396,12 @@ namespace RadegastWeb.Services
         {
             try
             {
+                // Handle invite command separately (doesn't use entity)
+                if (command.Command.Equals("invite", StringComparison.OrdinalIgnoreCase))
+                {
+                    return await ExecuteGroupInviteCommand(accountInstance, command);
+                }
+
                 switch (command.Entity!.ToLowerInvariant())
                 {
                     case "local":
@@ -518,6 +563,89 @@ namespace RadegastWeb.Services
                     ErrorCode = "AVATAR_SEND_FAILED",
                     ProcessedCommand = command
                 });
+            }
+        }
+
+        private async Task<CorradeCommandResult> ExecuteGroupInviteCommand(WebRadegastInstance accountInstance, CorradeCommand command)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(command.GroupUuid))
+                {
+                    return new CorradeCommandResult
+                    {
+                        Success = false,
+                        Message = "Group UUID is required",
+                        ErrorCode = "MISSING_GROUP",
+                        ProcessedCommand = command
+                    };
+                }
+
+                if (string.IsNullOrWhiteSpace(command.Agent))
+                {
+                    return new CorradeCommandResult
+                    {
+                        Success = false,
+                        Message = "Agent UUID is required",
+                        ErrorCode = "MISSING_AGENT",
+                        ProcessedCommand = command
+                    };
+                }
+
+                // Verify the account is a member of the group
+                var accountId = Guid.Parse(accountInstance.AccountId);
+                var isGroupMember = await IsAccountGroupMemberAsync(accountId, command.GroupUuid);
+                
+                if (!isGroupMember)
+                {
+                    _logger.LogWarning("Account {AccountId} is not a member of group {GroupId}, cannot send invite", 
+                        accountId, command.GroupUuid);
+                    
+                    return new CorradeCommandResult
+                    {
+                        Success = false,
+                        Message = "Not a member of the specified group",
+                        ErrorCode = "NOT_GROUP_MEMBER",
+                        ProcessedCommand = command
+                    };
+                }
+
+                // Send group invite
+                var success = accountInstance.SendGroupInvite(command.GroupUuid, command.Agent);
+
+                if (success)
+                {
+                    _logger.LogInformation("Sent group invite via Corrade for account {AccountId} to group {GroupId} for agent {AgentId}", 
+                        accountInstance.AccountId, command.GroupUuid, command.Agent);
+
+                    return new CorradeCommandResult
+                    {
+                        Success = true,
+                        Message = "Group invitation sent",
+                        ProcessedCommand = command
+                    };
+                }
+                else
+                {
+                    return new CorradeCommandResult
+                    {
+                        Success = false,
+                        Message = "Failed to send group invitation",
+                        ErrorCode = "INVITE_FAILED",
+                        ProcessedCommand = command
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending group invite via Corrade");
+                return new CorradeCommandResult
+                {
+                    Success = false,
+                    Message = "Failed to send group invitation",
+                    ErrorCode = "INVITE_FAILED",
+                    ProcessedCommand = command
+                };
             }
         }
 

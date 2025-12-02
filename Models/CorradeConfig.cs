@@ -62,6 +62,7 @@ namespace RadegastWeb.Models
         public string? Entity { get; set; }
         public string? Message { get; set; }
         public string? TargetUuid { get; set; }
+        public string? Agent { get; set; }
         public Dictionary<string, string> Parameters { get; set; } = new();
         public bool IsValid { get; set; }
         public string? ValidationError { get; set; }

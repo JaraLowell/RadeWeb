@@ -23,17 +23,29 @@ The Corrade plugin enables RadegastWeb to respond to whisper commands in Second 
 The basic command format follows the URL-encoded parameter style:
 
 ```
-command=tell&group=GROUP_UUID&password=PASSWORD&entity=ENTITY_TYPE&message=MESSAGE
+command=COMMAND_NAME&group=GROUP_UUID&password=PASSWORD&[additional parameters]
 ```
 
-### Parameters
+### Supported Commands
 
-- `command`: Must be "tell" (currently the only supported command)
+1. **tell**: Send messages to different entities (local chat, groups, avatars)
+2. **invite**: Invite an avatar to join a group
+
+### Tell Command Parameters
+
+- `command`: Must be "tell"
 - `group`: UUID of the group that authorizes this command
 - `password`: Password for the specified group
 - `entity`: Target entity type (`local`, `group`, or `avatar`)
 - `message`: The message to send
 - `target`: Target UUID (required for `avatar` entities, optional for `group` entities - defaults to authorizing group)
+
+### Invite Command Parameters
+
+- `command`: Must be "invite"
+- `group`: UUID of the group to invite the avatar to (must be a group you're a member of)
+- `password`: Password for the specified group
+- `agent`: UUID of the avatar to invite to the group
 
 ### Entity Types
 
@@ -46,6 +58,13 @@ command=tell&group=GROUP_UUID&password=PASSWORD&entity=ENTITY_TYPE&message=MESSA
 
 3. **avatar**: Send instant message to an avatar
    - Example: `command=tell&group=GROUP_UUID&password=PASSWORD&entity=avatar&target=AVATAR_UUID&message=Hello there!`
+
+### Group Invite
+
+Send a group invitation to an avatar:
+- Example: `command=invite&group=GROUP_UUID&password=PASSWORD&agent=AVATAR_UUID`
+- The account must be a member of the specified group
+- The invited avatar will receive a standard Second Life group invitation
 
 ## Initial Setup
 
@@ -250,6 +269,14 @@ command=tell&group=12345678-1234-1234-1234-123456789abc&password=mypassword&enti
 ```
 command=tell&group=12345678-1234-1234-1234-123456789abc&password=mypassword&entity=avatar&target=11111111-2222-3333-4444-555555555555&message=Hello there!
 ```
+
+**Invite avatar to group:**
+```
+command=invite&group=12345678-1234-1234-1234-123456789abc&password=mypassword&agent=11111111-2222-3333-4444-555555555555
+```
+- Sends a group invitation to the specified avatar
+- The receiving account must be a member of the group
+- The avatar will receive a standard Second Life group invitation dialog
 
 ## Error Handling
 

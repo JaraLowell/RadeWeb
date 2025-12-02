@@ -745,6 +745,56 @@ namespace RadegastWeb.Core
         }
 
         /// <summary>
+        /// Send a group invitation to an avatar
+        /// </summary>
+        /// <param name="groupId">The group UUID to invite to</param>
+        /// <param name="agentId">The avatar UUID to invite</param>
+        /// <returns>True if the invitation was sent successfully</returns>
+        public bool SendGroupInvite(string groupId, string agentId)
+        {
+            if (!_client.Network.Connected)
+            {
+                _logger.LogWarning("Attempted to send group invite while not connected");
+                return false;
+            }
+
+            try
+            {
+                if (!UUID.TryParse(groupId, out UUID groupUUID))
+                {
+                    _logger.LogError("Invalid group UUID format: {GroupId}", groupId);
+                    return false;
+                }
+
+                if (!UUID.TryParse(agentId, out UUID agentUUID))
+                {
+                    _logger.LogError("Invalid agent UUID format: {AgentId}", agentId);
+                    return false;
+                }
+
+                // Check if we're actually a member of this group
+                if (!_groups.ContainsKey(groupUUID))
+                {
+                    _logger.LogWarning("Cannot invite to group {GroupId} - not a member", groupId);
+                    return false;
+                }
+
+                // Send group invitation using LibreMetaverse
+                // Use UUID.Zero for the role ID to assign the default "Everyone" role
+                var roleIds = new List<UUID> { UUID.Zero };
+                _client.Groups.Invite(groupUUID, roleIds, agentUUID);
+
+                _logger.LogInformation("Sent group invitation to {AgentId} for group {GroupId}", agentId, groupId);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending group invitation to {AgentId} for group {GroupId}", agentId, groupId);
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Gets the raw avatar data (IDs and basic info) for nearby avatars without triggering display name lookups.
         /// Used by PeriodicDisplayNameService to avoid circular dependencies.
         /// </summary>
