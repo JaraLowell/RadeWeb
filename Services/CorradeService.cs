@@ -4,6 +4,9 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Web;
 using OpenMetaverse;
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace RadegastWeb.Services
 {
@@ -21,6 +24,11 @@ namespace RadegastWeb.Services
         private DateTime _configLastLoaded = DateTime.MinValue;
         private static readonly TimeSpan ConfigCacheTimeout = TimeSpan.FromMinutes(5);
         private bool _isEnabled = false;
+        
+        // Command deduplication cache - stores hash of recent commands with their timestamp
+        private readonly ConcurrentDictionary<string, DateTime> _recentCommands = new();
+        private readonly object _deduplicationLock = new();
+        private static readonly TimeSpan CommandDeduplicationWindow = TimeSpan.FromSeconds(3);
 
         public CorradeService(
             ILogger<CorradeService> logger,
@@ -136,6 +144,28 @@ namespace RadegastWeb.Services
                         Message = "Corrade plugin is disabled",
                         ErrorCode = "PLUGIN_DISABLED"
                     };
+                }
+
+                // Check for duplicate command (prevent double-processing)
+                // Use lock to ensure atomic check-and-add to prevent race conditions
+                var commandHash = GenerateCommandHash(accountId, senderId, message);
+                lock (_deduplicationLock)
+                {
+                    if (IsDuplicateCommand(commandHash))
+                    {
+                        _logger.LogWarning("Duplicate Corrade command detected from {SenderName} ({SenderId}), ignoring: {Message}", 
+                            senderName, senderId, message);
+                        return new CorradeCommandResult
+                        {
+                            Success = true,
+                            Message = "Command already processed (duplicate)",
+                            ErrorCode = "DUPLICATE_COMMAND"
+                        };
+                    }
+
+                    // Mark this command as processed
+                    _recentCommands[commandHash] = DateTime.UtcNow;
+                    CleanupOldCommands();
                 }
 
                 _logger.LogInformation("Processing Corrade command from {SenderName} ({SenderId}) for account {AccountId}: {Message}", 
@@ -419,6 +449,51 @@ namespace RadegastWeb.Services
             }
 
             return parameters;
+        }
+
+        /// <summary>
+        /// Generate a hash for command deduplication
+        /// </summary>
+        private string GenerateCommandHash(Guid accountId, string senderId, string message)
+        {
+            var input = $"{accountId}|{senderId}|{message}";
+            using (var sha256 = SHA256.Create())
+            {
+                var hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
+                return Convert.ToBase64String(hash);
+            }
+        }
+
+        /// <summary>
+        /// Check if command was recently processed (within deduplication window)
+        /// </summary>
+        private bool IsDuplicateCommand(string commandHash)
+        {
+            if (_recentCommands.TryGetValue(commandHash, out var timestamp))
+            {
+                if (DateTime.UtcNow - timestamp < CommandDeduplicationWindow)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Remove old commands from deduplication cache
+        /// </summary>
+        private void CleanupOldCommands()
+        {
+            var cutoff = DateTime.UtcNow - CommandDeduplicationWindow;
+            var keysToRemove = _recentCommands
+                .Where(kvp => kvp.Value < cutoff)
+                .Select(kvp => kvp.Key)
+                .ToList();
+            
+            foreach (var key in keysToRemove)
+            {
+                _recentCommands.TryRemove(key, out _);
+            }
         }
 
         private async Task<CorradeCommandResult> ExecuteCommandAsync(WebRadegastInstance accountInstance, CorradeCommand command)

@@ -222,13 +222,28 @@ All command sources must still:
 When a whisper command is received:
 
 1. **Plugin Status Check**: Verify the plugin is enabled
-2. **Command Parsing**: Parse and validate the command syntax
-3. **Group Membership Check**: Verify the receiving account is a member of the authorizing group
-4. **Password Verification**: Check the provided password against the group configuration
-5. **Permission Check**: Ensure the group allows the requested entity type
-6. **Execution**: Process the command if all checks pass
+2. **Duplicate Detection**: Check if the exact same command was received within the last 3 seconds (prevents double-processing)
+3. **Command Parsing**: Parse and validate the command syntax
+4. **Group Membership Check**: Verify the receiving account is a member of the authorizing group
+5. **Password Verification**: Check the provided password against the group configuration
+6. **Permission Check**: Ensure the group allows the requested entity type
+7. **Execution**: Process the command if all checks pass
 
 All security failures are logged with warnings for monitoring purposes.
+
+### Command Deduplication
+
+To prevent double-processing of commands (which can occur due to Second Life's messaging system occasionally delivering messages twice), the plugin implements automatic deduplication:
+
+- **Detection Window**: 3 seconds
+- **Hash-Based**: Commands are identified by a hash of the account ID, sender ID, and message content
+- **Automatic Cleanup**: Old command hashes are automatically removed from the cache
+- **Transparent**: Duplicate commands are silently ignored and don't generate errors
+
+This ensures that:
+- Group invitations are only sent once per command
+- Messages are only relayed once to their destination
+- No user action is required - deduplication is automatic
 
 ## API Endpoints
 
