@@ -168,17 +168,36 @@ namespace RadegastWeb.Services
                     };
                 }
 
-                // Validate permissions
-                if (!await ValidateEntityPermissionAsync(accountId, command.Entity!, command.TargetUuid, command.GroupUuid!, command.Password!))
+                // Validate permissions based on command type
+                // For 'invite' command, only validate group/password, not entity permissions
+                if (command.Command.Equals("invite", StringComparison.OrdinalIgnoreCase))
                 {
-                    _logger.LogWarning("Permission denied for Corrade command from {SenderName} to {Entity}", senderName, command.Entity);
-                    return new CorradeCommandResult
+                    if (!await ValidateGroupPermissionAsync(accountId, command.GroupUuid!, command.Password!))
                     {
-                        Success = false,
-                        Message = "Permission denied",
-                        ErrorCode = "PERMISSION_DENIED",
-                        ProcessedCommand = command
-                    };
+                        _logger.LogWarning("Permission denied for Corrade invite command from {SenderName}", senderName);
+                        return new CorradeCommandResult
+                        {
+                            Success = false,
+                            Message = "Permission denied - invalid group or password",
+                            ErrorCode = "PERMISSION_DENIED",
+                            ProcessedCommand = command
+                        };
+                    }
+                }
+                else
+                {
+                    // For 'tell' and other commands, validate entity permissions
+                    if (!await ValidateEntityPermissionAsync(accountId, command.Entity!, command.TargetUuid, command.GroupUuid!, command.Password!))
+                    {
+                        _logger.LogWarning("Permission denied for Corrade command from {SenderName} to {Entity}", senderName, command.Entity);
+                        return new CorradeCommandResult
+                        {
+                            Success = false,
+                            Message = "Permission denied",
+                            ErrorCode = "PERMISSION_DENIED",
+                            ProcessedCommand = command
+                        };
+                    }
                 }
 
                 // Get the account instance

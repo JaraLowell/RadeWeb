@@ -690,8 +690,30 @@ namespace RadegastWeb.Core
             {
                 if (UUID.TryParse(groupId, out UUID groupUUID))
                 {
-                    // Ensure we're in the group chat session (on-demand joining)
-                    RequestJoinGroupChatIfNeeded(groupUUID);
+                    // Check if we need to join the group chat session first
+                    bool needToJoin = !_client.Self.GroupChatSessions.ContainsKey(groupUUID);
+                    
+                    if (needToJoin)
+                    {
+                        // Request to join and wait briefly for the session to establish
+                        if (RequestJoinGroupChatIfNeeded(groupUUID))
+                        {
+                            // Wait up to 5 seconds for the session to be established
+                            var waitStart = DateTime.UtcNow;
+                            while (!_client.Self.GroupChatSessions.ContainsKey(groupUUID) && 
+                                   (DateTime.UtcNow - waitStart).TotalSeconds < 5)
+                            {
+                                System.Threading.Thread.Sleep(100);
+                            }
+                            
+                            // Check if we successfully joined
+                            if (!_client.Self.GroupChatSessions.ContainsKey(groupUUID))
+                            {
+                                _logger.LogWarning("Timeout waiting for group chat session to establish for {GroupId}", groupId);
+                                return;
+                            }
+                        }
+                    }
 
                     _client.Self.InstantMessageGroup(groupUUID, message);
                     
