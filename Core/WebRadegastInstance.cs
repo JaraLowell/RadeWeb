@@ -690,31 +690,62 @@ namespace RadegastWeb.Core
             {
                 if (UUID.TryParse(groupId, out UUID groupUUID))
                 {
-                    // Check if we need to join the group chat session first
-                    bool needToJoin = !_client.Self.GroupChatSessions.ContainsKey(groupUUID);
-                    
-                    if (needToJoin)
+                    // Check if we're already in the session
+                    if (!_client.Self.GroupChatSessions.ContainsKey(groupUUID))
                     {
-                        // Request to join and wait briefly for the session to establish
-                        if (RequestJoinGroupChatIfNeeded(groupUUID))
+                        // Need to join - use a wait handle for the event
+                        using (var joinEvent = new System.Threading.ManualResetEventSlim(false))
                         {
-                            // Wait up to 5 seconds for the session to be established
-                            var waitStart = DateTime.UtcNow;
-                            while (!_client.Self.GroupChatSessions.ContainsKey(groupUUID) && 
-                                   (DateTime.UtcNow - waitStart).TotalSeconds < 5)
-                            {
-                                System.Threading.Thread.Sleep(100);
-                            }
+                            bool joinSucceeded = false;
                             
-                            // Check if we successfully joined
-                            if (!_client.Self.GroupChatSessions.ContainsKey(groupUUID))
+                            // Set up event handler for join completion
+                            EventHandler<GroupChatJoinedEventArgs> joinHandler = (s, e) =>
                             {
-                                _logger.LogWarning("Timeout waiting for group chat session to establish for {GroupId}", groupId);
-                                return;
+                                if (e.SessionID == groupUUID)
+                                {
+                                    joinSucceeded = e.Success;
+                                    joinEvent.Set();
+                                }
+                            };
+                            
+                            try
+                            {
+                                _client.Self.GroupChatJoined += joinHandler;
+                                
+                                // Request to join
+                                if (RequestJoinGroupChatIfNeeded(groupUUID))
+                                {
+                                    // Wait up to 10 seconds for join to complete
+                                    if (!joinEvent.Wait(TimeSpan.FromSeconds(10)))
+                                    {
+                                        _logger.LogWarning("Timeout waiting for group chat join response for {GroupId}", groupId);
+                                        return;
+                                    }
+                                    
+                                    if (!joinSucceeded)
+                                    {
+                                        _logger.LogWarning("Failed to join group chat for {GroupId}", groupId);
+                                        return;
+                                    }
+                                }
+                                else
+                                {
+                                    // Already joined or can't join
+                                    if (!_client.Self.GroupChatSessions.ContainsKey(groupUUID))
+                                    {
+                                        _logger.LogWarning("Cannot join group chat for {GroupId} - not a member or already failed", groupId);
+                                        return;
+                                    }
+                                }
+                            }
+                            finally
+                            {
+                                _client.Self.GroupChatJoined -= joinHandler;
                             }
                         }
                     }
 
+                    // Now send the message
                     _client.Self.InstantMessageGroup(groupUUID, message);
                     
                     // Create session if it doesn't exist
