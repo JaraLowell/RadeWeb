@@ -701,13 +701,21 @@ namespace RadegastWeb.Core
                     using (var joinEvent = new System.Threading.ManualResetEventSlim(false))
                     {
                         bool joinSucceeded = false;
+                        UUID returnedSessionId = UUID.Zero;
                         
                         // Set up event handler for join completion
                         EventHandler<GroupChatJoinedEventArgs> joinHandler = (s, e) =>
                         {
-                            if (e.SessionID == groupUUID)
+                            // Log all GroupChatJoined events to help debug permission issues
+                            _logger.LogDebug("GroupChatJoined event: SessionID={SessionId}, Success={Success}, TmpSessionID={TmpSessionId}", 
+                                e.SessionID, e.Success, e.TmpSessionID);
+                            
+                            // SessionID might be UUID.Zero if join failed due to permissions
+                            // In that case, check TmpSessionID or just accept any event during our wait
+                            if (e.SessionID == groupUUID || (e.SessionID == UUID.Zero && e.TmpSessionID == groupUUID))
                             {
                                 joinSucceeded = e.Success;
+                                returnedSessionId = e.SessionID;
                                 joinEvent.Set();
                             }
                         };
@@ -722,13 +730,20 @@ namespace RadegastWeb.Core
                                 // Wait up to 10 seconds for join to complete
                                 if (!joinEvent.Wait(TimeSpan.FromSeconds(10)))
                                 {
-                                    _logger.LogWarning("Timeout waiting for group chat join response for {GroupId}", groupId);
+                                    _logger.LogWarning("Timeout waiting for group chat join response for {GroupId} - likely insufficient permissions", groupId);
                                     return false;
                                 }
                                 
                                 if (!joinSucceeded)
                                 {
-                                    _logger.LogWarning("Failed to join group chat for {GroupId}", groupId);
+                                    if (returnedSessionId == UUID.Zero)
+                                    {
+                                        _logger.LogWarning("Failed to join group chat for {GroupId} - account role likely lacks chat privileges (SessionID returned as Zero)", groupId);
+                                    }
+                                    else
+                                    {
+                                        _logger.LogWarning("Failed to join group chat for {GroupId} - join denied by server", groupId);
+                                    }
                                     return false;
                                 }
                             }

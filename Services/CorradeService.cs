@@ -529,7 +529,7 @@ namespace RadegastWeb.Services
                     return new CorradeCommandResult
                     {
                         Success = false,
-                        Message = "Failed to send group message - could not join group chat session",
+                        Message = "Failed to send group message - could not join group chat session. This usually means the account's role in the group lacks 'Chat' privileges.",
                         ErrorCode = "GROUP_SEND_FAILED",
                         ProcessedCommand = command
                     };
