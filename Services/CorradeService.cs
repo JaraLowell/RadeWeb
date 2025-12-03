@@ -389,17 +389,27 @@ namespace RadegastWeb.Services
             
             try
             {
-                // Split by & to get parameter pairs
-                var parts = message.Split('&');
+                // Use System.Web.HttpUtility to parse query string properly
+                // This handles URL-encoded values including &, =, and other special characters
+                var queryString = HttpUtility.ParseQueryString(message);
                 
-                foreach (var part in parts)
+                foreach (string? key in queryString.AllKeys)
                 {
-                    var keyValue = part.Split('=', 2);
-                    if (keyValue.Length == 2)
+                    if (key != null)
                     {
-                        var key = HttpUtility.UrlDecode(keyValue[0].Trim());
-                        var value = HttpUtility.UrlDecode(keyValue[1].Trim());
+                        var value = queryString[key] ?? string.Empty;
                         parameters[key] = value;
+                        
+                        // Log parameter (truncate long values for readability)
+                        if (key.Equals("message", StringComparison.OrdinalIgnoreCase) && value.Length > 100)
+                        {
+                            _logger.LogDebug("Parsed parameter: {Key} = {ValuePreview}... (length: {Length})", 
+                                key, value.Substring(0, 100), value.Length);
+                        }
+                        else if (!key.Equals("password", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogDebug("Parsed parameter: {Key} = {Value}", key, value);
+                        }
                     }
                 }
             }

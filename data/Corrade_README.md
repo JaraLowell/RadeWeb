@@ -26,6 +26,30 @@ The basic command format follows the URL-encoded parameter style:
 command=COMMAND_NAME&group=GROUP_UUID&password=PASSWORD&[additional parameters]
 ```
 
+**IMPORTANT**: All parameter values must be properly URL-encoded, especially the `message` parameter. Special characters like `&`, `=`, `%`, spaces, and Second Life URLs must be encoded to prevent parsing errors.
+
+### URL Encoding Requirements
+
+The command uses standard URL query string format. This means:
+- **Spaces** should be encoded as `%20` or `+`
+- **Ampersands** (`&`) should be encoded as `%26`
+- **Equals signs** (`=`) should be encoded as `%3D`
+- **Percent signs** (`%`) should be encoded as `%25`
+
+**Example of a complex message with Second Life URLs:**
+
+Original message:
+```
+/me *** secondlife:///app/agent/66c6aadb-3add-4775-b426-c9dbbbcc0bfe/about has rang the bell ***
+```
+
+Properly encoded command:
+```
+command=tell&group=62637484-6ae9-34ab-a642-77b38cc89128&password=MyPass&entity=group&message=%2Fme%20***%20secondlife%3A%2F%2F%2Fapp%2Fagent%2F66c6aadb-3add-4775-b426-c9dbbbcc0bfe%2Fabout%20has%20rang%20the%20bell%20***
+```
+
+**Note**: Most LSL scripts should use `llEscapeURL()` to properly encode the message parameter before sending.
+
 ### Supported Commands
 
 1. **tell**: Send messages to different entities (local chat, groups, avatars)
