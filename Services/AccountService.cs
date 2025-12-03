@@ -836,8 +836,8 @@ namespace RadegastWeb.Services
 
             try
             {
-                instance.SendGroupIM(groupId, message);
-                return Task.FromResult(true);
+                bool success = instance.SendGroupIM(groupId, message);
+                return Task.FromResult(success);
             }
             catch (Exception ex)
             {

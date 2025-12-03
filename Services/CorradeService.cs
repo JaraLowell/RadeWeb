@@ -519,7 +519,21 @@ namespace RadegastWeb.Services
                 }
 
                 // Send message to group
-                accountInstance.SendGroupIM(command.TargetUuid, command.Message!);
+                bool success = accountInstance.SendGroupIM(command.TargetUuid, command.Message!);
+
+                if (!success)
+                {
+                    _logger.LogWarning("Failed to send group IM via Corrade for account {AccountId} to group {GroupId}", 
+                        accountInstance.AccountId, command.TargetUuid);
+                    
+                    return new CorradeCommandResult
+                    {
+                        Success = false,
+                        Message = "Failed to send group message - could not join group chat session",
+                        ErrorCode = "GROUP_SEND_FAILED",
+                        ProcessedCommand = command
+                    };
+                }
 
                 _logger.LogInformation("Sent group IM via Corrade for account {AccountId} to group {GroupId}: {Message}", 
                     accountInstance.AccountId, command.TargetUuid, command.Message);
