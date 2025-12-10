@@ -4087,7 +4087,7 @@ class RadegastWebClient {
                     <strong class="notice-title">${this.escapeHtml(notice.title)}</strong>
                     <small class="text-muted ms-2" title="Second Life Time (SLT)">${timestamp}</small>
                 </div>
-                <span class="badge ${notice.type === 0 ? 'bg-primary' : notice.type === 5 ? 'bg-info' : notice.type === 6 ? 'bg-success' : 'bg-secondary'}">${typeName}</span>
+                <span class="badge ${notice.type === 0 ? 'bg-primary' : (notice.type === 3 || notice.type === 'FriendshipOffer') ? 'bg-info' : (notice.type === 4 || notice.type === 'GroupInvitation') ? 'bg-success' : 'bg-secondary'}">${typeName}</span>
             </div>
             <div class="notice-from mb-2">
                 <strong>From:</strong> ${this.escapeHtml(notice.fromName)}
@@ -4109,10 +4109,10 @@ class RadegastWebClient {
             ${notice.isInteractive && !notice.hasResponse ? `
                 <div class="interactive-notice-controls mt-3 p-2 bg-info bg-opacity-10 border border-info rounded">
                     <div class="d-flex justify-content-center gap-2">
-                        <button class="btn btn-success btn-sm" onclick="radegastClient.respondToInteractiveNotice('${notice.externalRequestId}', '${notice.type === 5 ? 'FriendshipRequest' : 'GroupInvitation'}', true)" title="Accept">
+                        <button class="btn btn-success btn-sm" onclick="radegastClient.respondToInteractiveNotice('${notice.externalRequestId}', '${notice.type === 3 || notice.type === 'FriendshipOffer' ? 'FriendshipRequest' : 'GroupInvitation'}', true)" title="Accept">
                             <i class="fas fa-check me-1"></i>Accept
                         </button>
-                        <button class="btn btn-danger btn-sm" onclick="radegastClient.respondToInteractiveNotice('${notice.externalRequestId}', '${notice.type === 5 ? 'FriendshipRequest' : 'GroupInvitation'}', false)" title="Decline">
+                        <button class="btn btn-danger btn-sm" onclick="radegastClient.respondToInteractiveNotice('${notice.externalRequestId}', '${notice.type === 3 || notice.type === 'FriendshipOffer' ? 'FriendshipRequest' : 'GroupInvitation'}', false)" title="Decline">
                             <i class="fas fa-times me-1"></i>Decline
                         </button>
                     </div>
@@ -4225,7 +4225,7 @@ class RadegastWebClient {
             notice = {
                 id: `friendship-${request.requestId}`,
                 externalRequestId: request.requestId,
-                type: 5, // FriendshipRequest type
+                type: 3, // FriendshipOffer type (NoticeType enum)
                 title: "Friendship Offer",
                 message: `${request.fromName} is offering friendship.`,
                 fromName: request.fromName,
@@ -4279,7 +4279,7 @@ class RadegastWebClient {
             notice = {
                 id: `group-invitation-${invitation.requestId}`,
                 externalRequestId: invitation.requestId,
-                type: 6, // GroupInvitation type
+                type: 4, // GroupInvitation type (NoticeType enum)
                 title: "Group Invitation",
                 message: `${invitation.fromName} has invited you to join the group "${invitation.groupName}".`,
                 fromName: invitation.fromName,
@@ -4397,7 +4397,7 @@ class RadegastWebClient {
         const acceptBtn = document.getElementById('interactiveNoticeAccept');
         const declineBtn = document.getElementById('interactiveNoticeDecline');
 
-        if (notice.type === 5) { // Friendship Request
+        if (notice.type === 3 || notice.type === 'FriendshipOffer') { // Friendship Offer
             titleElement.textContent = 'Friendship Offer';
             iconElement.className = 'fas fa-user-friends me-2';
             messageElement.textContent = 'is offering friendship.';
@@ -4405,7 +4405,7 @@ class RadegastWebClient {
                 <p>Do you want to become friends with <strong>${this.escapeHtml(notice.fromName)}</strong>?</p>
                 <p class="text-muted small">Accepting will add them to your friends list and allow you to see when they're online.</p>
             `;
-        } else if (notice.type === 6) { // Group Invitation
+        } else if (notice.type === 4 || notice.type === 'GroupInvitation') { // Group Invitation
             titleElement.textContent = 'Group Invitation';
             iconElement.className = 'fas fa-users me-2';
             messageElement.textContent = `has invited you to join "${notice.groupName}".`;
@@ -4436,7 +4436,7 @@ class RadegastWebClient {
         newAcceptBtn.addEventListener('click', () => {
             this.respondToInteractiveNotice(
                 notice.externalRequestId,
-                notice.type === 5 ? 'FriendshipRequest' : 'GroupInvitation',
+                notice.type === 3 || notice.type === 'FriendshipOffer' ? 'FriendshipRequest' : 'GroupInvitation',
                 true
             );
             const modalInstance = bootstrap.Modal.getInstance(modal);
@@ -4446,7 +4446,7 @@ class RadegastWebClient {
         newDeclineBtn.addEventListener('click', () => {
             this.respondToInteractiveNotice(
                 notice.externalRequestId,
-                notice.type === 5 ? 'FriendshipRequest' : 'GroupInvitation',
+                notice.type === 3 || notice.type === 'FriendshipOffer' ? 'FriendshipRequest' : 'GroupInvitation',
                 false
             );
             const modalInstance = bootstrap.Modal.getInstance(modal);
