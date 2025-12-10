@@ -35,6 +35,7 @@ namespace RadegastWeb.Services
         Task<RegionStatsDto?> GetRegionStatsAsync(Guid accountId);
         Task ResetAllAccountsToOfflineAsync();
         Task CleanupDisconnectedAccountsAsync();
+        Task<bool> UpdateAutoGreeterSettingsAsync(Guid accountId, AutoGreeterSettingsDto settings);
     }
 
     public class AccountService : IAccountService, IDisposable
@@ -373,7 +374,12 @@ namespace RadegastWeb.Services
                     AvatarUuid = account.AvatarUuid,
                     AvatarRelayUuid = account.AvatarRelayUuid,
                     CurrentRegion = account.CurrentRegion,
-                    Status = account.Status
+                    Status = account.Status,
+                    AutoGreeterEnabled = account.AutoGreeterEnabled,
+                    AutoGreeterMessage = account.AutoGreeterMessage,
+                    AutoGreeterReturnEnabled = account.AutoGreeterReturnEnabled,
+                    AutoGreeterReturnMessage = account.AutoGreeterReturnMessage,
+                    AutoGreeterReturnTimeHours = account.AutoGreeterReturnTimeHours
                 };
                 
                 _logger.LogDebug("Creating WebRadegastInstance for account {AccountId} with AvatarRelayUuid: {AvatarRelayUuid}", 
@@ -384,8 +390,9 @@ namespace RadegastWeb.Services
                 var friendshipRequestService = _serviceProvider.GetRequiredService<IFriendshipRequestService>();
                 var groupInvitationService = _serviceProvider.GetRequiredService<IGroupInvitationService>();
                 var autoSitService = _serviceProvider.GetRequiredService<IAutoSitService>();
+                var autoGreeterService = _serviceProvider.GetRequiredService<IAutoGreeterService>();
                 
-                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, _masterDisplayNameService, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService, regionMapCacheService, autoSitService);
+                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, _masterDisplayNameService, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService, regionMapCacheService, autoSitService, autoGreeterService);
                 
                 var loginResult = await instance.LoginAsync();
                 
@@ -1058,6 +1065,52 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to update account region in database for account {AccountId}", accountId);
+            }
+        }
+
+        /// <summary>
+        /// Update auto-greeter settings for an account
+        /// </summary>
+        public async Task<bool> UpdateAutoGreeterSettingsAsync(Guid accountId, AutoGreeterSettingsDto settings)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<RadegastDbContext>();
+                
+                var account = await dbContext.Accounts.FindAsync(accountId);
+                if (account == null)
+                {
+                    _logger.LogWarning("Account {AccountId} not found for auto-greeter update", accountId);
+                    return false;
+                }
+                
+                account.AutoGreeterEnabled = settings.Enabled;
+                account.AutoGreeterMessage = settings.Message;
+                account.AutoGreeterReturnEnabled = settings.ReturnEnabled;
+                account.AutoGreeterReturnMessage = settings.ReturnMessage;
+                account.AutoGreeterReturnTimeHours = settings.ReturnTimeHours;
+                
+                await dbContext.SaveChangesAsync();
+                
+                // Update in-memory account
+                if (_accounts.TryGetValue(accountId, out var cachedAccount))
+                {
+                    cachedAccount.AutoGreeterEnabled = settings.Enabled;
+                    cachedAccount.AutoGreeterMessage = settings.Message;
+                    cachedAccount.AutoGreeterReturnEnabled = settings.ReturnEnabled;
+                    cachedAccount.AutoGreeterReturnMessage = settings.ReturnMessage;
+                    cachedAccount.AutoGreeterReturnTimeHours = settings.ReturnTimeHours;
+                }
+                
+                _logger.LogInformation("Updated auto-greeter settings for account {AccountId}: enabled={Enabled}, returnEnabled={ReturnEnabled}", 
+                    accountId, settings.Enabled, settings.ReturnEnabled);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating auto-greeter settings for account {AccountId}", accountId);
+                return false;
             }
         }
     }

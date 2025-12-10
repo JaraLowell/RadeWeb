@@ -631,6 +631,61 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, "Internal server error");
             }
         }
+
+        /// <summary>
+        /// Update auto-greeter settings for an account
+        /// </summary>
+        [HttpPost("{id}/auto-greeter")]
+        public async Task<IActionResult> UpdateAutoGreeter(Guid id, [FromBody] AutoGreeterSettingsDto settings)
+        {
+            try
+            {
+                var updated = await _accountService.UpdateAutoGreeterSettingsAsync(id, settings);
+                if (!updated)
+                {
+                    return NotFound(new { message = "Account not found" });
+                }
+
+                return Ok(new { message = "Auto-greeter settings updated successfully", settings });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating auto-greeter settings for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Get auto-greeter settings for an account
+        /// </summary>
+        [HttpGet("{id}/auto-greeter")]
+        public async Task<ActionResult<AutoGreeterSettingsDto>> GetAutoGreeter(Guid id)
+        {
+            try
+            {
+                var account = await _accountService.GetAccountAsync(id);
+                if (account == null)
+                {
+                    return NotFound(new { message = "Account not found" });
+                }
+
+                var settings = new AutoGreeterSettingsDto
+                {
+                    Enabled = account.AutoGreeterEnabled,
+                    Message = account.AutoGreeterMessage,
+                    ReturnEnabled = account.AutoGreeterReturnEnabled,
+                    ReturnMessage = account.AutoGreeterReturnMessage,
+                    ReturnTimeHours = account.AutoGreeterReturnTimeHours
+                };
+
+                return Ok(settings);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving auto-greeter settings for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
     }
 
     public class ToggleAutoSitRequest

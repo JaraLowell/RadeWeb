@@ -1676,6 +1676,11 @@ class RadegastWebClient {
             this.toggleRadarStats();
         });
 
+        // Auto-greeter controls
+        document.getElementById('saveAutoGreeterBtn').addEventListener('click', () => {
+            this.saveAutoGreeterSettings();
+        });
+
         // Manual presence control buttons
         document.getElementById('setAwayBtn').addEventListener('click', () => {
             this.toggleAwayStatus();
@@ -2196,6 +2201,9 @@ class RadegastWebClient {
                     
                     // Load auto-sit configuration for this account
                     await this.loadAutoSitConfig();
+                    
+                    // Load auto-greeter configuration for this account
+                    await this.loadAutoGreeterConfig();
                     
                     // Sync presence status for the newly active account
                     if (account.isConnected) {
@@ -5392,6 +5400,64 @@ class RadegastWebClient {
             }
         } else {
             console.warn("Cannot request avatars: connection not ready or no account selected");
+        }
+    }
+
+    // Auto-Greeter Methods
+    async loadAutoGreeterConfig() {
+        if (!this.currentAccountId) return;
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-greeter`);
+            if (response.ok) {
+                const config = await response.json();
+                
+                // Update UI elements
+                document.getElementById('autoGreeterEnabled').checked = config.enabled || false;
+                document.getElementById('autoGreeterMessage').value = config.message || 'Greetings {name}, welcome!';
+                document.getElementById('autoGreeterReturnEnabled').checked = config.returnEnabled || false;
+                document.getElementById('autoGreeterReturnMessage').value = config.returnMessage || 'Welcome back {name}!';
+                document.getElementById('autoGreeterReturnTimeHours').value = config.returnTimeHours || 3;
+            }
+        } catch (error) {
+            console.error("Error loading auto-greeter config:", error);
+        }
+    }
+
+    async saveAutoGreeterSettings() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const settings = {
+                enabled: document.getElementById('autoGreeterEnabled').checked,
+                message: document.getElementById('autoGreeterMessage').value || 'Greetings {name}, welcome!',
+                returnEnabled: document.getElementById('autoGreeterReturnEnabled').checked,
+                returnMessage: document.getElementById('autoGreeterReturnMessage').value || 'Welcome back {name}!',
+                returnTimeHours: parseInt(document.getElementById('autoGreeterReturnTimeHours').value) || 3
+            };
+
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-greeter`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(settings)
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                this.showAlert("Auto-greeter settings saved successfully!", "success");
+                console.log("Auto-greeter settings saved:", settings);
+            } else {
+                const error = await response.text();
+                this.showAlert("Failed to save auto-greeter settings: " + error, "danger");
+            }
+        } catch (error) {
+            console.error("Error saving auto-greeter settings:", error);
+            this.showAlert("Failed to save auto-greeter settings: " + error.message, "danger");
         }
     }
 }

@@ -33,6 +33,7 @@ namespace RadegastWeb.Core
         private readonly IGroupInvitationService _groupInvitationService;
         private readonly IRegionMapCacheService _regionMapCacheService;
         private readonly IAutoSitService _autoSitService;
+        private readonly IAutoGreeterService _autoGreeterService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -84,7 +85,7 @@ namespace RadegastWeb.Core
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService, IRegionMapCacheService regionMapCacheService, IAutoSitService autoSitService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService, IRegionMapCacheService regionMapCacheService, IAutoSitService autoSitService, IAutoGreeterService autoGreeterService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -109,6 +110,7 @@ namespace RadegastWeb.Core
             _groupInvitationService = groupInvitationService;
             _regionMapCacheService = regionMapCacheService;
             _autoSitService = autoSitService;
+            _autoGreeterService = autoGreeterService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -1931,6 +1933,9 @@ namespace RadegastWeb.Core
             _avatarSimHandles.Clear(); // Clear sim handles
             _recentNameRequests.Clear(); // Clear name request tracking for new sim
             
+            // Clear greeted avatars for auto-greeter on region change
+            _autoGreeterService.ClearGreetedAvatars(Guid.Parse(_accountId));
+            
             // Proactively start loading display names for the new region
             _ = Task.Run(async () =>
             {
@@ -2101,6 +2106,27 @@ namespace RadegastWeb.Core
             AvatarAdded?.Invoke(this, avatarDto);
             UpdateRegionInfo();
             
+            // Process auto-greeter for new avatars within 20 meters
+            if (isNewAvatar)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _autoGreeterService.ProcessNewAvatarAsync(
+                            e.Avatar.ID.ToString(),
+                            displayName,
+                            distance,
+                            Guid.Parse(_accountId)
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error in auto-greeter for avatar {AvatarId}", e.Avatar.ID);
+                    }
+                });
+            }
+            
             // Record visitor statistics with delay for name resolution (fire and forget to avoid blocking)
             _ = Task.Run(async () =>
             {
@@ -2191,6 +2217,9 @@ namespace RadegastWeb.Core
                 
                 // Clear previous position tracking
                 _previousAvatarPositions.TryRemove(avatarToRemove.ID, out _);
+                
+                // Track avatar departure for return greeter
+                _autoGreeterService.TrackAvatarDeparture(removedAvatar.ID.ToString(), Guid.Parse(_accountId));
                 
                 AvatarRemoved?.Invoke(this, removedAvatar.ID.ToString());
                 UpdateRegionInfo();
@@ -3681,6 +3710,9 @@ namespace RadegastWeb.Core
             {
                 // FIXED: Record our own avatar presence every 30 seconds to maintain visitor stats
                 await RecordOwnAvatarAsync();
+                
+                // Periodically cleanup old auto-greeter tracking data (every refresh cycle)
+                _autoGreeterService.CleanupOldTrackingData(Guid.Parse(_accountId));
 
                 var nearbyAvatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
                 if (nearbyAvatarIds.Count > 0)

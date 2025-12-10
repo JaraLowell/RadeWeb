@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using RadegastWeb.Data;
 
@@ -10,9 +11,11 @@ using RadegastWeb.Data;
 namespace RadegastWeb.Migrations
 {
     [DbContext(typeof(RadegastDbContext))]
-    partial class RadegastDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251210224028_AddAutoGreeterSettings")]
+    partial class AddAutoGreeterSettings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.10");
@@ -30,17 +33,6 @@ namespace RadegastWeb.Migrations
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
-
-                    b.Property<bool>("AutoGreeterReturnEnabled")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("AutoGreeterReturnMessage")
-                        .IsRequired()
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("AutoGreeterReturnTimeHours")
-                        .HasColumnType("INTEGER");
 
                     b.Property<string>("AvatarRelayUuid")
                         .HasMaxLength(36)

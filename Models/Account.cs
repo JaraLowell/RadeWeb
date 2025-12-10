@@ -36,6 +36,20 @@ namespace RadegastWeb.Models
         
         public string Status { get; set; } = "Offline";
         
+        // Auto Greeter settings
+        public bool AutoGreeterEnabled { get; set; } = false;
+        
+        [StringLength(500)]
+        public string AutoGreeterMessage { get; set; } = "Greetings {name}, welcome!";
+        
+        // Auto Greeter Return settings
+        public bool AutoGreeterReturnEnabled { get; set; } = false;
+        
+        [StringLength(500)]
+        public string AutoGreeterReturnMessage { get; set; } = "Welcome back {name}!";
+        
+        public int AutoGreeterReturnTimeHours { get; set; } = 3;
+        
         // Navigation properties
         public virtual ICollection<ChatMessage> ChatMessages { get; set; } = new List<ChatMessage>();
         public virtual ICollection<Notice> Notices { get; set; } = new List<Notice>();

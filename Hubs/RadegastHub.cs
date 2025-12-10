@@ -2121,5 +2121,8 @@ namespace RadegastWeb.Hubs
         Task GroupInvitationReceived(GroupInvitationDto invitation);
         Task GroupInvitationClosed(string accountId, string invitationId);
         Task GroupInvitationError(string error);
+        
+        // Auto Greeter methods
+        Task AutoGreeterSettingsUpdated(string accountId, bool enabled, string message);
     }
 }

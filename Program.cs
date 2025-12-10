@@ -168,6 +168,9 @@ builder.Services.AddSingleton<IDisplayNameService>(provider =>
 // Auto-sit service
 builder.Services.AddSingleton<IAutoSitService, AutoSitService>();
 
+// Auto-greeter service
+builder.Services.AddSingleton<IAutoGreeterService, AutoGreeterService>();
+
 // Memory management service for preventing memory leaks
 builder.Services.AddSingleton<IMemoryManagementService, MemoryManagementService>();
 
