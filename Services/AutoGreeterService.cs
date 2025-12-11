@@ -24,6 +24,9 @@ namespace RadegastWeb.Services
         // Cooldown period before greeting same avatar again (e.g., after region change)
         private readonly TimeSpan _greetCooldown = TimeSpan.FromMinutes(15);
         
+        // Minimum cooldown between any greetings (including welcome back) to prevent spam
+        private readonly TimeSpan _minGreetingCooldown = TimeSpan.FromMinutes(2);
+        
         public AutoGreeterService(
             ILogger<AutoGreeterService> logger,
             IAccountService accountService,
@@ -63,6 +66,13 @@ namespace RadegastWeb.Services
                 // If returning and return greeter is enabled
                 if (isReturning && account.AutoGreeterReturnEnabled)
                 {
+                    // Check minimum cooldown to prevent spam (even for welcome back messages)
+                    if (HasBeenGreetedRecently(accountId, avatarId, _minGreetingCooldown))
+                    {
+                        _logger.LogDebug("Avatar {AvatarId} was greeted too recently (cooldown active) for account {AccountId}", avatarId, accountId);
+                        return;
+                    }
+                    
                     // Get the WebRadegastInstance for this account
                     var returnInstance = _accountService.GetInstance(accountId);
                     if (returnInstance == null || !returnInstance.IsConnected)
@@ -170,7 +180,27 @@ namespace RadegastWeb.Services
             
             // Check if cooldown period has passed
             if (DateTime.UtcNow - greetedTime > _greetCooldown)
+         
+        
+        /// <summary>
+        /// Check if an avatar has been greeted within a specific time period
+        /// Used for minimum cooldown enforcement to prevent spam
+        /// </summary>
+        private bool HasBeenGreetedRecently(Guid accountId, string avatarId, TimeSpan cooldownPeriod)
+        {
+            if (!_greetedAvatars.TryGetValue(accountId, out var accountGreeted))
             {
+                return false;
+            }
+            
+            if (!accountGreeted.TryGetValue(avatarId, out var greetedTime))
+            {
+                return false;
+            }
+            
+            // Check if the specified cooldown period has passed
+            return DateTime.UtcNow - greetedTime <= cooldownPeriod;
+        }   {
                 // Cooldown expired, allow greeting again
                 accountGreeted.TryRemove(avatarId, out _);
                 return false;
