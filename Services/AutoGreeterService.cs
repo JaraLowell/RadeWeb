@@ -180,7 +180,14 @@ namespace RadegastWeb.Services
             
             // Check if cooldown period has passed
             if (DateTime.UtcNow - greetedTime > _greetCooldown)
-         
+            {
+                // Cooldown expired, allow greeting again
+                accountGreeted.TryRemove(avatarId, out _);
+                return false;
+            }
+            
+            return true;
+        }
         
         /// <summary>
         /// Check if an avatar has been greeted within a specific time period
@@ -200,13 +207,6 @@ namespace RadegastWeb.Services
             
             // Check if the specified cooldown period has passed
             return DateTime.UtcNow - greetedTime <= cooldownPeriod;
-        }   {
-                // Cooldown expired, allow greeting again
-                accountGreeted.TryRemove(avatarId, out _);
-                return false;
-            }
-            
-            return true;
         }
         
         /// <summary>
