@@ -1710,10 +1710,9 @@ namespace RadegastWeb.Core
                 // Request current groups after successful login
                 _client.Groups.RequestCurrentGroups();
                 
-                // Start periodic maintenance timer (display names refresh + self-presence recording every 5 minutes)
-                _displayNameRefreshTimer?.Dispose();
-                _displayNameRefreshTimer = new System.Threading.Timer(PeriodicMaintenanceRefresh, null, 
-                    TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+                // Keep the existing 30-second timer for display names, self-presence, and auto-greeter detection
+                // The timer is already initialized in the constructor with RefreshNearbyDisplayNames
+                // No need to change it here - maintaining 30-second intervals for responsive auto-greeter
                 
                 // Start proactive display name loading after successful login
                 _ = Task.Run(async () =>
@@ -1764,15 +1763,24 @@ namespace RadegastWeb.Core
                 {
                     var avatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
                     
+                    // Detect avatars that have left the area (for auto-greeter return feature)
+                    _autoGreeterService.DetectDepartures(Guid.Parse(_accountId), avatarIds);
+                    
+                    // Periodically cleanup old auto-greeter tracking data
+                    _autoGreeterService.CleanupOldTrackingData(Guid.Parse(_accountId));
+                    
                     // Refresh display names for all nearby avatars
                     // This ensures we pick up any display name changes
                     await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), avatarIds);
                     
-                    _logger.LogDebug("Periodic maintenance refresh completed: display names for {Count} avatars + self-presence recording", avatarIds.Count);
+                    _logger.LogDebug("Periodic maintenance refresh completed: display names for {Count} avatars + self-presence recording + auto-greeter checks", avatarIds.Count);
                 }
                 else
                 {
                     _logger.LogDebug("Periodic maintenance refresh completed: self-presence recording only");
+                    
+                    // Even with no avatars, detect departures (all have left)
+                    _autoGreeterService.DetectDepartures(Guid.Parse(_accountId), new List<string>());
                 }
             }
             catch (Exception ex)
