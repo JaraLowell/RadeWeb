@@ -285,5 +285,38 @@ namespace RadegastWeb.Services
                 _logger.LogError(ex, "Error cleaning up old tracking data for account {AccountId}", accountId);
             }
         }
+        
+        /// <summary>
+        /// Detect avatars that have left by comparing current nearby list with tracked avatars
+        /// </summary>
+        public void DetectDepartures(Guid accountId, IEnumerable<string> currentNearbyAvatarIds)
+        {
+            try
+            {
+                // Get the list of avatars we're currently tracking
+                if (!_greetedAvatars.TryGetValue(accountId, out var accountGreeted))
+                {
+                    return; // No avatars tracked for this account
+                }
+                
+                var currentSet = new HashSet<string>(currentNearbyAvatarIds);
+                var trackedAvatars = accountGreeted.Keys.ToList();
+                
+                // Find avatars that were tracked but are no longer nearby
+                foreach (var avatarId in trackedAvatars)
+                {
+                    if (!currentSet.Contains(avatarId))
+                    {
+                        // This avatar has left - track their departure
+                        TrackAvatarDeparture(avatarId, accountId);
+                        _logger.LogDebug("Detected departure of avatar {AvatarId} for account {AccountId}", avatarId, accountId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error detecting departures for account {AccountId}", accountId);
+            }
+        }
     }
 }

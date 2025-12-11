@@ -3711,10 +3711,14 @@ namespace RadegastWeb.Core
                 // FIXED: Record our own avatar presence every 30 seconds to maintain visitor stats
                 await RecordOwnAvatarAsync();
                 
+                // Get current nearby avatar IDs
+                var nearbyAvatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
+                
+                // Detect avatars that have left the area (for auto-greeter return feature)
+                _autoGreeterService.DetectDepartures(Guid.Parse(_accountId), nearbyAvatarIds);
+                
                 // Periodically cleanup old auto-greeter tracking data (every refresh cycle)
                 _autoGreeterService.CleanupOldTrackingData(Guid.Parse(_accountId));
-
-                var nearbyAvatarIds = _nearbyAvatars.Keys.Select(id => id.ToString()).ToList();
                 if (nearbyAvatarIds.Count > 0)
                 {
                     // Batch request display names for all nearby avatars
