@@ -561,6 +561,14 @@ namespace RadegastWeb.Services
                     return ChatProcessingResult.CreateSuccess();
                 }
 
+                // Skip relaying if this is a Corrade command - don't relay commands to the relay avatar
+                var corradeService = scope.ServiceProvider.GetRequiredService<ICorradeService>();
+                if (corradeService.IsWhisperCorradeCommand(message.Message))
+                {
+                    _logger.LogDebug("Skipping IM relay for Corrade command on account {AccountId}", context.AccountId);
+                    return ChatProcessingResult.CreateSuccess();
+                }
+
                 // Prevent sending IM to oneself
                 if (context.AccountInstance != null && 
                     account.AvatarRelayUuid.Equals(context.AccountInstance.Client.Self.AgentID.ToString(), StringComparison.OrdinalIgnoreCase))
