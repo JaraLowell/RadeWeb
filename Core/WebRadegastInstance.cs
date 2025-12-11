@@ -2337,12 +2337,43 @@ namespace RadegastWeb.Core
                     
                     if (_coarseLocationAvatars.TryGetValue(avatarPos.Key, out var existing))
                     {
+                        // Track previous distance for auto-greeter detection
+                        var previousPos = existing.Position;
+                        var previousDistance = Vector3d.Distance(ToVector3D(e.Simulator.Handle, previousPos), agentPosition);
+                        
                         existing.Position = pos;
                         existing.LastUpdate = DateTime.UtcNow;
                         existing.IsDetailed = detailedAvatar != null;
                         if (!string.IsNullOrEmpty(avatarName) && avatarName != "Loading...")
                         {
                             existing.Name = avatarName;
+                        }
+                        
+                        // Process auto-greeter if avatar moved from >20m to <=20m
+                        // This catches avatars that were far away and then moved closer
+                        if (distance <= 20.0 && previousDistance > 20.0)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    var displayName = await _globalDisplayNameCache.GetDisplayNameAsync(
+                                        avatarPos.Key.ToString(), 
+                                        NameDisplayMode.Smart, 
+                                        avatarName);
+                                    
+                                    await _autoGreeterService.ProcessNewAvatarAsync(
+                                        avatarPos.Key.ToString(),
+                                        displayName,
+                                        distance,
+                                        Guid.Parse(_accountId)
+                                    );
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "Error in auto-greeter for approaching avatar {AvatarId}", avatarPos.Key);
+                                }
+                            });
                         }
                     }
                     else
@@ -2358,6 +2389,34 @@ namespace RadegastWeb.Core
                         {
                             // Use deduplicated request to prevent cache bloat
                             RequestAvatarNamesWithDeduplication(avatarPos.Key);
+                        }
+                        
+                        // Process auto-greeter for new coarse avatars within 20 meters
+                        // This catches avatars that don't trigger detailed AvatarUpdate events
+                        if (isNewCoarseAvatar && distance <= 20.0)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    // Get display name for greeting
+                                    var displayName = await _globalDisplayNameCache.GetDisplayNameAsync(
+                                        avatarPos.Key.ToString(), 
+                                        NameDisplayMode.Smart, 
+                                        avatarName);
+                                    
+                                    await _autoGreeterService.ProcessNewAvatarAsync(
+                                        avatarPos.Key.ToString(),
+                                        displayName,
+                                        distance,
+                                        Guid.Parse(_accountId)
+                                    );
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(ex, "Error in auto-greeter for coarse avatar {AvatarId}", avatarPos.Key);
+                                }
+                            });
                         }
                     }
 
