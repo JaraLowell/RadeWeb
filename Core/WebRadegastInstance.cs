@@ -59,6 +59,12 @@ namespace RadegastWeb.Core
         // Track previous avatar positions to detect movement into proximity range
         private readonly ConcurrentDictionary<UUID, Vector3> _previousAvatarPositions = new();
         
+        // Track last sent message to prevent duplicate consecutive messages (spam prevention)
+        private string? _lastSentMessage = null;
+        private ChatType _lastSentChatType = ChatType.Normal;
+        private int _lastSentChannel = 0;
+        private DateTime _lastSentTime = DateTime.MinValue;
+        
         private readonly ConcurrentDictionary<string, ChatSessionDto> _chatSessions = new();
         private readonly ConcurrentDictionary<UUID, Group> _groups = new();
         private System.Threading.Timer? _displayNameRefreshTimer;
@@ -477,9 +483,26 @@ namespace RadegastWeb.Core
                 return;
             }
 
+            // Prevent sending duplicate consecutive messages (spam protection)
+            if (_lastSentMessage == message && 
+                _lastSentChatType == chatType && 
+                _lastSentChannel == channel &&
+                (DateTime.UtcNow - _lastSentTime).TotalSeconds < 2)
+            {
+                _logger.LogWarning("Prevented duplicate consecutive chat message: {Message} (Type: {ChatType}, Channel: {Channel})", 
+                    message.Length > 50 ? message.Substring(0, 50) + "..." : message, chatType, channel);
+                return;
+            }
+
             try
             {
                 _client.Self.Chat(message, channel, chatType);
+                
+                // Track this message to prevent duplicates
+                _lastSentMessage = message;
+                _lastSentChatType = chatType;
+                _lastSentChannel = channel;
+                _lastSentTime = DateTime.UtcNow;
                 
                 // Log our own message
                 var senderName = !string.IsNullOrEmpty(AccountInfo.DisplayName) && AccountInfo.DisplayName != $"{AccountInfo.FirstName} {AccountInfo.LastName}"
