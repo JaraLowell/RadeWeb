@@ -94,6 +94,10 @@ namespace RadegastWeb.Services
                     return;
                 }
                 
+                // Mark this avatar as greeted IMMEDIATELY to prevent duplicate greetings
+                // This must happen before any async operations that might allow concurrent processing
+                MarkAsGreeted(accountId, avatarId);
+                
                 // Check if auto-greeter is enabled
                 if (!account.AutoGreeterEnabled)
                 {
@@ -117,9 +121,6 @@ namespace RadegastWeb.Services
                 
                 _logger.LogInformation("Auto-greeter sent greeting to {DisplayName} ({AvatarId}) from account {AccountId}: {Message}", 
                     displayName, avatarId, accountId, greetingMessage);
-                
-                // Mark this avatar as greeted
-                MarkAsGreeted(accountId, avatarId);
             }
             catch (Exception ex)
             {
