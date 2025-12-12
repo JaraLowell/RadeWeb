@@ -128,8 +128,10 @@ class MiniMap {
             if (mapInfo.hasMapImage && mapInfo.mapImageUrl) {
                 // Fetch directly from the public URL - browser handles caching
                 // Different URLs for different regions means browser naturally fetches new images
+                console.log('Loading map image from:', mapInfo.mapImageUrl);
                 await this.loadMapImage(mapInfo.mapImageUrl);
             } else {
+                console.warn('No map image available for region:', this.regionName);
                 this.showPlaceholder();
             }
         } catch (error) {
@@ -151,11 +153,13 @@ class MiniMap {
                     this.drawMap();
                     resolve();
                 };
-                img.onerror = () => {
+                img.onerror = (error) => {
+                    console.error('Failed to load map image:', error);
+                    this.showPlaceholder();
                     reject(new Error('Failed to load map image from ' + imageUrl));
                 };
-                // Set crossOrigin to anonymous to allow canvas manipulation
-                img.crossOrigin = 'anonymous';
+                // Load directly without crossOrigin - SL maps don't support CORS
+                // This is fine since we're just displaying the image
                 img.src = imageUrl;
             });
         } catch (error) {
