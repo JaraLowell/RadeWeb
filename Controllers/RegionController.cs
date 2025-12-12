@@ -94,12 +94,13 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
-        /// Download the region map image for an account using Linden Lab's public Map API with in-memory caching
+        /// Get the public Second Life map URL for the account's current region
+        /// No server-side caching needed - browser handles caching of the public URL
         /// </summary>
         /// <param name="accountId">The account ID</param>
-        /// <returns>The region map image as JPEG</returns>
+        /// <returns>Redirect to the public Second Life map image</returns>
         [HttpGet("{accountId}/map")]
-        public async Task<IActionResult> GetRegionMap(Guid accountId)
+        public IActionResult GetRegionMap(Guid accountId)
         {
             try
             {
@@ -121,33 +122,18 @@ namespace RadegastWeb.Controllers
                 var regionX = (ulong)(currentSim.Handle >> 32) / 256;
                 var regionY = (ulong)(currentSim.Handle & 0xFFFFFFFF) / 256;
 
-                _logger.LogDebug("Getting region map for {RegionName} at ({RegionX}, {RegionY})", 
-                    currentSim.Name, regionX, regionY);
-
-                // Check if we have a cached map for this specific region name and coordinates
-                // This prevents returning maps from different regions that happen to have the same coordinates
-                var regionSpecificCacheKey = $"{currentSim.Name}_{regionX}_{regionY}";
+                // Generate the public map URL from Second Life's CDN
+                var publicMapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
                 
-                // Try to get the map from cache first (region-specific to prevent coordinate collisions)
-                var imageBytes = await _regionMapCacheService.GetRegionMapWithNameAsync(regionX, regionY, currentSim.Name);
-                
-                if (imageBytes == null || imageBytes.Length == 0)
-                {
-                    _logger.LogWarning("Failed to get region map for ({RegionX}, {RegionY})", regionX, regionY);
-                    return NotFound(new { error = "Region map image not available" });
-                }
+                _logger.LogDebug("Redirecting to public map URL for {RegionName} at ({RegionX}, {RegionY}): {Url}", 
+                    currentSim.Name, regionX, regionY, publicMapUrl);
 
-                _logger.LogDebug("Serving region map for {RegionName} at ({RegionX}, {RegionY}), size: {SizeKB}KB", 
-                    currentSim.Name, regionX, regionY, imageBytes.Length / 1024);
-
-                // Return the image as JPEG with longer caching headers since maps rarely change
-                Response.Headers["Cache-Control"] = "public, max-age=21600"; // 6 hour browser cache to match server cache
-                Response.Headers["ETag"] = $"\"{regionX}_{regionY}\""; // Simple ETag for cache validation
-                return File(imageBytes, "image/jpeg", $"{currentSim.Name}_map.jpg");
+                // Redirect to the public URL - browser will handle caching
+                return Redirect(publicMapUrl);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error getting region map for account {AccountId}", accountId);
+                _logger.LogError(ex, "Error getting region map URL for account {AccountId}", accountId);
                 return StatusCode(500, new { error = "Internal server error" });
             }
         }
@@ -180,18 +166,16 @@ namespace RadegastWeb.Controllers
                 var regionX = (ulong)(currentSim.Handle >> 32) / 256;
                 var regionY = (ulong)(currentSim.Handle & 0xFFFFFFFF) / 256;
 
-                // Generate the public map URL using Linden Lab's Map API
+                // Generate the direct public map URL from Second Life's CDN
+                // Browser will fetch and cache this directly - no server-side caching needed
                 var publicMapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
-
-                // Check if the map is cached for this account
-                var isCached = _regionMapCacheService.IsRegionMapCachedForAccount(accountId, regionX, regionY);
 
                 var result = new
                 {
                     regionName = currentSim.Name,
                     regionX = regionX,
                     regionY = regionY,
-                    mapImageUrl = $"/api/region/{accountId}/map",
+                    mapImageUrl = publicMapUrl, // Direct public URL
                     publicMapUrl = publicMapUrl,
                     localPosition = new
                     {
@@ -199,9 +183,7 @@ namespace RadegastWeb.Controllers
                         y = client.Self.SimPosition.Y,
                         z = client.Self.SimPosition.Z
                     },
-                    hasMapImage = true, // Always true with public API
-                    isCached = isCached,
-                    cacheSize = _regionMapCacheService.GetCacheSize()
+                    hasMapImage = true // Public URL is always available
                 };
 
                 return Ok(result);

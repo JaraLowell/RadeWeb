@@ -126,7 +126,8 @@ class MiniMap {
             this.updateRegionDisplay(mapInfo);
 
             if (mapInfo.hasMapImage && mapInfo.mapImageUrl) {
-                // Load the actual map image
+                // Fetch directly from the public URL - browser handles caching
+                // Different URLs for different regions means browser naturally fetches new images
                 await this.loadMapImage(mapInfo.mapImageUrl);
             } else {
                 this.showPlaceholder();
@@ -141,27 +142,21 @@ class MiniMap {
 
     async loadMapImage(imageUrl) {
         try {
-            const response = await window.authManager.makeAuthenticatedRequest(imageUrl);
-            if (!response.ok) {
-                throw new Error('Failed to load map image');
-            }
-
-            const blob = await response.blob();
-            const imageObjectUrl = URL.createObjectURL(blob);
-
+            // Directly load the public Second Life map URL
+            // Browser handles caching automatically via HTTP headers
             return new Promise((resolve, reject) => {
                 const img = new Image();
                 img.onload = () => {
                     this.mapImage = img;
                     this.drawMap();
-                    URL.revokeObjectURL(imageObjectUrl);
                     resolve();
                 };
                 img.onerror = () => {
-                    URL.revokeObjectURL(imageObjectUrl);
-                    reject(new Error('Failed to decode map image'));
+                    reject(new Error('Failed to load map image from ' + imageUrl));
                 };
-                img.src = imageObjectUrl;
+                // Set crossOrigin to anonymous to allow canvas manipulation
+                img.crossOrigin = 'anonymous';
+                img.src = imageUrl;
             });
         } catch (error) {
             console.error('Error loading map image:', error);
@@ -366,13 +361,14 @@ class MiniMap {
 
     updateMapInfo(regionInfo) {
         if (regionInfo.name !== this.regionName) {
-            // Region changed, reload the map after a small delay to ensure backend has processed the change
+            // Region changed - reload with new public URL
+            // Browser will automatically fetch new image for different region coordinates
+            console.log(`Minimap: Region changed from "${this.regionName}" to "${regionInfo.name}" - reloading map`);
             this.regionName = regionInfo.name;
+            this.mapImage = null; // Clear cached image reference
             
-            // Add a brief delay to allow the backend to update its region information
-            setTimeout(() => {
-                this.loadRegionMap();
-            }, 500); // 500ms delay
+            // Reload immediately - new URL means browser fetches new image
+            this.loadRegionMap();
         }
     }
 

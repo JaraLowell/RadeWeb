@@ -174,6 +174,62 @@ namespace RadegastWeb.Services
                     regionName, regionX, regionY);
             }
         }
+        
+        public async Task<byte[]?> GetRegionMapForAccountWithNameAsync(Guid accountId, ulong regionX, ulong regionY, string regionName)
+        {
+            if (_disposed || string.IsNullOrEmpty(regionName))
+                return null;
+
+            // Check if we have a cached version for this account with the specific region name
+            var cachedData = await ReadCachedMapForAccountWithNameAsync(accountId, regionX, regionY, regionName);
+            if (cachedData != null && IsMapCacheForAccountWithNameValid(accountId, regionX, regionY, regionName))
+            {
+                _logger.LogDebug("Cache hit for account {AccountId} in region {RegionName} at ({RegionX}, {RegionY})", 
+                    accountId, regionName, regionX, regionY);
+                return cachedData;
+            }
+
+            _logger.LogDebug("Cache miss for account {AccountId} in region {RegionName} at ({RegionX}, {RegionY})", 
+                accountId, regionName, regionX, regionY);
+            
+            // Download and cache the map for this account with region name
+            var mapData = await DownloadRegionMapAsync(regionX, regionY);
+            if (mapData != null)
+            {
+                await CacheRegionMapForAccountWithNameAsync(accountId, regionX, regionY, regionName, mapData);
+            }
+
+            return mapData;
+        }
+        
+        public async Task CacheRegionMapForAccountWithNameAsync(Guid accountId, ulong regionX, ulong regionY, string regionName, byte[] imageData)
+        {
+            if (_disposed || imageData == null || imageData.Length == 0 || string.IsNullOrEmpty(regionName))
+                return;
+
+            try
+            {
+                var mapFilePath = GetMapFilePathForAccountWithName(accountId, regionX, regionY, regionName);
+                
+                // Ensure directory exists
+                var directory = Path.GetDirectoryName(mapFilePath);
+                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+                
+                // Write the image data
+                await File.WriteAllBytesAsync(mapFilePath, imageData);
+                
+                _logger.LogDebug("Cached region map for account {AccountId} in {RegionName} at ({RegionX}, {RegionY}), size: {SizeKB}KB", 
+                    accountId, regionName, regionX, regionY, imageData.Length / 1024);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error caching region map for account {AccountId} in {RegionName} at ({RegionX}, {RegionY})", 
+                    accountId, regionName, regionX, regionY);
+            }
+        }
 
         public async Task CacheRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY, byte[] imageData)
         {
@@ -294,10 +350,18 @@ namespace RadegastWeb.Services
                     var accountCacheDir = GetAccountCacheDirectory(accountId);
                     if (Directory.Exists(accountCacheDir))
                     {
+                        // Delete all region map files (both old format and new format with region names)
                         var mapFiles = Directory.GetFiles(accountCacheDir, "region_*.jpg");
                         foreach (var file in mapFiles)
                         {
-                            File.Delete(file);
+                            try
+                            {
+                                File.Delete(file);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Error deleting map file {FilePath}", file);
+                            }
                         }
                         
                         // Remove from metadata cache
@@ -485,6 +549,97 @@ namespace RadegastWeb.Services
             {
                 return false;
             }
+        }
+        
+        private string GetMapFilePathForAccountWithName(Guid accountId, ulong regionX, ulong regionY, string regionName)
+        {
+            var accountCacheDir = GetAccountCacheDirectory(accountId);
+            
+            // Sanitize region name for file system
+            var sanitizedName = regionName.Replace(" ", "_").Replace("/", "_").Replace("\\", "_")
+                                         .Replace(":", "_").Replace("*", "_").Replace("?", "_")
+                                         .Replace("<", "_").Replace(">", "_").Replace("|", "_");
+            
+            return Path.Combine(accountCacheDir, $"region_{regionX}_{regionY}_{sanitizedName}.jpg");
+        }
+        
+        private async Task<byte[]?> ReadCachedMapForAccountWithNameAsync(Guid accountId, ulong regionX, ulong regionY, string regionName)
+        {
+            try
+            {
+                var mapFilePath = GetMapFilePathForAccountWithName(accountId, regionX, regionY, regionName);
+                
+                if (!File.Exists(mapFilePath))
+                    return null;
+                
+                return await File.ReadAllBytesAsync(mapFilePath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error reading cached map for account {AccountId} in region {RegionName} at ({RegionX}, {RegionY})", 
+                    accountId, regionName, regionX, regionY);
+                return null;
+            }
+        }
+        
+        private bool IsMapCacheForAccountWithNameValid(Guid accountId, ulong regionX, ulong regionY, string regionName)
+        {
+            try
+            {
+                var mapFilePath = GetMapFilePathForAccountWithName(accountId, regionX, regionY, regionName);
+                
+                if (!File.Exists(mapFilePath))
+                    return false;
+                
+                var fileInfo = new FileInfo(mapFilePath);
+                return DateTime.UtcNow - fileInfo.LastWriteTimeUtc < _cacheExpiry;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        
+        public async Task ClearAccountRegionMapAsync(Guid accountId)
+        {
+            if (_disposed)
+                return;
+
+            await Task.Run(() =>
+            {
+                try
+                {
+                    var accountCacheDir = GetAccountCacheDirectory(accountId);
+                    if (Directory.Exists(accountCacheDir))
+                    {
+                        var mapFiles = Directory.GetFiles(accountCacheDir, "region_*.jpg");
+                        var deletedCount = 0;
+                        
+                        foreach (var file in mapFiles)
+                        {
+                            try
+                            {
+                                File.Delete(file);
+                                deletedCount++;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Error deleting map file {FilePath}", file);
+                            }
+                        }
+                        
+                        if (deletedCount > 0)
+                        {
+                            _logger.LogDebug("Cleared {Count} map files for account {AccountId} due to region change", 
+                                deletedCount, accountId);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error clearing region maps for account {AccountId}", accountId);
+                }
+            });
         }
 
         private async Task SaveMetadataAsync(Guid accountId)

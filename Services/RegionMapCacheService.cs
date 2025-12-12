@@ -12,13 +12,16 @@ namespace RadegastWeb.Services
         Task<byte[]?> GetRegionMapAsync(ulong regionX, ulong regionY);
         Task<byte[]?> GetRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY);
         Task<byte[]?> GetRegionMapWithNameAsync(ulong regionX, ulong regionY, string regionName);
+        Task<byte[]?> GetRegionMapForAccountWithNameAsync(Guid accountId, ulong regionX, ulong regionY, string regionName);
         void CacheRegionMap(ulong regionX, ulong regionY, byte[] imageData);
         void CacheRegionMapWithName(ulong regionX, ulong regionY, string regionName, byte[] imageData);
         Task CacheRegionMapForAccountAsync(Guid accountId, ulong regionX, ulong regionY, byte[] imageData);
+        Task CacheRegionMapForAccountWithNameAsync(Guid accountId, ulong regionX, ulong regionY, string regionName, byte[] imageData);
         bool IsRegionMapCached(ulong regionX, ulong regionY);
         bool IsRegionMapCachedForAccount(Guid accountId, ulong regionX, ulong regionY);
         void ClearExpiredMaps();
         Task CleanupAccountMapsAsync(Guid accountId);
+        Task ClearAccountRegionMapAsync(Guid accountId);
         int GetCacheSize();
     }
 
@@ -297,6 +300,26 @@ namespace RadegastWeb.Services
             // For memory-based cache, we don't have per-account cleanup
             // This is a no-op since memory cache is shared
             _logger.LogDebug("Account-specific cleanup not supported in memory-based cache service");
+            return Task.CompletedTask;
+        }
+        
+        public async Task<byte[]?> GetRegionMapForAccountWithNameAsync(Guid accountId, ulong regionX, ulong regionY, string regionName)
+        {
+            // Fallback to regular method for memory-based cache
+            return await GetRegionMapWithNameAsync(regionX, regionY, regionName);
+        }
+        
+        public async Task CacheRegionMapForAccountWithNameAsync(Guid accountId, ulong regionX, ulong regionY, string regionName, byte[] imageData)
+        {
+            // Fallback to regular method for memory-based cache
+            CacheRegionMapWithName(regionX, regionY, regionName, imageData);
+            await Task.CompletedTask;
+        }
+        
+        public Task ClearAccountRegionMapAsync(Guid accountId)
+        {
+            // For memory-based cache, this is a no-op
+            _logger.LogDebug("Account-specific region map clearing not supported in memory-based cache service");
             return Task.CompletedTask;
         }
         
