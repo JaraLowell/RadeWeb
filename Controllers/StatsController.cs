@@ -360,6 +360,9 @@ namespace RadegastWeb.Controllers
                 // MEMORY FIX: Limit dashboard query complexity to prevent memory issues
                 days = Math.Min(days, 90); // Cap at 90 days maximum
                 
+                // Track memory before operation for logging
+                var memoryBeforeMB = GC.GetTotalMemory(false) / 1024.0 / 1024.0;
+                
                 // Get current SLT date and calculate date ranges in SLT
                 var currentSLT = _sltTimeService.GetCurrentSLT().Date;
                 var endDate = currentSLT;
@@ -393,15 +396,19 @@ namespace RadegastWeb.Controllers
                 }
                 else
                 {
-                    // MEMORY FIX: Execute these sequentially to reduce memory pressure
+                    // MEMORY FIX: Execute these sequentially with aggressive Gen2 GC to reduce memory pressure
                     stats30Days = await _statsService.GetAllRegionStatsAsync(utcStartDate30, utcEndDate);
-                    GC.Collect(0, GCCollectionMode.Optimized); // Force cleanup between operations
+                    // Force full GC including Gen2 to release large object graphs immediately
+                    GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                    GC.WaitForPendingFinalizers();
                     
                     stats7Days = await _statsService.GetAllRegionStatsAsync(utcStartDate7, utcEndDate);
-                    GC.Collect(0, GCCollectionMode.Optimized);
+                    GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                    GC.WaitForPendingFinalizers();
                     
                     statsToday = await _statsService.GetAllRegionStatsAsync(utcStartDateToday, utcEndDate);
-                    GC.Collect(0, GCCollectionMode.Optimized);
+                    GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                    GC.WaitForPendingFinalizers();
                 }
 
                 // MEMORY FIX: Get recent visitors with limited scope
@@ -454,11 +461,37 @@ namespace RadegastWeb.Controllers
                     }
                 };
 
+                // MEMORY FIX: Force aggressive cleanup after building response
+                // Clear large temporary collections to help GC
+                stats30Days?.Clear();
+                stats7Days?.Clear();
+                statsToday?.Clear();
+                recentVisitors?.Clear();
+                
+                // Log memory usage
+                var memoryAfterMB = GC.GetTotalMemory(false) / 1024.0 / 1024.0;
+                var memoryDeltaMB = memoryAfterMB - memoryBeforeMB;
+                
+                if (memoryDeltaMB > 50)
+                {
+                    _logger.LogWarning("Dashboard stats consumed {MemoryDelta:F2} MB (before: {MemoryBefore:F2} MB, after: {MemoryAfter:F2} MB)",
+                        memoryDeltaMB, memoryBeforeMB, memoryAfterMB);
+                    
+                    // Force aggressive GC if memory delta is large
+                    GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+                }
+
                 return Ok(dashboard);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error getting dashboard statistics");
+                
+                // Force cleanup on error path too
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                
                 return StatusCode(500, "Internal server error");
             }
         }

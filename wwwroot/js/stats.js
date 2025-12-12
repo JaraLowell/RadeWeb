@@ -12,9 +12,6 @@ class StatsManager {
         
         this.initializeEventListeners();
         this.loadStatistics();
-        
-        // Auto-refresh every 2 minutes for more responsive updates
-        setInterval(() => this.loadStatistics(), 2 * 60 * 1000);
     }
 
     initializeEventListeners() {

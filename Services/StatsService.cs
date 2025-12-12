@@ -514,17 +514,31 @@ namespace RadegastWeb.Services
                     var regionStats = await GetRegionStatsAsync(region, startDate, endDate);
                     results.Add(regionStats);
                     
-                    // Force garbage collection of intermediate objects
-                    if (results.Count % 10 == 0)
+                    // Force garbage collection of intermediate objects more aggressively
+                    if (results.Count % 5 == 0) // Every 5 regions instead of 10
                     {
-                        GC.Collect(0, GCCollectionMode.Optimized);
+                        GC.Collect(1, GCCollectionMode.Optimized);
                     }
                 }
                 
                 // Clear context to release memory immediately
                 context.ChangeTracker.Clear();
                 
-                return results.OrderBy(r => r.RegionName).ToList();
+                // Add memory pressure hint for large result set
+                if (results.Count > 10)
+                {
+                    GC.AddMemoryPressure(results.Count * 100000); // ~100KB per region estimate
+                }
+                
+                var orderedResults = results.OrderBy(r => r.RegionName).ToList();
+                
+                // Remove memory pressure after building final result
+                if (results.Count > 10)
+                {
+                    GC.RemoveMemoryPressure(results.Count * 100000);
+                }
+                
+                return orderedResults;
             }
             catch (Exception ex)
             {
@@ -555,7 +569,7 @@ namespace RadegastWeb.Services
                     query = query.Where(vs => vs.RegionName == regionName);
                 }
                 
-                // MEMORY FIX: Limit historical data lookup to prevent massive memory allocation
+                // MEMORY FIX: Significantly reduce query limits to prevent memory bloat
                 // For "true unique" determination, we look back 60 days from the start date but limit results
                 var trueUniqueThresholdDate = sltStartDate.AddDays(-60);
                 var historicalVisitors = await context.VisitorStats
@@ -563,34 +577,42 @@ namespace RadegastWeb.Services
                         vs.VisitDate < trueUniqueThresholdDate)
                     .Select(vs => vs.AvatarId)
                     .Distinct()
-                    .Take(10000) // Limit to prevent excessive memory usage
+                    .Take(5000) // Reduced from 10000 to 3000
                     .ToListAsync();
                 
                 var historicalVisitorSet = new HashSet<string>(historicalVisitors);
                 
-                // MEMORY FIX: Limit current period data and add pagination
+                // MEMORY FIX: Aggressively limit current period data
                 var allVisitorStats = await query
                     .OrderByDescending(vs => vs.LastSeenAt)
-                    .Take(5000) // Limit to most recent 5000 records to prevent memory issues
+                    .Take(2500) // Reduced from 5000 to 2000
                     .ToListAsync();
+                
+                // Clear historical visitors list immediately after creating set
+                historicalVisitors.Clear();
+                historicalVisitors = null;
                 
                 // MEMORY FIX: Limit historical data for visitor classification
                 var historicalData = await context.VisitorStats
                     .Where(vs => (string.IsNullOrEmpty(regionName) || vs.RegionName == regionName) && 
                         vs.VisitDate < sltStartDate && vs.VisitDate >= sltStartDate.AddDays(-90)) // Only look back 90 days max
                     .OrderByDescending(vs => vs.VisitDate)
-                    .Take(5000) // Limit historical data
+                    .Take(2500) // Reduced from 5000 to 2000
                     .ToListAsync();
                 
                 // MEMORY FIX: Use more efficient dictionary creation and limit size
                 var lastVisitDates = historicalData
                     .GroupBy(vs => vs.AvatarId)
-                    .Take(2000) // Limit to prevent excessive memory usage
+                    .Take(1000) // Reduced from 2000 to 1000
                     .ToDictionary(g => g.Key, g => g.Max(vs => vs.VisitDate));
+                
+                // Clear historical data immediately after dictionary creation
+                historicalData.Clear();
+                historicalData = null;
                 
                 // MEMORY FIX: Process visitors in batches to reduce memory pressure
                 var visitors = new List<UniqueVisitorDto>();
-                var visitorGroups = allVisitorStats.GroupBy(vs => vs.AvatarId).Take(1000); // Limit total unique visitors
+                var visitorGroups = allVisitorStats.GroupBy(vs => vs.AvatarId).Take(500); // Reduced from 1000 to 500
                 
                 foreach (var g in visitorGroups)
                 {
@@ -635,6 +657,8 @@ namespace RadegastWeb.Services
                 // Clear large temporary collections to help garbage collection
                 historicalVisitorSet.Clear();
                 lastVisitDates.Clear();
+                allVisitorStats.Clear();
+                allVisitorStats = null;
 
                 // MEMORY FIX: Use persistent stats names instead of mass enhancement
                 // Get names from stats cache for all visitors efficiently
@@ -655,6 +679,13 @@ namespace RadegastWeb.Services
                         }
                     }
                 }
+                
+                // Clear temporary collections
+                avatarIds.Clear();
+                statsNames.Clear();
+                
+                // Force GC hint that we're done with large allocations
+                GC.Collect(1, GCCollectionMode.Optimized);
                 
                 return visitors.OrderByDescending(v => v.LastSeen).ToList();
             }
