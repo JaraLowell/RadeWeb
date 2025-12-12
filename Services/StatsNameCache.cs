@@ -371,42 +371,27 @@ namespace RadegastWeb.Services
                     return results;
                 
                 // Get the last seen location for each matching avatar across all regions
+                // Use the most recent visit record to get the latest known names
                 var lastSeenLocations = await context.VisitorStats
                     .Where(vs => matchingAvatars.Contains(vs.AvatarId))
                     .GroupBy(vs => new { vs.AvatarId, vs.RegionName, vs.SimHandle })
-                    .Select(g => new
-                    {
-                        g.Key.AvatarId,
-                        g.Key.RegionName,
-                        g.Key.SimHandle,
-                        LastSeen = g.Max(vs => vs.LastSeenAt),
-                        RegionX = g.First().RegionX,
-                        RegionY = g.First().RegionY
-                    })
-                    .OrderByDescending(x => x.LastSeen)
+                    .Select(g => g.OrderByDescending(vs => vs.LastSeenAt).First())
+                    .OrderByDescending(x => x.LastSeenAt)
                     .ToListAsync();
                 
-                // Get display names for results
-                var avatarIds = lastSeenLocations.Select(l => l.AvatarId).Distinct().ToList();
-                var displayNames = await context.StatsDisplayNames
-                    .Where(sdn => avatarIds.Contains(sdn.AvatarId))
-                    .ToDictionaryAsync(sdn => sdn.AvatarId, sdn => sdn);
-                
-                // Build result DTOs
-                foreach (var location in lastSeenLocations)
+                // Build result DTOs using names from the actual visit records
+                foreach (var visit in lastSeenLocations)
                 {
-                    var avatarInfo = displayNames.GetValueOrDefault(location.AvatarId);
-                    
                     results.Add(new AvatarLocationDto
                     {
-                        AvatarId = location.AvatarId,
-                        DisplayName = avatarInfo?.DisplayName,
-                        AvatarName = avatarInfo?.AvatarName,
-                        RegionName = location.RegionName,
-                        SimHandle = location.SimHandle,
-                        RegionX = location.RegionX,
-                        RegionY = location.RegionY,
-                        LastSeen = location.LastSeen
+                        AvatarId = visit.AvatarId,
+                        DisplayName = visit.DisplayName,
+                        AvatarName = visit.AvatarName,
+                        RegionName = visit.RegionName,
+                        SimHandle = visit.SimHandle,
+                        RegionX = visit.RegionX,
+                        RegionY = visit.RegionY,
+                        LastSeen = visit.LastSeenAt
                     });
                 }
                 
