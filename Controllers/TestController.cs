@@ -77,7 +77,7 @@ namespace RadegastWeb.Controllers
         {
             try
             {
-                var mapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
+                var mapUrl = $"https://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
                 
                 _logger.LogInformation("Testing Map API access for URL: {MapUrl}", mapUrl);
 
@@ -127,7 +127,7 @@ namespace RadegastWeb.Controllers
         {
             try
             {
-                var mapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
+                var mapUrl = $"https://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
                 
                 _logger.LogInformation("Proxying map image from URL: {MapUrl}", mapUrl);
 

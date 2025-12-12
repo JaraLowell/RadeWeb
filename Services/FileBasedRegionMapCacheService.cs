@@ -402,7 +402,7 @@ namespace RadegastWeb.Services
         {
             try
             {
-                var mapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
+                var mapUrl = $"https://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
                 
                 _logger.LogDebug("Downloading region map from: {MapUrl}", mapUrl);
                 

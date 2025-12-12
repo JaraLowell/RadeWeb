@@ -123,7 +123,7 @@ namespace RadegastWeb.Controllers
                 var regionY = (ulong)(currentSim.Handle & 0xFFFFFFFF) / 256;
 
                 // Generate the public map URL from Second Life's CDN
-                var publicMapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
+                var publicMapUrl = $"https://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
                 
                 _logger.LogDebug("Redirecting to public map URL for {RegionName} at ({RegionX}, {RegionY}): {Url}", 
                     currentSim.Name, regionX, regionY, publicMapUrl);
@@ -168,7 +168,7 @@ namespace RadegastWeb.Controllers
 
                 // Generate the direct public map URL from Second Life's CDN
                 // Browser will fetch and cache this directly - no server-side caching needed
-                var publicMapUrl = $"http://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
+                var publicMapUrl = $"https://map.secondlife.com/map-1-{regionX}-{regionY}-objects.jpg";
 
                 var result = new
                 {

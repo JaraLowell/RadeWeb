@@ -13,6 +13,7 @@ class MiniMap {
         this.isVisible = false;
         this.lastAvatarsHash = null; // Track changes in nearby avatars
         this.lastAvatarPositions = new Map(); // Cache of avatar positions by ID
+        this.loadedMapUrls = new Set(); // Track which map URLs we've already loaded this session
         
         this.createUI();
         this.bindEvents();
@@ -99,6 +100,7 @@ class MiniMap {
         this.currentAccountId = null;
         this.lastAvatarsHash = null; // Clear avatar tracking
         this.lastAvatarPositions.clear();
+        // Note: We don't clear loadedMapUrls here - session-level cache persists
         
         const container = this.container.querySelector('.minimap-container');
         if (container) {
@@ -126,10 +128,21 @@ class MiniMap {
             this.updateRegionDisplay(mapInfo);
 
             if (mapInfo.hasMapImage && mapInfo.mapImageUrl) {
+                // Check if we already loaded this exact map URL in this session
+                if (this.loadedMapUrls.has(mapInfo.mapImageUrl)) {
+                    console.log('Map already loaded for this region in current session, skipping fetch');
+                    // Still update the display but don't re-fetch the image
+                    this.drawMap();
+                    return;
+                }
+                
                 // Fetch directly from the public URL - browser handles caching
                 // Different URLs for different regions means browser naturally fetches new images
                 console.log('Loading map image from:', mapInfo.mapImageUrl);
                 await this.loadMapImage(mapInfo.mapImageUrl);
+                
+                // Mark this URL as loaded for this session
+                this.loadedMapUrls.add(mapInfo.mapImageUrl);
             } else {
                 console.warn('No map image available for region:', this.regionName);
                 this.showPlaceholder();
@@ -372,6 +385,7 @@ class MiniMap {
             this.mapImage = null; // Clear cached image reference
             
             // Reload immediately - new URL means browser fetches new image
+            // The session cache in loadRegionMap will prevent duplicate fetches
             this.loadRegionMap();
         }
     }
