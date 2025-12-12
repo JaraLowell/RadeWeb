@@ -40,6 +40,11 @@ namespace RadegastWeb.Services
         /// Populate stats names from existing GlobalDisplayNames cache for historical visitors
         /// </summary>
         Task PopulateFromGlobalCacheAsync();
+        
+        /// <summary>
+        /// Search for avatars by name (legacy first name or full name) and return their last seen locations
+        /// </summary>
+        Task<List<AvatarLocationDto>> SearchAvatarLocationsAsync(string searchName);
     }
 
     /// <summary>
@@ -338,6 +343,81 @@ namespace RadegastWeb.Services
             
             // Both are valid, prefer the new one if it's longer (more descriptive)
             return newName.Length > existingName.Length;
+        }
+        
+        public async Task<List<AvatarLocationDto>> SearchAvatarLocationsAsync(string searchName)
+        {
+            var results = new List<AvatarLocationDto>();
+            
+            if (string.IsNullOrWhiteSpace(searchName))
+                return results;
+
+            try
+            {
+                using var context = _dbContextFactory.CreateDbContext();
+                
+                // Normalize search term
+                var normalizedSearch = searchName.Trim().ToLower();
+                
+                // Search in StatsDisplayNames for matching names
+                var matchingAvatars = await context.StatsDisplayNames
+                    .Where(sdn => 
+                        (sdn.AvatarName != null && sdn.AvatarName.ToLower().Contains(normalizedSearch)) ||
+                        (sdn.DisplayName != null && sdn.DisplayName.ToLower().Contains(normalizedSearch)))
+                    .Select(sdn => sdn.AvatarId)
+                    .ToListAsync();
+                
+                if (!matchingAvatars.Any())
+                    return results;
+                
+                // Get the last seen location for each matching avatar across all regions
+                var lastSeenLocations = await context.VisitorStats
+                    .Where(vs => matchingAvatars.Contains(vs.AvatarId))
+                    .GroupBy(vs => new { vs.AvatarId, vs.RegionName, vs.SimHandle })
+                    .Select(g => new
+                    {
+                        g.Key.AvatarId,
+                        g.Key.RegionName,
+                        g.Key.SimHandle,
+                        LastSeen = g.Max(vs => vs.LastSeenAt),
+                        RegionX = g.First().RegionX,
+                        RegionY = g.First().RegionY
+                    })
+                    .OrderByDescending(x => x.LastSeen)
+                    .ToListAsync();
+                
+                // Get display names for results
+                var avatarIds = lastSeenLocations.Select(l => l.AvatarId).Distinct().ToList();
+                var displayNames = await context.StatsDisplayNames
+                    .Where(sdn => avatarIds.Contains(sdn.AvatarId))
+                    .ToDictionaryAsync(sdn => sdn.AvatarId, sdn => sdn);
+                
+                // Build result DTOs
+                foreach (var location in lastSeenLocations)
+                {
+                    var avatarInfo = displayNames.GetValueOrDefault(location.AvatarId);
+                    
+                    results.Add(new AvatarLocationDto
+                    {
+                        AvatarId = location.AvatarId,
+                        DisplayName = avatarInfo?.DisplayName,
+                        AvatarName = avatarInfo?.AvatarName,
+                        RegionName = location.RegionName,
+                        SimHandle = location.SimHandle,
+                        RegionX = location.RegionX,
+                        RegionY = location.RegionY,
+                        LastSeen = location.LastSeen
+                    });
+                }
+                
+                _logger.LogInformation("Found {Count} location records for search '{SearchName}'", results.Count, searchName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error searching avatar locations for '{SearchName}'", searchName);
+            }
+
+            return results;
         }
     }
 }

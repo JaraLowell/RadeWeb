@@ -134,6 +134,65 @@
                 </div>
             </div>
 
+            <!-- Avatar Lookup -->
+            <div class="row mb-3">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h6 class="card-title mb-0">
+                                <i class="bi bi-search"></i> Avatar Lookup
+                            </h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row align-items-end">
+                                <div class="col-md-8">
+                                    <label for="avatarSearchInput" class="form-label">
+                                        Search by name (legacy first name or display name)
+                                    </label>
+                                    <input type="text" class="form-control" id="avatarSearchInput" 
+                                           placeholder="Enter avatar name (e.g., 'John' or 'John Doe')">
+                                </div>
+                                <div class="col-md-4">
+                                    <button class="btn btn-primary w-100" onclick="searchAvatar()">
+                                        <i class="bi bi-search"></i> Search
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <!-- Search Results -->
+                            <div id="avatarSearchResults" class="mt-3" style="display: none;">
+                                <h6 class="text-muted mb-2">Search Results:</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Avatar Name</th>
+                                                <th>Display Name</th>
+                                                <th>Region</th>
+                                                <th>Coordinates</th>
+                                                <th>Last Seen (SLT)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="avatarSearchResultsBody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            
+                            <!-- No Results Message -->
+                            <div id="avatarNoResults" class="mt-3 alert alert-info" style="display: none;">
+                                No avatars found matching your search.
+                            </div>
+                            
+                            <!-- Search Error -->
+                            <div id="avatarSearchError" class="mt-3 alert alert-danger" style="display: none;">
+                                Error performing search. Please try again.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Charts Row -->
             <div class="row mb-4">
                 <!-- Daily Visitors Chart -->

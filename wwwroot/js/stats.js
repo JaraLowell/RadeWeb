@@ -835,6 +835,13 @@ class StatsManager {
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.statsManager = new StatsManager();
+    
+    // Add enter key support for avatar search
+    document.getElementById('avatarSearchInput')?.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            searchAvatar();
+        }
+    });
 });
 
 // Global function for retry button
@@ -842,4 +849,74 @@ function loadStatistics() {
     if (window.statsManager) {
         window.statsManager.loadStatistics();
     }
+}
+
+// Global function for avatar search
+async function searchAvatar() {
+    const searchInput = document.getElementById('avatarSearchInput');
+    const searchValue = searchInput?.value.trim();
+    
+    const resultsContainer = document.getElementById('avatarSearchResults');
+    const resultsBody = document.getElementById('avatarSearchResultsBody');
+    const noResultsMsg = document.getElementById('avatarNoResults');
+    const errorMsg = document.getElementById('avatarSearchError');
+    
+    // Hide all result containers
+    resultsContainer.style.display = 'none';
+    noResultsMsg.style.display = 'none';
+    errorMsg.style.display = 'none';
+    
+    if (!searchValue) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/stats/lookup/avatar?name=${encodeURIComponent(searchValue)}`);
+        
+        if (!response.ok) {
+            throw new Error('Search failed');
+        }
+        
+        const results = await response.json();
+        
+        if (results.length === 0) {
+            noResultsMsg.style.display = 'block';
+            return;
+        }
+        
+        // Display results
+        resultsBody.innerHTML = '';
+        results.forEach(result => {
+            const displayName = result.displayName || result.DisplayName || '-';
+            const avatarName = result.avatarName || result.AvatarName || '-';
+            const regionName = result.regionName || result.RegionName;
+            const regionX = result.regionX || result.RegionX;
+            const regionY = result.regionY || result.RegionY;
+            const lastSeen = result.sltLastSeen || result.SLTLastSeen;
+            
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${escapeHtml(avatarName)}</td>
+                <td>${escapeHtml(displayName)}</td>
+                <td>${escapeHtml(regionName)}</td>
+                <td>(${regionX}, ${regionY})</td>
+                <td>${escapeHtml(lastSeen)}</td>
+            `;
+            resultsBody.appendChild(row);
+        });
+        
+        resultsContainer.style.display = 'block';
+        
+    } catch (error) {
+        console.error('Error searching for avatar:', error);
+        errorMsg.style.display = 'block';
+    }
+}
+
+// Helper function to escape HTML
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }

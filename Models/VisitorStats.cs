@@ -184,4 +184,20 @@ namespace RadegastWeb.Models
         public string? SLTStartDate { get; set; } // MMM dd, yyyy format
         public string? SLTEndDate { get; set; } // MMM dd, yyyy format
     }
+    
+    /// <summary>
+    /// DTO for avatar location lookup results
+    /// </summary>
+    public class AvatarLocationDto
+    {
+        public string AvatarId { get; set; } = string.Empty;
+        public string? DisplayName { get; set; }
+        public string? AvatarName { get; set; }
+        public string RegionName { get; set; } = string.Empty;
+        public ulong SimHandle { get; set; }
+        public uint RegionX { get; set; }
+        public uint RegionY { get; set; }
+        public DateTime LastSeen { get; set; }
+        public string? SLTLastSeen { get; set; } // MMM dd, yyyy HH:mm format
+    }
 }

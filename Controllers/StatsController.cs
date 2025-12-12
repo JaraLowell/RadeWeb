@@ -593,5 +593,37 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, "Internal server error");
             }
         }
+
+        /// <summary>
+        /// Search for avatars by name and get their last seen locations
+        /// </summary>
+        [HttpGet("lookup/avatar")]
+        public async Task<ActionResult<List<AvatarLocationDto>>> LookupAvatar([FromQuery] string name)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    return BadRequest("Search name is required");
+                }
+
+                var results = await _statsNameCache.SearchAvatarLocationsAsync(name);
+                
+                // Format SLT timestamps for display
+                var sltTimeZone = _sltTimeService.GetSLTTimeZone();
+                foreach (var result in results)
+                {
+                    var sltTime = TimeZoneInfo.ConvertTimeFromUtc(result.LastSeen, sltTimeZone);
+                    result.SLTLastSeen = sltTime.ToString("MMM dd, yyyy HH:mm");
+                }
+
+                return Ok(results);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error looking up avatar locations for name: {Name}", name);
+                return StatusCode(500, "Internal server error");
+            }
+        }
     }
 }
