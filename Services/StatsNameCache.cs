@@ -370,14 +370,18 @@ namespace RadegastWeb.Services
                 if (!matchingAvatars.Any())
                     return results;
                 
-                // Get the last seen location for each matching avatar across all regions
-                // Use the most recent visit record to get the latest known names
-                var lastSeenLocations = await context.VisitorStats
+                // Get all visit records for matching avatars
+                var allVisits = await context.VisitorStats
                     .Where(vs => matchingAvatars.Contains(vs.AvatarId))
+                    .OrderByDescending(vs => vs.LastSeenAt)
+                    .ToListAsync();
+                
+                // Group by avatar and region, take the most recent visit for each combination
+                var lastSeenLocations = allVisits
                     .GroupBy(vs => new { vs.AvatarId, vs.RegionName, vs.SimHandle })
                     .Select(g => g.OrderByDescending(vs => vs.LastSeenAt).First())
                     .OrderByDescending(x => x.LastSeenAt)
-                    .ToListAsync();
+                    .ToList();
                 
                 // Build result DTOs using names from the actual visit records
                 foreach (var visit in lastSeenLocations)
