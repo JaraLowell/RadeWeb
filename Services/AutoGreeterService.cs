@@ -63,36 +63,46 @@ namespace RadegastWeb.Services
                 // Check if this is a returning avatar
                 var isReturning = IsReturningAvatar(accountId, avatarId, account.AutoGreeterReturnTimeHours);
                 
-                // If returning and return greeter is enabled
-                if (isReturning && account.AutoGreeterReturnEnabled)
+                // If this is a returning avatar
+                if (isReturning)
                 {
-                    // Check minimum cooldown to prevent spam (even for welcome back messages)
-                    if (HasBeenGreetedRecently(accountId, avatarId, _minGreetingCooldown))
+                    // If return greeter is enabled, send the return greeting
+                    if (account.AutoGreeterReturnEnabled)
                     {
-                        _logger.LogDebug("Avatar {AvatarId} was greeted too recently (cooldown active) for account {AccountId}", avatarId, accountId);
-                        return;
+                        // Check minimum cooldown to prevent spam (even for welcome back messages)
+                        if (HasBeenGreetedRecently(accountId, avatarId, _minGreetingCooldown))
+                        {
+                            _logger.LogDebug("Avatar {AvatarId} was greeted too recently (cooldown active) for account {AccountId}", avatarId, accountId);
+                            return;
+                        }
+                        
+                        // Get the WebRadegastInstance for this account
+                        var returnInstance = _accountService.GetInstance(accountId);
+                        if (returnInstance == null || !returnInstance.IsConnected)
+                        {
+                            _logger.LogWarning("Instance not found or not connected for account {AccountId}", accountId);
+                            return;
+                        }
+                        
+                        // Format the return greeting message
+                        var returnMessage = FormatGreetingMessage(account.AutoGreeterReturnMessage, avatarId, displayName);
+                        
+                        // Send the return greeting to local chat
+                        returnInstance.SendChat(returnMessage, ChatType.Normal, 0);
+                        
+                        _logger.LogInformation("Auto-greeter sent return greeting to {DisplayName} ({AvatarId}) from account {AccountId}: {Message}", 
+                            displayName, avatarId, accountId, returnMessage);
+                        
+                        // Remove from departures and mark as greeted
+                        RemoveFromDepartures(accountId, avatarId);
+                        MarkAsGreeted(accountId, avatarId);
                     }
-                    
-                    // Get the WebRadegastInstance for this account
-                    var returnInstance = _accountService.GetInstance(accountId);
-                    if (returnInstance == null || !returnInstance.IsConnected)
+                    else
                     {
-                        _logger.LogWarning("Instance not found or not connected for account {AccountId}", accountId);
-                        return;
+                        // Return greeting is disabled, so skip greeting this returning avatar entirely
+                        _logger.LogDebug("Avatar {AvatarId} is returning but return greeter is disabled for account {AccountId}, skipping greeting", avatarId, accountId);
+                        RemoveFromDepartures(accountId, avatarId);
                     }
-                    
-                    // Format the return greeting message
-                    var returnMessage = FormatGreetingMessage(account.AutoGreeterReturnMessage, avatarId, displayName);
-                    
-                    // Send the return greeting to local chat
-                    returnInstance.SendChat(returnMessage, ChatType.Normal, 0);
-                    
-                    _logger.LogInformation("Auto-greeter sent return greeting to {DisplayName} ({AvatarId}) from account {AccountId}: {Message}", 
-                        displayName, avatarId, accountId, returnMessage);
-                    
-                    // Remove from departures and mark as greeted
-                    RemoveFromDepartures(accountId, avatarId);
-                    MarkAsGreeted(accountId, avatarId);
                     
                     return;
                 }
@@ -151,7 +161,66 @@ namespace RadegastWeb.Services
             // Also support {displayname} for plain text name
             message = message.Replace("{displayname}", displayName);
             
+            // Support {user} for first name only
+            if (message.Contains("{user}"))
+            {
+                var firstName = ExtractFirstName(avatarId, displayName);
+                message = message.Replace("{user}", firstName);
+            }
+            
             return message;
+        }
+        
+        /// <summary>
+        /// Extract the first name from display name cache, falling back to legacy name or URL
+        /// </summary>
+        private string ExtractFirstName(string avatarId, string displayName)
+        {
+            try
+            {
+                // Try to get from database cache
+                using var dbContext = _dbContextFactory.CreateDbContext();
+                var cachedName = dbContext.GlobalDisplayNames.FirstOrDefault(d => d.AvatarId == avatarId);
+                
+                if (cachedName != null)
+                {
+                    // If we have a display name and it's not the default, use the first part
+                    if (!cachedName.IsDefaultDisplayName && 
+                        !string.IsNullOrEmpty(cachedName.DisplayNameValue) &&
+                        cachedName.DisplayNameValue != "Loading..." &&
+                        cachedName.DisplayNameValue != "???")
+                    {
+                        var parts = cachedName.DisplayNameValue.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length > 0)
+                        {
+                            return parts[0]; // Return first part of display name (e.g., "Jara" from "Jara Lowell")
+                        }
+                    }
+                    
+                    // Fall back to legacy first name if available
+                    if (!string.IsNullOrEmpty(cachedName.LegacyFirstName))
+                    {
+                        return cachedName.LegacyFirstName; // Return legacy first name (e.g., "Jaraziah")
+                    }
+                }
+                
+                // Try to extract from the displayName parameter passed in
+                if (!string.IsNullOrEmpty(displayName))
+                {
+                    var parts = displayName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length > 0)
+                    {
+                        return parts[0];
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error extracting first name for avatar {AvatarId}, falling back to URL", avatarId);
+            }
+            
+            // Final fallback: return the agent link URL
+            return $"secondlife:///app/agent/{avatarId}/about";
         }
         
         /// <summary>
