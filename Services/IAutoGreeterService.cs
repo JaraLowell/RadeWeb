@@ -39,7 +39,7 @@ namespace RadegastWeb.Services
         /// Clean up old avatar tracking data
         /// </summary>
         /// <param name="accountId">Account ID</param>
-        void CleanupOldTrackingData(Guid accountId);
+        Task CleanupOldTrackingDataAsync(Guid accountId);
         
         /// <summary>
         /// Detect avatars that have left by comparing current nearby list with tracked avatars

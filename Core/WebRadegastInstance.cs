@@ -1790,7 +1790,7 @@ namespace RadegastWeb.Core
                     _autoGreeterService.DetectDepartures(Guid.Parse(_accountId), avatarIds);
                     
                     // Periodically cleanup old auto-greeter tracking data
-                    _autoGreeterService.CleanupOldTrackingData(Guid.Parse(_accountId));
+                    await _autoGreeterService.CleanupOldTrackingDataAsync(Guid.Parse(_accountId));
                     
                     // Refresh display names for all nearby avatars
                     // This ensures we pick up any display name changes
@@ -3808,7 +3808,7 @@ namespace RadegastWeb.Core
                 _autoGreeterService.DetectDepartures(Guid.Parse(_accountId), nearbyAvatarIds);
                 
                 // Periodically cleanup old auto-greeter tracking data (every refresh cycle)
-                _autoGreeterService.CleanupOldTrackingData(Guid.Parse(_accountId));
+                await _autoGreeterService.CleanupOldTrackingDataAsync(Guid.Parse(_accountId));
                 if (nearbyAvatarIds.Count > 0)
                 {
                     // Batch request display names for all nearby avatars

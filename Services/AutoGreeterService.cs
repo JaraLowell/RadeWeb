@@ -72,6 +72,9 @@ namespace RadegastWeb.Services
                 // Check if this is a returning avatar (left and came back)
                 var isReturning = IsReturningAvatar(accountId, avatarId, account.AutoGreeterReturnTimeHours, out var timeSinceDeparture);
                 
+                _logger.LogDebug("Avatar {AvatarId} greeting check: hadInitial={HadInitial}, isReturning={IsReturning}, timeSince={TimeSince:F1}min",
+                    avatarId, hadInitialGreeting, isReturning, timeSinceDeparture.TotalMinutes);
+                
                 // If avatar had initial greeting and is now returning
                 if (hadInitialGreeting && isReturning)
                 {
@@ -396,21 +399,31 @@ namespace RadegastWeb.Services
         /// <summary>
         /// Clean up old avatar tracking data
         /// </summary>
-        public void CleanupOldTrackingData(Guid accountId)
+        public async Task CleanupOldTrackingDataAsync(Guid accountId)
         {
             try
             {
-                var maxReturnTimeHours = 24; // Use a safe maximum, will check against account settings
+                // Get account settings to use proper return time window
+                using var dbContext = await _dbContextFactory.CreateDbContextAsync();
+                var account = await dbContext.Accounts.FindAsync(accountId);
+                var returnTimeHours = account?.AutoGreeterReturnTimeHours ?? 3;
                 
-                // Clean up old departures
+                // Clean up old departures (after return time window has passed)
                 if (_avatarDepartures.TryGetValue(accountId, out var accountDepartures))
                 {
-                    var cutoffTime = DateTime.UtcNow.AddHours(-maxReturnTimeHours);
+                    var cutoffTime = DateTime.UtcNow.AddHours(-returnTimeHours);
                     var oldAvatars = accountDepartures.Where(kvp => kvp.Value < cutoffTime).Select(kvp => kvp.Key).ToList();
                     
                     foreach (var avatarId in oldAvatars)
                     {
                         accountDepartures.TryRemove(avatarId, out _);
+                        
+                        // Also remove from initial greetings since they're outside the return window
+                        if (_initialGreetings.TryGetValue(accountId, out var accountInitial))
+                        {
+                            accountInitial.TryRemove(avatarId, out _);
+                            _logger.LogDebug("Removed avatar {AvatarId} from initial greetings (outside return window) for account {AccountId}", avatarId, accountId);
+                        }
                     }
                     
                     if (oldAvatars.Count > 0)
@@ -419,35 +432,21 @@ namespace RadegastWeb.Services
                     }
                 }
                 
-                // Clean up old initial greetings (only if they departed and it's been long enough)
-                if (_initialGreetings.TryGetValue(accountId, out var accountInitial))
+                // Clean up very old initial greetings (for avatars that never left or tracking was missed)
+                // Use 2x the return window as safety
+                if (_initialGreetings.TryGetValue(accountId, out var accountInitial2))
                 {
-                    var cutoffTime = DateTime.UtcNow.AddHours(-maxReturnTimeHours);
-                    var veryOldCutoff = DateTime.UtcNow.AddHours(-maxReturnTimeHours * 2);
-                    
-                    var oldAvatars = accountInitial.Where(kvp => 
-                    {
-                        // Remove if greeting is very old (double the max, likely they left but weren't tracked)
-                        if (kvp.Value < veryOldCutoff)
-                            return true;
-                            
-                        // Remove if they departed and that departure is now old
-                        if (_avatarDepartures.TryGetValue(accountId, out var deps) && 
-                            deps.TryGetValue(kvp.Key, out var depTime) && 
-                            depTime < cutoffTime)
-                            return true;
-                            
-                        return false;
-                    }).Select(kvp => kvp.Key).ToList();
+                    var veryOldCutoff = DateTime.UtcNow.AddHours(-returnTimeHours * 2);
+                    var oldAvatars = accountInitial2.Where(kvp => kvp.Value < veryOldCutoff).Select(kvp => kvp.Key).ToList();
                     
                     foreach (var avatarId in oldAvatars)
                     {
-                        accountInitial.TryRemove(avatarId, out _);
+                        accountInitial2.TryRemove(avatarId, out _);
                     }
                     
                     if (oldAvatars.Count > 0)
                     {
-                        _logger.LogDebug("Cleaned up {Count} old initial greetings for account {AccountId}", oldAvatars.Count, accountId);
+                        _logger.LogDebug("Cleaned up {Count} very old initial greetings for account {AccountId}", oldAvatars.Count, accountId);
                     }
                 }
                 
