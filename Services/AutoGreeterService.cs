@@ -66,6 +66,12 @@ namespace RadegastWeb.Services
                     return;
                 }
                 
+                // Skip all processing if both greeting features are disabled
+                if (!account.AutoGreeterEnabled && !account.AutoGreeterReturnEnabled)
+                {
+                    return;
+                }
+                
                 // Check if this avatar has received an initial greeting
                 var hadInitialGreeting = HasHadInitialGreeting(accountId, avatarId);
                 
@@ -142,19 +148,19 @@ namespace RadegastWeb.Services
                     return;
                 }
                 
+                // Check if auto-greeter is enabled for initial greeting
+                if (!account.AutoGreeterEnabled)
+                {
+                    _logger.LogDebug("Auto-greeter disabled for account {AccountId}, skipping initial greeting", accountId);
+                    return;
+                }
+                
                 // Mark this avatar as greeted IMMEDIATELY to prevent duplicate greetings
                 // This must happen before any async operations that might allow concurrent processing
                 MarkAsGreeted(accountId, avatarId);
                 
                 // Also mark as having received initial greeting (for return detection)
                 MarkInitialGreeting(accountId, avatarId);
-                
-                // Check if auto-greeter is enabled
-                if (!account.AutoGreeterEnabled)
-                {
-                    _logger.LogDebug("Auto-greeter disabled for account {AccountId}", accountId);
-                    return;
-                }
                 
                 // Get the WebRadegastInstance for this account
                 var instance = _accountService.GetInstance(accountId);
