@@ -8,6 +8,16 @@ namespace RadegastWeb.Services
     /// <summary>
     /// Service for managing auto-greeter functionality
     /// Detects new avatars within 20 meters and sends customized greetings
+    /// 
+    /// TRACKING LOGIC:
+    /// - _greetedAvatars: Avatars that have been greeted recently (cleared on departure or after cooldown)
+    /// - _initialGreetings: Avatars that received an initial greeting (persists until they leave or data cleanup)
+    /// - _avatarDepartures: Avatars that left the area (tracks departure time for return detection)
+    /// 
+    /// DUPLICATE PREVENTION:
+    /// - Both HasBeenGreeted() and HasHadInitialGreeting() must be checked before greeting
+    /// - This prevents duplicate greetings when avatars transition between coarse/detailed location tracking
+    /// - Quick returns (under 2 min) are treated as location tracking artifacts, not actual departures
     /// </summary>
     public class AutoGreeterService : IAutoGreeterService
     {
@@ -87,14 +97,12 @@ namespace RadegastWeb.Services
                     // Check if they've been gone long enough for a welcome back message
                     if (timeSinceDeparture < _minReturnTime)
                     {
-                        _logger.LogDebug("Avatar {AvatarId} returned too quickly ({TotalMinutes:F1} minutes) for welcome back message, clearing initial greeting and departures", 
+                        _logger.LogDebug("Avatar {AvatarId} returned too quickly ({TotalMinutes:F1} minutes) - likely coarse/detailed location switch, marking as present", 
                             avatarId, timeSinceDeparture.TotalMinutes);
                         RemoveFromDepartures(accountId, avatarId);
-                        // Clear initial greeting so they can be treated as present (not returning)
-                        if (_initialGreetings.TryGetValue(accountId, out var accountInitial))
-                        {
-                            accountInitial.TryRemove(avatarId, out _);
-                        }
+                        // Mark as greeted to prevent duplicate greetings during location tracking transitions
+                        MarkAsGreeted(accountId, avatarId);
+                        // Keep initial greeting marker since they were already greeted and are still around
                         return;
                     }
                     
@@ -140,29 +148,38 @@ namespace RadegastWeb.Services
                 }
                 
                 // If avatar had initial greeting but is not returning (still here or just moved around), skip
-                // HOWEVER: If they're not in departures dictionary at all, their data was cleaned up
-                // and we should treat them as a new avatar
+                // HOWEVER: If they ARE in departures dictionary, they left and came back but outside return window
+                // In that case, their initial greeting data might be stale and we should re-greet them
                 if (hadInitialGreeting && !isReturning)
                 {
-                    // Check if they were in departures at all - if not, their data was cleaned up
+                    // Check if they're in departures dictionary
                     bool hadDepartureTracking = _avatarDepartures.TryGetValue(accountId, out var accountDeps) && 
                                                 accountDeps.ContainsKey(avatarId);
                     
-                    if (!hadDepartureTracking)
+                    if (hadDepartureTracking)
                     {
-                        // Departure data was cleaned up, treat as new avatar
-                        _logger.LogDebug("Avatar {AvatarId} had initial greeting but no departure data (cleaned up), treating as new", avatarId);
+                        // They left and came back, but outside the return time window
+                        // Treat them as a new visitor (clear old data)
+                        _logger.LogDebug("Avatar {AvatarId} returned outside return window, treating as new visitor", avatarId);
+                        
                         // Clear their initial greeting marker so they can be greeted again
                         if (_initialGreetings.TryGetValue(accountId, out var accountInitial))
                         {
                             accountInitial.TryRemove(avatarId, out _);
                         }
+                        
+                        // Remove from departures
+                        RemoveFromDepartures(accountId, avatarId);
+                        
                         // Continue to initial greeting logic below
                     }
                     else
                     {
-                        // They're still around, skip
-                        _logger.LogDebug("Avatar {AvatarId} already had initial greeting and hasn't left, skipping", avatarId);
+                        // They're still around (never left), skip to avoid duplicate greeting
+                        _logger.LogDebug("Avatar {AvatarId} already had initial greeting and is still present, skipping", avatarId);
+                        
+                        // Make sure they're marked as greeted to prevent any edge cases
+                        MarkAsGreeted(accountId, avatarId);
                         return;
                     }
                 }

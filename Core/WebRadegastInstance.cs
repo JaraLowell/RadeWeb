@@ -2139,7 +2139,11 @@ namespace RadegastWeb.Core
             
             // Process auto-greeter for avatars within 20 meters
             // Check with auto-greeter service if this avatar needs greeting (unified tracking)
-            if (distance <= 20.0 && !_autoGreeterService.HasBeenGreeted(Guid.Parse(_accountId), e.Avatar.ID.ToString()))
+            // IMPORTANT: Check both HasBeenGreeted and HasHadInitialGreeting to prevent duplicate greetings
+            // when avatar transitions from coarse to detailed location tracking
+            if (distance <= 20.0 && 
+                !_autoGreeterService.HasBeenGreeted(Guid.Parse(_accountId), e.Avatar.ID.ToString()) &&
+                !_autoGreeterService.HasHadInitialGreeting(Guid.Parse(_accountId), e.Avatar.ID.ToString()))
             {
                 _ = Task.Run(async () =>
                 {
