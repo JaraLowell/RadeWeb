@@ -79,6 +79,11 @@ class MiniMap {
             this.currentAccountId = accountId;
             this.lastAvatarsHash = null; // Reset avatar tracking for new account
             this.lastAvatarPositions.clear();
+            
+            // Clear cached map data to force reload for the new account
+            this.mapImage = null;
+            this.currentMapImageUrl = null;
+            this.regionName = '';
         }
         
         this.isVisible = true;
@@ -128,8 +133,9 @@ class MiniMap {
             this.updateRegionDisplay(mapInfo);
 
             if (mapInfo.hasMapImage && mapInfo.mapImageUrl) {
-                // Check if we already loaded this exact map URL in this session
-                if (this.loadedMapUrls.has(mapInfo.mapImageUrl)) {
+                // Check if we already loaded this exact map URL and still have the image cached
+                // If mapImage was cleared (e.g., during account switch), reload even if URL was seen before
+                if (this.loadedMapUrls.has(mapInfo.mapImageUrl) && this.mapImage && this.currentMapImageUrl === mapInfo.mapImageUrl) {
                     console.log('Map already loaded for this region in current session, skipping fetch');
                     // Still update the display but don't re-fetch the image
                     this.drawMap();
@@ -139,6 +145,7 @@ class MiniMap {
                 // Fetch directly from the public URL - browser handles caching
                 // Different URLs for different regions means browser naturally fetches new images
                 console.log('Loading map image from:', mapInfo.mapImageUrl);
+                this.currentMapImageUrl = mapInfo.mapImageUrl;
                 await this.loadMapImage(mapInfo.mapImageUrl);
                 
                 // Mark this URL as loaded for this session

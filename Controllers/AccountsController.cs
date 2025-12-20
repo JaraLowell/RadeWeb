@@ -603,7 +603,20 @@ namespace RadegastWeb.Controllers
                 var autoSitService = HttpContext.RequestServices.GetRequiredService<IAutoSitService>();
                 await autoSitService.SaveAutoSitConfigAsync(id, config);
                 
-                return Ok(new { message = "Auto-sit configuration updated successfully" });
+                // If the account is currently connected and auto-sit is enabled, reschedule it
+                if (config.Enabled)
+                {
+                    var instance = _accountService.GetInstance(id);
+                    if (instance != null && instance.IsConnected)
+                    {
+                        // Cancel any existing schedule and create a new one with updated settings
+                        autoSitService.CancelAutoSit(id);
+                        await autoSitService.ScheduleAutoSitAsync(id, instance);
+                        _logger.LogInformation("Rescheduled auto-sit for account {AccountId} with updated settings", id);
+                    }
+                }
+                
+                return Ok(new { message = "Auto-sit configuration updated and applied successfully" });
             }
             catch (Exception ex)
             {

@@ -1651,15 +1651,11 @@ class RadegastWebClient {
 
         // Auto-sit controls
         document.getElementById('autoSitEnabled').addEventListener('change', (e) => {
-            this.toggleAutoSit(e.target.checked);
+            this.toggleAutoSitSettings(e.target.checked);
         });
 
-        document.getElementById('autoSitDelay').addEventListener('change', (e) => {
-            this.updateAutoSitDelay(parseInt(e.target.value));
-        });
-
-        document.getElementById('autoSitRestorePresence').addEventListener('change', (e) => {
-            this.updateAutoSitPresenceRestore(e.target.checked);
+        document.getElementById('saveAutoSitBtn').addEventListener('click', () => {
+            this.saveAutoSitSettings();
         });
 
         document.getElementById('autoSitResitBtn').addEventListener('click', () => {
@@ -3528,6 +3524,52 @@ class RadegastWebClient {
             }
         } catch (error) {
             console.error("Error loading auto-sit config:", error);
+        }
+    }
+
+    async saveAutoSitSettings() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            // Get current config first to preserve fields like targetUuid
+            const getResponse = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit`);
+            if (!getResponse.ok) {
+                this.showAlert("Failed to retrieve current auto-sit configuration", "danger");
+                return;
+            }
+            
+            const currentConfig = await getResponse.json();
+            
+            // Update with new values from UI
+            const config = {
+                ...currentConfig,
+                enabled: document.getElementById('autoSitEnabled').checked,
+                delaySeconds: parseInt(document.getElementById('autoSitDelay').value) || 180,
+                restorePresenceStatus: document.getElementById('autoSitRestorePresence').checked
+            };
+
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(config)
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                this.showAlert("Auto-sit settings saved successfully!", "success");
+                console.log("Auto-sit settings saved:", config);
+            } else {
+                const error = await response.text();
+                this.showAlert("Failed to save auto-sit settings: " + error, "danger");
+            }
+        } catch (error) {
+            console.error("Error saving auto-sit settings:", error);
+            this.showAlert("Failed to save auto-sit settings: " + error.message, "danger");
         }
     }
 
