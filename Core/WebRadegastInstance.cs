@@ -2137,10 +2137,7 @@ namespace RadegastWeb.Core
             AvatarAdded?.Invoke(this, avatarDto);
             UpdateRegionInfo();
             
-            // Always update last seen for unified tracking (prevents re-greeting avatars still present)
-            _autoGreeterService.UpdateLastSeen(Guid.Parse(_accountId), e.Avatar.ID.ToString());
-            
-            // Process auto-greeter for avatars within 20 meters (uses unified tracking internally)
+            // Process auto-greeter for avatars within 20 meters (service handles tracking internally)
             if (distance <= 20.0)
             {
                 _ = Task.Run(async () =>
@@ -2375,11 +2372,8 @@ namespace RadegastWeb.Core
                             existing.Name = avatarName;
                         }
                         
-                        // Always update last seen for unified tracking (prevents re-greeting avatars still present)
-                        _autoGreeterService.UpdateLastSeen(Guid.Parse(_accountId), avatarPos.Key.ToString());
-                        
                         // Process auto-greeter if avatar moved from >20m to <=20m or is within 20m
-                        // Auto-greeter service handles all duplicate/return logic via unified tracking
+                        // Service handles all tracking and duplicate prevention internally
                         if (distance <= 20.0 && previousDistance > 20.0)
                         {
                             _ = Task.Run(async () =>
@@ -2420,11 +2414,8 @@ namespace RadegastWeb.Core
                             RequestAvatarNamesWithDeduplication(avatarPos.Key);
                         }
                         
-                        // Always update last seen for unified tracking
-                        _autoGreeterService.UpdateLastSeen(Guid.Parse(_accountId), avatarPos.Key.ToString());
-                        
                         // Process auto-greeter for coarse avatars within 20 meters
-                        // Auto-greeter service handles all duplicate/return logic via unified tracking
+                        // Service handles all tracking and duplicate prevention internally
                         if (distance <= 20.0)
                         {
                             _ = Task.Run(async () =>

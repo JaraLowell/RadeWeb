@@ -82,9 +82,6 @@ namespace RadegastWeb.Services
                     return;
                 }
                 
-                // Always update last seen time (keeps tracking fresh for avatars that are still present)
-                UpdateLastSeen(accountId, avatarId);
-                
                 // Get account settings from database
                 using var dbContext = await _dbContextFactory.CreateDbContextAsync();
                 var account = await dbContext.Accounts.FindAsync(accountId);
@@ -98,6 +95,8 @@ namespace RadegastWeb.Services
                 // Skip all processing if both greeting features are disabled
                 if (!account.AutoGreeterEnabled && !account.AutoGreeterReturnEnabled)
                 {
+                    // Still update last seen even if greeter is disabled (for tracking purposes)
+                    UpdateLastSeen(accountId, avatarId);
                     return;
                 }
                 
@@ -108,10 +107,12 @@ namespace RadegastWeb.Services
                 {
                     _logger.LogDebug("Avatar {AvatarId} was greeted too recently ({TotalSeconds:F0}s ago), skipping", 
                         avatarId, (DateTime.UtcNow - lastGreeted).TotalSeconds);
+                    // Update last seen even though we're not greeting (they're still present)
+                    UpdateLastSeen(accountId, avatarId);
                     return;
                 }
                 
-                // Determine greeting status based on last seen time
+                // Determine greeting status based on last seen time (BEFORE updating it)
                 DateTime lastSeenTime = DateTime.MinValue;
                 bool isNew = !_avatarLastSeen.TryGetValue(accountId, out var accountLastSeen) || 
                              !accountLastSeen.TryGetValue(avatarId, out lastSeenTime);
@@ -161,6 +162,8 @@ namespace RadegastWeb.Services
                         // Not in departures - they never left, still present
                         _logger.LogDebug("Avatar {AvatarId} still present (last seen {TotalSeconds:F0}s ago), skipping greeting", 
                             avatarId, timeSinceLastSeen.TotalSeconds);
+                        // Update last seen to keep tracking current
+                        UpdateLastSeen(accountId, avatarId);
                         return;
                     }
                 }
@@ -182,8 +185,9 @@ namespace RadegastWeb.Services
                     _logger.LogInformation("Sent welcome back greeting to {DisplayName} ({AvatarId}) after {Minutes:F1} min: {Message}", 
                         displayName, avatarId, timeSinceLastSeen.TotalMinutes, returnMessage);
                     
-                    // Record greeting time
+                    // Record greeting time and update last seen
                     RecordGreeting(accountId, avatarId);
+                    UpdateLastSeen(accountId, avatarId);
                     
                     // Remove from departures
                     if (_avatarDepartures.TryGetValue(accountId, out var accountDeps))
@@ -207,8 +211,9 @@ namespace RadegastWeb.Services
                     _logger.LogInformation("Sent initial greeting to {DisplayName} ({AvatarId}): {Message}", 
                         displayName, avatarId, greetingMessage);
                     
-                    // Record greeting time
+                    // Record greeting time and update last seen
                     RecordGreeting(accountId, avatarId);
+                    UpdateLastSeen(accountId, avatarId);
                 }
             }
             catch (Exception ex)
