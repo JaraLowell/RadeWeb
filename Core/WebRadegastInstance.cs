@@ -2137,8 +2137,9 @@ namespace RadegastWeb.Core
             AvatarAdded?.Invoke(this, avatarDto);
             UpdateRegionInfo();
             
-            // Process auto-greeter for new avatars within 20 meters
-            if (isNewAvatar)
+            // Process auto-greeter for avatars within 20 meters
+            // Check with auto-greeter service if this avatar needs greeting (unified tracking)
+            if (distance <= 20.0 && !_autoGreeterService.HasBeenGreeted(Guid.Parse(_accountId), e.Avatar.ID.ToString()))
             {
                 _ = Task.Run(async () =>
                 {
@@ -2374,7 +2375,9 @@ namespace RadegastWeb.Core
                         
                         // Process auto-greeter if avatar moved from >20m to <=20m
                         // This catches avatars that were far away and then moved closer
-                        if (distance <= 20.0 && previousDistance > 20.0)
+                        // Auto-greeter service handles all duplicate/return logic via unified tracking
+                        if (distance <= 20.0 && previousDistance > 20.0 && 
+                            !_autoGreeterService.HasBeenGreeted(Guid.Parse(_accountId), avatarPos.Key.ToString()))
                         {
                             _ = Task.Run(async () =>
                             {
@@ -2414,9 +2417,10 @@ namespace RadegastWeb.Core
                             RequestAvatarNamesWithDeduplication(avatarPos.Key);
                         }
                         
-                        // Process auto-greeter for new coarse avatars within 20 meters
+                        // Process auto-greeter for coarse avatars within 20 meters
                         // This catches avatars that don't trigger detailed AvatarUpdate events
-                        if (isNewCoarseAvatar && distance <= 20.0)
+                        // Auto-greeter service handles all duplicate/return logic via unified tracking
+                        if (distance <= 20.0 && !_autoGreeterService.HasBeenGreeted(Guid.Parse(_accountId), avatarPos.Key.ToString()))
                         {
                             _ = Task.Run(async () =>
                             {
