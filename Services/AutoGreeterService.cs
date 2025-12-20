@@ -135,10 +135,31 @@ namespace RadegastWeb.Services
                 }
                 
                 // If avatar had initial greeting but is not returning (still here or just moved around), skip
+                // HOWEVER: If they're not in departures dictionary at all, their data was cleaned up
+                // and we should treat them as a new avatar
                 if (hadInitialGreeting && !isReturning)
                 {
-                    _logger.LogDebug("Avatar {AvatarId} already had initial greeting and hasn't left, skipping", avatarId);
-                    return;
+                    // Check if they were in departures at all - if not, their data was cleaned up
+                    bool hadDepartureTracking = _avatarDepartures.TryGetValue(accountId, out var accountDeps) && 
+                                                accountDeps.ContainsKey(avatarId);
+                    
+                    if (!hadDepartureTracking)
+                    {
+                        // Departure data was cleaned up, treat as new avatar
+                        _logger.LogDebug("Avatar {AvatarId} had initial greeting but no departure data (cleaned up), treating as new", avatarId);
+                        // Clear their initial greeting marker so they can be greeted again
+                        if (_initialGreetings.TryGetValue(accountId, out var accountInitial))
+                        {
+                            accountInitial.TryRemove(avatarId, out _);
+                        }
+                        // Continue to initial greeting logic below
+                    }
+                    else
+                    {
+                        // They're still around, skip
+                        _logger.LogDebug("Avatar {AvatarId} already had initial greeting and hasn't left, skipping", avatarId);
+                        return;
+                    }
                 }
                 
                 // Check if we've already greeted this avatar recently
