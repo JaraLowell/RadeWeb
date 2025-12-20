@@ -2137,13 +2137,11 @@ namespace RadegastWeb.Core
             AvatarAdded?.Invoke(this, avatarDto);
             UpdateRegionInfo();
             
-            // Process auto-greeter for avatars within 20 meters
-            // Check with auto-greeter service if this avatar needs greeting (unified tracking)
-            // IMPORTANT: Check both HasBeenGreeted and HasHadInitialGreeting to prevent duplicate greetings
-            // when avatar transitions from coarse to detailed location tracking
-            if (distance <= 20.0 && 
-                !_autoGreeterService.HasBeenGreeted(Guid.Parse(_accountId), e.Avatar.ID.ToString()) &&
-                !_autoGreeterService.HasHadInitialGreeting(Guid.Parse(_accountId), e.Avatar.ID.ToString()))
+            // Always update last seen for unified tracking (prevents re-greeting avatars still present)
+            _autoGreeterService.UpdateLastSeen(Guid.Parse(_accountId), e.Avatar.ID.ToString());
+            
+            // Process auto-greeter for avatars within 20 meters (uses unified tracking internally)
+            if (distance <= 20.0)
             {
                 _ = Task.Run(async () =>
                 {
@@ -2377,13 +2375,12 @@ namespace RadegastWeb.Core
                             existing.Name = avatarName;
                         }
                         
-                        // Process auto-greeter if avatar moved from >20m to <=20m
-                        // This catches avatars that were far away and then moved closer
+                        // Always update last seen for unified tracking (prevents re-greeting avatars still present)
+                        _autoGreeterService.UpdateLastSeen(Guid.Parse(_accountId), avatarPos.Key.ToString());
+                        
+                        // Process auto-greeter if avatar moved from >20m to <=20m or is within 20m
                         // Auto-greeter service handles all duplicate/return logic via unified tracking
-                        // Also check HasHadInitialGreeting to prevent re-greeting avatars that just changed state
-                        if (distance <= 20.0 && previousDistance > 20.0 && 
-                            !_autoGreeterService.HasBeenGreeted(Guid.Parse(_accountId), avatarPos.Key.ToString()) &&
-                            !_autoGreeterService.HasHadInitialGreeting(Guid.Parse(_accountId), avatarPos.Key.ToString()))
+                        if (distance <= 20.0 && previousDistance > 20.0)
                         {
                             _ = Task.Run(async () =>
                             {
@@ -2423,13 +2420,12 @@ namespace RadegastWeb.Core
                             RequestAvatarNamesWithDeduplication(avatarPos.Key);
                         }
                         
+                        // Always update last seen for unified tracking
+                        _autoGreeterService.UpdateLastSeen(Guid.Parse(_accountId), avatarPos.Key.ToString());
+                        
                         // Process auto-greeter for coarse avatars within 20 meters
-                        // This catches avatars that don't trigger detailed AvatarUpdate events
                         // Auto-greeter service handles all duplicate/return logic via unified tracking
-                        // Also check HasHadInitialGreeting to prevent re-greeting avatars that just changed state (seated -> standing)
-                        if (distance <= 20.0 && 
-                            !_autoGreeterService.HasBeenGreeted(Guid.Parse(_accountId), avatarPos.Key.ToString()) &&
-                            !_autoGreeterService.HasHadInitialGreeting(Guid.Parse(_accountId), avatarPos.Key.ToString()))
+                        if (distance <= 20.0)
                         {
                             _ = Task.Run(async () =>
                             {

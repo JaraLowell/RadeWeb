@@ -15,6 +15,14 @@ namespace RadegastWeb.Services
         Task ProcessNewAvatarAsync(string avatarId, string displayName, double distance, Guid accountId);
         
         /// <summary>
+        /// Update the last seen time for an avatar (called from any presence source)
+        /// This keeps the tracking data fresh and prevents re-greeting of avatars that are still present
+        /// </summary>
+        /// <param name="accountId">Account ID</param>
+        /// <param name="avatarId">Avatar UUID</param>
+        void UpdateLastSeen(Guid accountId, string avatarId);
+        
+        /// <summary>
         /// Clear greeted avatars when changing regions
         /// </summary>
         /// <param name="accountId">Account ID</param>

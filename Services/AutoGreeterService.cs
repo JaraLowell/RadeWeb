@@ -9,15 +9,21 @@ namespace RadegastWeb.Services
     /// Service for managing auto-greeter functionality
     /// Detects new avatars within 20 meters and sends customized greetings
     /// 
-    /// TRACKING LOGIC:
-    /// - _greetedAvatars: Avatars that have been greeted recently (cleared on departure or after cooldown)
-    /// - _initialGreetings: Avatars that received an initial greeting (persists until they leave or data cleanup)
-    /// - _avatarDepartures: Avatars that left the area (tracks departure time for return detection)
+    /// UNIFIED TRACKING LOGIC:
+    /// - _avatarLastSeen: Tracks when each avatar was last seen (updated continuously from any source)
+    /// - _lastGreetingTime: Tracks when we last sent a greeting to each avatar (2 min cooldown)
+    /// - _avatarDepartures: Tracks when avatars left (for return detection)
+    /// 
+    /// GREETING RULES:
+    /// 1. Never seen before: Send initial greeting
+    /// 2. Last seen within past 3 hours: Send welcome back message
+    /// 3. Last greeted less than 2 minutes ago: Ignore (spam prevention)
+    /// 4. Still present (never left): Update last seen, don't re-greet
     /// 
     /// DUPLICATE PREVENTION:
-    /// - Both HasBeenGreeted() and HasHadInitialGreeting() must be checked before greeting
-    /// - This prevents duplicate greetings when avatars transition between coarse/detailed location tracking
-    /// - Quick returns (under 2 min) are treated as location tracking artifacts, not actual departures
+    /// - Both coarse location and direct presence updates call UpdateLastSeen()
+    /// - Last seen time is always updated, preventing re-greeting of present avatars
+    /// - Quick returns (under 2 min) are treated as location tracking artifacts
     /// </summary>
     public class AutoGreeterService : IAutoGreeterService
     {
@@ -25,23 +31,17 @@ namespace RadegastWeb.Services
         private readonly IAccountService _accountService;
         private readonly IDbContextFactory<RadegastDbContext> _dbContextFactory;
         
-        // Track which avatars have been greeted per account to avoid spam
-        private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, DateTime>> _greetedAvatars = new();
+        // Track when each avatar was last seen (continuously updated from any presence source)
+        private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, DateTime>> _avatarLastSeen = new();
         
-        // Track when avatars left the area for return detection
+        // Track when we last sent a greeting to each avatar (for 2-minute cooldown)
+        private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, DateTime>> _lastGreetingTime = new();
+        
+        // Track when avatars left the area (for return detection)
         private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, DateTime>> _avatarDepartures = new();
-        
-        // Track which avatars have received their initial greeting
-        private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, DateTime>> _initialGreetings = new();
-        
-        // Cooldown period before greeting same avatar again (e.g., after region change)
-        private readonly TimeSpan _greetCooldown = TimeSpan.FromMinutes(15);
         
         // Minimum cooldown between any greetings (including welcome back) to prevent spam
         private readonly TimeSpan _minGreetingCooldown = TimeSpan.FromMinutes(2);
-        
-        // Minimum time an avatar must be gone before welcome back message is sent
-        private readonly TimeSpan _minReturnTime = TimeSpan.FromMinutes(2);
         
         public AutoGreeterService(
             ILogger<AutoGreeterService> logger,
@@ -51,6 +51,22 @@ namespace RadegastWeb.Services
             _logger = logger;
             _accountService = accountService;
             _dbContextFactory = dbContextFactory;
+        }
+        
+        /// <summary>
+        /// Update the last seen time for an avatar (called from any presence source)
+        /// This keeps the tracking data fresh and prevents re-greeting of avatars that are still present
+        /// </summary>
+        public void UpdateLastSeen(Guid accountId, string avatarId)
+        {
+            var accountLastSeen = _avatarLastSeen.GetOrAdd(accountId, _ => new ConcurrentDictionary<string, DateTime>());
+            accountLastSeen.AddOrUpdate(avatarId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
+            
+            // If they're in departures, remove them (they're back/never left)
+            if (_avatarDepartures.TryGetValue(accountId, out var accountDeps))
+            {
+                accountDeps.TryRemove(avatarId, out _);
+            }
         }
         
         /// <summary>
@@ -65,6 +81,9 @@ namespace RadegastWeb.Services
                 {
                     return;
                 }
+                
+                // Always update last seen time (keeps tracking fresh for avatars that are still present)
+                UpdateLastSeen(accountId, avatarId);
                 
                 // Get account settings from database
                 using var dbContext = await _dbContextFactory.CreateDbContextAsync();
@@ -82,151 +101,130 @@ namespace RadegastWeb.Services
                     return;
                 }
                 
-                // Check if this avatar has received an initial greeting
-                var hadInitialGreeting = HasHadInitialGreeting(accountId, avatarId);
-                
-                // Check if this is a returning avatar (left and came back)
-                var isReturning = IsReturningAvatar(accountId, avatarId, account.AutoGreeterReturnTimeHours, out var timeSinceDeparture);
-                
-                _logger.LogDebug("Avatar {AvatarId} greeting check: hadInitial={HadInitial}, isReturning={IsReturning}, timeSince={TimeSince:F1}min",
-                    avatarId, hadInitialGreeting, isReturning, timeSinceDeparture.TotalMinutes);
-                
-                // If avatar had initial greeting and is now returning
-                if (hadInitialGreeting && isReturning)
+                // Check if we greeted them too recently (2 minute cooldown for spam prevention)
+                if (_lastGreetingTime.TryGetValue(accountId, out var accountGreetings) &&
+                    accountGreetings.TryGetValue(avatarId, out var lastGreeted) &&
+                    DateTime.UtcNow - lastGreeted < _minGreetingCooldown)
                 {
-                    // Check if they've been gone long enough for a welcome back message
-                    if (timeSinceDeparture < _minReturnTime)
-                    {
-                        _logger.LogDebug("Avatar {AvatarId} returned too quickly ({TotalMinutes:F1} minutes) - likely coarse/detailed location switch, marking as present", 
-                            avatarId, timeSinceDeparture.TotalMinutes);
-                        RemoveFromDepartures(accountId, avatarId);
-                        // Mark as greeted to prevent duplicate greetings during location tracking transitions
-                        MarkAsGreeted(accountId, avatarId);
-                        // Keep initial greeting marker since they were already greeted and are still around
-                        return;
-                    }
-                    
-                    // If return greeter is enabled, send the return greeting
-                    if (account.AutoGreeterReturnEnabled)
-                    {
-                        // Check minimum cooldown to prevent spam (even for welcome back messages)
-                        if (HasBeenGreetedRecently(accountId, avatarId, _minGreetingCooldown))
-                        {
-                            _logger.LogDebug("Avatar {AvatarId} was greeted too recently (cooldown active) for account {AccountId}", avatarId, accountId);
-                            return;
-                        }
-                        
-                        // Get the WebRadegastInstance for this account
-                        var returnInstance = _accountService.GetInstance(accountId);
-                        if (returnInstance == null || !returnInstance.IsConnected)
-                        {
-                            _logger.LogWarning("Instance not found or not connected for account {AccountId}", accountId);
-                            return;
-                        }
-                        
-                        // Format the return greeting message
-                        var returnMessage = FormatGreetingMessage(account.AutoGreeterReturnMessage, avatarId, displayName);
-                        
-                        // Send the return greeting to local chat
-                        returnInstance.SendChat(returnMessage, ChatType.Normal, 0);
-                        
-                        _logger.LogInformation("Auto-greeter sent return greeting to {DisplayName} ({AvatarId}) from account {AccountId} after {Minutes:F1} minutes away: {Message}", 
-                            displayName, avatarId, accountId, timeSinceDeparture.TotalMinutes, returnMessage);
-                        
-                        // Remove from departures and mark as greeted
-                        RemoveFromDepartures(accountId, avatarId);
-                        MarkAsGreeted(accountId, avatarId);
-                    }
-                    else
-                    {
-                        // Return greeting is disabled, so skip greeting this returning avatar entirely
-                        _logger.LogDebug("Avatar {AvatarId} is returning but return greeter is disabled for account {AccountId}, skipping greeting", avatarId, accountId);
-                        RemoveFromDepartures(accountId, avatarId);
-                    }
-                    
+                    _logger.LogDebug("Avatar {AvatarId} was greeted too recently ({TotalSeconds:F0}s ago), skipping", 
+                        avatarId, (DateTime.UtcNow - lastGreeted).TotalSeconds);
                     return;
                 }
                 
-                // If avatar had initial greeting but is not returning (still here or just moved around), skip
-                // HOWEVER: If they ARE in departures dictionary, they left and came back but outside return window
-                // In that case, their initial greeting data might be stale and we should re-greet them
-                if (hadInitialGreeting && !isReturning)
+                // Determine greeting status based on last seen time
+                DateTime lastSeenTime = DateTime.MinValue;
+                bool isNew = !_avatarLastSeen.TryGetValue(accountId, out var accountLastSeen) || 
+                             !accountLastSeen.TryGetValue(avatarId, out lastSeenTime);
+                
+                bool isReturning = false;
+                TimeSpan timeSinceLastSeen = TimeSpan.Zero;
+                
+                if (!isNew)
                 {
-                    // Check if they're in departures dictionary
-                    bool hadDepartureTracking = _avatarDepartures.TryGetValue(accountId, out var accountDeps) && 
-                                                accountDeps.ContainsKey(avatarId);
+                    timeSinceLastSeen = DateTime.UtcNow - lastSeenTime;
                     
-                    if (hadDepartureTracking)
+                    // Check if they're actually returning (were in departures tracking)
+                    if (_avatarDepartures.TryGetValue(accountId, out var accountDeps) &&
+                        accountDeps.TryGetValue(avatarId, out var departureTime))
                     {
-                        // They left and came back, but outside the return time window
-                        // Treat them as a new visitor (clear old data)
-                        _logger.LogDebug("Avatar {AvatarId} returned outside return window, treating as new visitor", avatarId);
+                        var timeSinceDeparture = DateTime.UtcNow - departureTime;
                         
-                        // Clear their initial greeting marker so they can be greeted again
-                        if (_initialGreetings.TryGetValue(accountId, out var accountInitial))
+                        // If they left briefly (< 2 min), treat as location tracking artifact
+                        if (timeSinceDeparture < TimeSpan.FromMinutes(2))
                         {
-                            accountInitial.TryRemove(avatarId, out _);
+                            _logger.LogDebug("Avatar {AvatarId} returned too quickly ({TotalSeconds:F0}s) - location tracking artifact", 
+                                avatarId, timeSinceDeparture.TotalSeconds);
+                            accountDeps.TryRemove(avatarId, out _);
+                            return;
                         }
                         
-                        // Remove from departures
-                        RemoveFromDepartures(accountId, avatarId);
-                        
-                        // Continue to initial greeting logic below
+                        // Check if they're within return window (configurable hours)
+                        if (timeSinceDeparture <= TimeSpan.FromHours(account.AutoGreeterReturnTimeHours))
+                        {
+                            isReturning = true;
+                            timeSinceLastSeen = timeSinceDeparture;
+                            _logger.LogDebug("Avatar {AvatarId} is returning after {TotalMinutes:F1} minutes", 
+                                avatarId, timeSinceDeparture.TotalMinutes);
+                        }
+                        else
+                        {
+                            // Outside return window, treat as new
+                            _logger.LogDebug("Avatar {AvatarId} returned outside window ({TotalHours:F1} hours), treating as new", 
+                                avatarId, timeSinceDeparture.TotalHours);
+                            isNew = true;
+                            isReturning = false;
+                            accountDeps.TryRemove(avatarId, out _);
+                        }
                     }
                     else
                     {
-                        // They're still around (never left), skip to avoid duplicate greeting
-                        _logger.LogDebug("Avatar {AvatarId} already had initial greeting and is still present, skipping", avatarId);
-                        
-                        // Make sure they're marked as greeted to prevent any edge cases
-                        MarkAsGreeted(accountId, avatarId);
+                        // Not in departures - they never left, still present
+                        _logger.LogDebug("Avatar {AvatarId} still present (last seen {TotalSeconds:F0}s ago), skipping greeting", 
+                            avatarId, timeSinceLastSeen.TotalSeconds);
                         return;
                     }
                 }
                 
-                // Check if we've already greeted this avatar recently
-                if (HasBeenGreeted(accountId, avatarId))
+                // Send appropriate greeting
+                if (isReturning && account.AutoGreeterReturnEnabled)
                 {
-                    _logger.LogDebug("Avatar {AvatarId} already greeted by account {AccountId}", avatarId, accountId);
-                    return;
+                    // Send welcome back message
+                    var instance = _accountService.GetInstance(accountId);
+                    if (instance == null || !instance.IsConnected)
+                    {
+                        _logger.LogWarning("Instance not found or not connected for account {AccountId}", accountId);
+                        return;
+                    }
+                    
+                    var returnMessage = FormatGreetingMessage(account.AutoGreeterReturnMessage, avatarId, displayName);
+                    instance.SendChat(returnMessage, ChatType.Normal, 0);
+                    
+                    _logger.LogInformation("Sent welcome back greeting to {DisplayName} ({AvatarId}) after {Minutes:F1} min: {Message}", 
+                        displayName, avatarId, timeSinceLastSeen.TotalMinutes, returnMessage);
+                    
+                    // Record greeting time
+                    RecordGreeting(accountId, avatarId);
+                    
+                    // Remove from departures
+                    if (_avatarDepartures.TryGetValue(accountId, out var accountDeps))
+                    {
+                        accountDeps.TryRemove(avatarId, out _);
+                    }
                 }
-                
-                // Check if auto-greeter is enabled for initial greeting
-                if (!account.AutoGreeterEnabled)
+                else if (isNew && account.AutoGreeterEnabled)
                 {
-                    _logger.LogDebug("Auto-greeter disabled for account {AccountId}, skipping initial greeting", accountId);
-                    return;
+                    // Send initial greeting
+                    var instance = _accountService.GetInstance(accountId);
+                    if (instance == null || !instance.IsConnected)
+                    {
+                        _logger.LogWarning("Instance not found or not connected for account {AccountId}", accountId);
+                        return;
+                    }
+                    
+                    var greetingMessage = FormatGreetingMessage(account.AutoGreeterMessage, avatarId, displayName);
+                    instance.SendChat(greetingMessage, ChatType.Normal, 0);
+                    
+                    _logger.LogInformation("Sent initial greeting to {DisplayName} ({AvatarId}): {Message}", 
+                        displayName, avatarId, greetingMessage);
+                    
+                    // Record greeting time
+                    RecordGreeting(accountId, avatarId);
                 }
-                
-                // Mark this avatar as greeted IMMEDIATELY to prevent duplicate greetings
-                // This must happen before any async operations that might allow concurrent processing
-                MarkAsGreeted(accountId, avatarId);
-                
-                // Also mark as having received initial greeting (for return detection)
-                MarkInitialGreeting(accountId, avatarId);
-                
-                // Get the WebRadegastInstance for this account
-                var instance = _accountService.GetInstance(accountId);
-                if (instance == null || !instance.IsConnected)
-                {
-                    _logger.LogWarning("Instance not found or not connected for account {AccountId}", accountId);
-                    return;
-                }
-                
-                // Format the greeting message
-                var greetingMessage = FormatGreetingMessage(account.AutoGreeterMessage, avatarId, displayName);
-                
-                // Send the greeting to local chat
-                instance.SendChat(greetingMessage, ChatType.Normal, 0);
-                
-                _logger.LogInformation("Auto-greeter sent greeting to {DisplayName} ({AvatarId}) from account {AccountId}: {Message}", 
-                    displayName, avatarId, accountId, greetingMessage);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error processing auto-greeter for avatar {AvatarId} on account {AccountId}", 
                     avatarId, accountId);
             }
+        }
+        
+        /// <summary>
+        /// Record that we sent a greeting to this avatar
+        /// </summary>
+        private void RecordGreeting(Guid accountId, string avatarId)
+        {
+            var accountGreetings = _lastGreetingTime.GetOrAdd(accountId, _ => new ConcurrentDictionary<string, DateTime>());
+            accountGreetings.AddOrUpdate(avatarId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
         }
         
         /// <summary>
@@ -304,81 +302,37 @@ namespace RadegastWeb.Services
         }
         
         /// <summary>
-        /// Mark an avatar as greeted
-        /// </summary>
-        private void MarkAsGreeted(Guid accountId, string avatarId)
-        {
-            var accountGreeted = _greetedAvatars.GetOrAdd(accountId, _ => new ConcurrentDictionary<string, DateTime>());
-            accountGreeted.AddOrUpdate(avatarId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
-        }
-        
-        /// <summary>
-        /// Mark an avatar as having received their initial greeting
-        /// </summary>
-        private void MarkInitialGreeting(Guid accountId, string avatarId)
-        {
-            var accountInitial = _initialGreetings.GetOrAdd(accountId, _ => new ConcurrentDictionary<string, DateTime>());
-            accountInitial.AddOrUpdate(avatarId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
-        }
-        
-        /// <summary>
-        /// Check if an avatar has received an initial greeting (persists until they leave)
-        /// Used by WebRadegastInstance to avoid re-greeting avatars that just changed state (seated -> standing)
+        /// Check if an avatar has received an initial greeting (for backward compatibility with WebRadegastInstance)
+        /// Now checks if avatar was last seen and not departed
         /// </summary>
         public bool HasHadInitialGreeting(Guid accountId, string avatarId)
         {
-            if (!_initialGreetings.TryGetValue(accountId, out var accountInitial))
+            // Check if we've seen them before and they haven't departed
+            if (_avatarLastSeen.TryGetValue(accountId, out var accountLastSeen) &&
+                accountLastSeen.ContainsKey(avatarId))
             {
-                return false;
+                // They've been seen - check if they're still around (not in departures)
+                bool hasDeparted = _avatarDepartures.TryGetValue(accountId, out var accountDeps) &&
+                                   accountDeps.ContainsKey(avatarId);
+                return !hasDeparted;
             }
             
-            return accountInitial.ContainsKey(avatarId);
+            return false;
         }
         
         /// <summary>
-        /// Check if an avatar has been greeted recently
+        /// Check if an avatar has been greeted recently (for backward compatibility)
+        /// Now checks last greeting time with 2-minute cooldown
         /// </summary>
         public bool HasBeenGreeted(Guid accountId, string avatarId)
         {
-            if (!_greetedAvatars.TryGetValue(accountId, out var accountGreeted))
+            if (_lastGreetingTime.TryGetValue(accountId, out var accountGreetings) &&
+                accountGreetings.TryGetValue(avatarId, out var lastGreeted))
             {
-                return false;
+                return DateTime.UtcNow - lastGreeted < _minGreetingCooldown;
             }
             
-            if (!accountGreeted.TryGetValue(avatarId, out var greetedTime))
-            {
-                return false;
-            }
-            
-            // Check if cooldown period has passed
-            if (DateTime.UtcNow - greetedTime > _greetCooldown)
-            {
-                // Cooldown expired, allow greeting again
-                accountGreeted.TryRemove(avatarId, out _);
-                return false;
-            }
-            
-            return true;
-        }
-        
-        /// <summary>
-        /// Check if an avatar has been greeted within a specific time period
-        /// Used for minimum cooldown enforcement to prevent spam
-        /// </summary>
-        private bool HasBeenGreetedRecently(Guid accountId, string avatarId, TimeSpan cooldownPeriod)
-        {
-            if (!_greetedAvatars.TryGetValue(accountId, out var accountGreeted))
-            {
-                return false;
-            }
-            
-            if (!accountGreeted.TryGetValue(avatarId, out var greetedTime))
-            {
-                return false;
-            }
-            
-            // Check if the specified cooldown period has passed
-            return DateTime.UtcNow - greetedTime <= cooldownPeriod;
+            return false;
         }
         
         /// <summary>
@@ -386,11 +340,20 @@ namespace RadegastWeb.Services
         /// </summary>
         public void ClearGreetedAvatars(Guid accountId)
         {
-            if (_greetedAvatars.TryGetValue(accountId, out var accountGreeted))
+            if (_lastGreetingTime.TryGetValue(accountId, out var accountGreetings))
             {
-                accountGreeted.Clear();
-                _logger.LogDebug("Cleared greeted avatars for account {AccountId}", accountId);
+                accountGreetings.Clear();
             }
+            if (_avatarLastSeen.TryGetValue(accountId, out var accountLastSeen))
+            {
+                accountLastSeen.Clear();
+            }
+            if (_avatarDepartures.TryGetValue(accountId, out var accountDeps))
+            {
+                accountDeps.Clear();
+            }
+            
+            _logger.LogDebug("Cleared all avatar tracking for account {AccountId}", accountId);
         }
         
         /// <summary>
@@ -401,49 +364,7 @@ namespace RadegastWeb.Services
             var accountDepartures = _avatarDepartures.GetOrAdd(accountId, _ => new ConcurrentDictionary<string, DateTime>());
             accountDepartures.AddOrUpdate(avatarId, DateTime.UtcNow, (key, old) => DateTime.UtcNow);
             
-            // Remove from greeted list when they leave
-            if (_greetedAvatars.TryGetValue(accountId, out var accountGreeted))
-            {
-                accountGreeted.TryRemove(avatarId, out _);
-            }
-            
-            // Keep initial greeting tracking for return eligibility check
-            // It will be cleaned up later based on return time window
-            
             _logger.LogDebug("Tracked departure of avatar {AvatarId} for account {AccountId}", avatarId, accountId);
-        }
-        
-        /// <summary>
-        /// Check if an avatar is returning within the configured time window
-        /// Returns true if the avatar left and is now returning within the time window
-        /// </summary>
-        private bool IsReturningAvatar(Guid accountId, string avatarId, int returnTimeHours, out TimeSpan timeSinceDeparture)
-        {
-            timeSinceDeparture = TimeSpan.Zero;
-            
-            if (!_avatarDepartures.TryGetValue(accountId, out var accountDepartures))
-            {
-                return false;
-            }
-            
-            if (!accountDepartures.TryGetValue(avatarId, out var departureTime))
-            {
-                return false;
-            }
-            
-            timeSinceDeparture = DateTime.UtcNow - departureTime;
-            return timeSinceDeparture <= TimeSpan.FromHours(returnTimeHours);
-        }
-        
-        /// <summary>
-        /// Remove an avatar from the departures tracking
-        /// </summary>
-        private void RemoveFromDepartures(Guid accountId, string avatarId)
-        {
-            if (_avatarDepartures.TryGetValue(accountId, out var accountDepartures))
-            {
-                accountDepartures.TryRemove(avatarId, out _);
-            }
         }
         
         /// <summary>
@@ -468,11 +389,10 @@ namespace RadegastWeb.Services
                     {
                         accountDepartures.TryRemove(avatarId, out _);
                         
-                        // Also remove from initial greetings since they're outside the return window
-                        if (_initialGreetings.TryGetValue(accountId, out var accountInitial))
+                        // Also remove from last seen since they're outside the return window
+                        if (_avatarLastSeen.TryGetValue(accountId, out var accountLastSeen))
                         {
-                            accountInitial.TryRemove(avatarId, out _);
-                            _logger.LogDebug("Removed avatar {AvatarId} from initial greetings (outside return window) for account {AccountId}", avatarId, accountId);
+                            accountLastSeen.TryRemove(avatarId, out _);
                         }
                     }
                     
@@ -482,38 +402,38 @@ namespace RadegastWeb.Services
                     }
                 }
                 
-                // Clean up very old initial greetings (for avatars that never left or tracking was missed)
+                // Clean up old last-seen times (for avatars that never departed but are very old)
                 // Use 2x the return window as safety
-                if (_initialGreetings.TryGetValue(accountId, out var accountInitial2))
+                if (_avatarLastSeen.TryGetValue(accountId, out var accountLastSeen2))
                 {
                     var veryOldCutoff = DateTime.UtcNow.AddHours(-returnTimeHours * 2);
-                    var oldAvatars = accountInitial2.Where(kvp => kvp.Value < veryOldCutoff).Select(kvp => kvp.Key).ToList();
+                    var oldAvatars = accountLastSeen2.Where(kvp => kvp.Value < veryOldCutoff).Select(kvp => kvp.Key).ToList();
                     
                     foreach (var avatarId in oldAvatars)
                     {
-                        accountInitial2.TryRemove(avatarId, out _);
+                        accountLastSeen2.TryRemove(avatarId, out _);
                     }
                     
                     if (oldAvatars.Count > 0)
                     {
-                        _logger.LogDebug("Cleaned up {Count} very old initial greetings for account {AccountId}", oldAvatars.Count, accountId);
+                        _logger.LogDebug("Cleaned up {Count} very old last-seen times for account {AccountId}", oldAvatars.Count, accountId);
                     }
                 }
                 
-                // Clean up old greeted avatars
-                if (_greetedAvatars.TryGetValue(accountId, out var accountGreeted))
+                // Clean up old greeting times (older than cooldown period)
+                if (_lastGreetingTime.TryGetValue(accountId, out var accountGreetings))
                 {
-                    var cutoffTime = DateTime.UtcNow.Add(-_greetCooldown);
-                    var oldAvatars = accountGreeted.Where(kvp => kvp.Value < cutoffTime).Select(kvp => kvp.Key).ToList();
+                    var cutoffTime = DateTime.UtcNow.Add(-_minGreetingCooldown);
+                    var oldAvatars = accountGreetings.Where(kvp => kvp.Value < cutoffTime).Select(kvp => kvp.Key).ToList();
                     
                     foreach (var avatarId in oldAvatars)
                     {
-                        accountGreeted.TryRemove(avatarId, out _);
+                        accountGreetings.TryRemove(avatarId, out _);
                     }
                     
                     if (oldAvatars.Count > 0)
                     {
-                        _logger.LogDebug("Cleaned up {Count} old greeted avatars for account {AccountId}", oldAvatars.Count, accountId);
+                        _logger.LogDebug("Cleaned up {Count} old greeting times for account {AccountId}", oldAvatars.Count, accountId);
                     }
                 }
             }
@@ -530,14 +450,14 @@ namespace RadegastWeb.Services
         {
             try
             {
-                // Get the list of avatars we're currently tracking
-                if (!_greetedAvatars.TryGetValue(accountId, out var accountGreeted))
+                // Get the list of avatars we're currently tracking via last seen
+                if (!_avatarLastSeen.TryGetValue(accountId, out var accountLastSeen))
                 {
                     return; // No avatars tracked for this account
                 }
                 
                 var currentSet = new HashSet<string>(currentNearbyAvatarIds);
-                var trackedAvatars = accountGreeted.Keys.ToList();
+                var trackedAvatars = accountLastSeen.Keys.ToList();
                 
                 // Find avatars that were tracked but are no longer nearby
                 foreach (var avatarId in trackedAvatars)
