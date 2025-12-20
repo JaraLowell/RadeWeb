@@ -87,9 +87,14 @@ namespace RadegastWeb.Services
                     // Check if they've been gone long enough for a welcome back message
                     if (timeSinceDeparture < _minReturnTime)
                     {
-                        _logger.LogDebug("Avatar {AvatarId} returned too quickly ({TotalMinutes:F1} minutes) for welcome back message, skipping", 
+                        _logger.LogDebug("Avatar {AvatarId} returned too quickly ({TotalMinutes:F1} minutes) for welcome back message, clearing initial greeting and departures", 
                             avatarId, timeSinceDeparture.TotalMinutes);
                         RemoveFromDepartures(accountId, avatarId);
+                        // Clear initial greeting so they can be treated as present (not returning)
+                        if (_initialGreetings.TryGetValue(accountId, out var accountInitial))
+                        {
+                            accountInitial.TryRemove(avatarId, out _);
+                        }
                         return;
                     }
                     
