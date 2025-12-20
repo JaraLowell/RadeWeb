@@ -29,6 +29,15 @@ namespace RadegastWeb.Services
         bool HasBeenGreeted(Guid accountId, string avatarId);
         
         /// <summary>
+        /// Check if an avatar has received an initial greeting (persists until they leave)
+        /// Used to avoid re-greeting avatars that just changed state (seated -> standing)
+        /// </summary>
+        /// <param name="accountId">Account ID</param>
+        /// <param name="avatarId">Avatar UUID</param>
+        /// <returns>True if avatar has received an initial greeting</returns>
+        bool HasHadInitialGreeting(Guid accountId, string avatarId);
+        
+        /// <summary>
         /// Track when an avatar leaves the area
         /// </summary>
         /// <param name="avatarId">UUID of the avatar</param>

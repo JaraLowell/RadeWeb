@@ -306,8 +306,9 @@ namespace RadegastWeb.Services
         
         /// <summary>
         /// Check if an avatar has received an initial greeting (persists until they leave)
+        /// Used by WebRadegastInstance to avoid re-greeting avatars that just changed state (seated -> standing)
         /// </summary>
-        private bool HasHadInitialGreeting(Guid accountId, string avatarId)
+        public bool HasHadInitialGreeting(Guid accountId, string avatarId)
         {
             if (!_initialGreetings.TryGetValue(accountId, out var accountInitial))
             {
