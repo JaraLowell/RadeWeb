@@ -34,6 +34,7 @@ namespace RadegastWeb.Core
         private readonly IRegionMapCacheService _regionMapCacheService;
         private readonly IAutoSitService _autoSitService;
         private readonly IAutoGreeterService _autoGreeterService;
+        private readonly IAttachmentCacheService _attachmentCacheService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -91,7 +92,7 @@ namespace RadegastWeb.Core
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService, IRegionMapCacheService regionMapCacheService, IAutoSitService autoSitService, IAutoGreeterService autoGreeterService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService, IRegionMapCacheService regionMapCacheService, IAutoSitService autoSitService, IAutoGreeterService autoGreeterService, IAttachmentCacheService attachmentCacheService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -117,6 +118,7 @@ namespace RadegastWeb.Core
             _regionMapCacheService = regionMapCacheService;
             _autoSitService = autoSitService;
             _autoGreeterService = autoGreeterService;
+            _attachmentCacheService = attachmentCacheService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -1763,6 +1765,9 @@ namespace RadegastWeb.Core
                             await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), avatarIds);
                             _logger.LogInformation("Preloaded display names for {Count} avatars after login", avatarIds.Count);
                         }
+                        
+                        // Cache worn attachments after login
+                        await CacheWornAttachmentsAsync();
                     }
                     catch (Exception ex)
                     {
@@ -5110,6 +5115,106 @@ namespace RadegastWeb.Core
             // Return a more informative placeholder that includes the avatar ID
             // This makes it easier to track which avatars need name resolution
             return $"Resolving... ({avatarId.ToString().Substring(0, 8)})";
+        }
+
+        #endregion
+        
+        #region Attachment Management
+        
+        /// <summary>
+        /// Cache currently worn attachments to XML file
+        /// This is called after successful login to save the list of attachments
+        /// </summary>
+        private async Task CacheWornAttachmentsAsync()
+        {
+            try
+            {
+                if (!_client.Network.Connected)
+                {
+                    _logger.LogWarning("Cannot cache attachments - not connected");
+                    return;
+                }
+                
+                var attachments = new List<AttachmentItem>();
+                
+                // Get all worn attachments from LibreMetaverse
+                var wornAttachments = _client.Appearance.GetAttachments();
+                
+                _logger.LogDebug("Caching {Count} worn attachments for account {AccountId}", 
+                    wornAttachments.Count, _accountId);
+                
+                foreach (var attachment in wornAttachments)
+                {
+                    var attachmentInfo = new AttachmentItem
+                    {
+                        Uuid = attachment.UUID.ToString(),
+                        Name = attachment.Properties?.Name ?? "Unknown",
+                        AttachmentPoint = attachment.Properties?.AttachmentPoint.ToString() ?? "Unknown",
+                        IsTouchable = false, // Will be updated below if we can find the prim
+                        PrimUuid = string.Empty,
+                        CachedAt = DateTime.UtcNow
+                    };
+                    
+                    // Try to find the actual primitive object to determine if it's touchable
+                    // and get its UUID for touch operations
+                    if (_client.Network.CurrentSim != null)
+                    {
+                        var prim = _client.Network.CurrentSim.ObjectsPrimitives.Values
+                            .FirstOrDefault(p => 
+                                p.ParentID == _client.Self.LocalID && 
+                                p.NameValues != null &&
+                                p.NameValues.Any(nv => nv.Name == "AttachItemID" && nv.Value?.ToString() == attachment.UUID.ToString()));
+                        
+                        if (prim != null)
+                        {
+                            attachmentInfo.PrimUuid = prim.ID.ToString();
+                            attachmentInfo.IsTouchable = (prim.Flags & PrimFlags.Touch) != 0;
+                            
+                            // Update name from actual prim if available
+                            if (prim.Properties?.Name != null)
+                            {
+                                attachmentInfo.Name = prim.Properties.Name;
+                            }
+                        }
+                    }
+                    
+                    attachments.Add(attachmentInfo);
+                }
+                
+                // Save to XML cache
+                await _attachmentCacheService.SaveAttachmentsAsync(Guid.Parse(_accountId), attachments);
+                
+                _logger.LogInformation("Successfully cached {Count} worn attachments for account {AccountId}", 
+                    attachments.Count, _accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error caching worn attachments for account {AccountId}", _accountId);
+            }
+        }
+        
+        /// <summary>
+        /// Get cached attachments for this account
+        /// </summary>
+        public async Task<List<AttachmentItem>> GetCachedAttachmentsAsync()
+        {
+            try
+            {
+                return await _attachmentCacheService.LoadAttachmentsAsync(Guid.Parse(_accountId));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error loading cached attachments for account {AccountId}", _accountId);
+                return new List<AttachmentItem>();
+            }
+        }
+        
+        /// <summary>
+        /// Update attachment cache (called when attachments change)
+        /// </summary>
+        public async Task UpdateAttachmentCacheAsync()
+        {
+            await CacheWornAttachmentsAsync();
         }
 
         #endregion

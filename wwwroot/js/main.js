@@ -1626,6 +1626,16 @@ class RadegastWebClient {
             this.showRegionInfo();
         });
 
+        // Attachments button
+        document.getElementById('attachmentsBtn').addEventListener('click', () => {
+            this.showAttachments();
+        });
+        
+        // Refresh attachments button
+        document.getElementById('refreshAttachmentsBtn').addEventListener('click', () => {
+            this.refreshAttachments();
+        });
+
         // Movement control event handlers
         document.getElementById('sitBtn').addEventListener('click', () => {
             this.sitOnObject();
@@ -1809,15 +1819,18 @@ class RadegastWebClient {
         const loginBtn = document.getElementById('loginBtn');
         const logoutBtn = document.getElementById('logoutBtn');
         const regionInfoBtn = document.getElementById('regionInfoBtn');
+        const attachmentsBtn = document.getElementById('attachmentsBtn');
         
         if (account.isConnected) {
             loginBtn.classList.add('d-none');
             logoutBtn.classList.remove('d-none');
             regionInfoBtn.classList.remove('d-none');
+            attachmentsBtn.classList.remove('d-none');
         } else {
             loginBtn.classList.remove('d-none');
             logoutBtn.classList.add('d-none');
             regionInfoBtn.classList.add('d-none');
+            attachmentsBtn.classList.add('d-none');
         }
         
         // Update movement controls visibility
@@ -2040,11 +2053,13 @@ class RadegastWebClient {
         const loginBtn = document.getElementById('loginBtn');
         const logoutBtn = document.getElementById('logoutBtn');
         const regionInfoBtn = document.getElementById('regionInfoBtn');
+        const attachmentsBtn = document.getElementById('attachmentsBtn');
         
         if (account.isConnected) {
             loginBtn.classList.add('d-none');
             logoutBtn.classList.remove('d-none');
             regionInfoBtn.classList.remove('d-none');
+            attachmentsBtn.classList.remove('d-none');
             
             // Show minimap for connected accounts
             if (window.miniMap) {
@@ -2054,6 +2069,7 @@ class RadegastWebClient {
             loginBtn.classList.remove('d-none');
             logoutBtn.classList.add('d-none');
             regionInfoBtn.classList.add('d-none');
+            attachmentsBtn.classList.add('d-none');
             
             // Hide minimap for disconnected accounts
             if (window.miniMap) {
@@ -2663,6 +2679,183 @@ class RadegastWebClient {
         }
     }
 
+    async showAttachments() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        // Show the modal
+        const modal = new bootstrap.Modal(document.getElementById('attachmentsModal'));
+        modal.show();
+
+        // Show loading state
+        document.getElementById('attachmentsLoading').classList.remove('d-none');
+        document.getElementById('attachmentsContent').classList.add('d-none');
+
+        try {
+            await this.loadAttachments();
+        } catch (error) {
+            console.error("Error loading attachments:", error);
+            this.showAlert("Failed to load attachments: " + error.message, "danger");
+            modal.hide();
+        }
+    }
+
+    async loadAttachments() {
+        if (!this.currentAccountId) return;
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/attachments/${this.currentAccountId}`
+            );
+
+            if (response.ok) {
+                const attachments = await response.json();
+                this.renderAttachments(attachments);
+            } else {
+                const error = await response.json();
+                this.showAlert("Failed to load attachments: " + (error.message || "Unknown error"), "danger");
+            }
+        } catch (error) {
+            console.error("Error loading attachments:", error);
+            this.showAlert("Failed to load attachments: " + error.message, "danger");
+        } finally {
+            // Hide loading, show content
+            document.getElementById('attachmentsLoading').classList.add('d-none');
+            document.getElementById('attachmentsContent').classList.remove('d-none');
+        }
+    }
+
+    renderAttachments(attachments) {
+        const listContainer = document.getElementById('attachmentsList');
+        const noAttachmentsMsg = document.getElementById('noAttachments');
+        const countSpan = document.getElementById('attachmentCount');
+
+        // Clear existing items
+        listContainer.innerHTML = '';
+
+        if (!attachments || attachments.length === 0) {
+            noAttachmentsMsg.classList.remove('d-none');
+            countSpan.textContent = '';
+            return;
+        }
+
+        noAttachmentsMsg.classList.add('d-none');
+        countSpan.textContent = `${attachments.length} attachment${attachments.length !== 1 ? 's' : ''}`;
+
+        attachments.forEach(attachment => {
+            const item = document.createElement('div');
+            item.className = 'list-group-item d-flex justify-content-between align-items-center';
+            
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'flex-grow-1';
+            
+            const namePara = document.createElement('p');
+            namePara.className = 'mb-1 fw-bold';
+            namePara.textContent = attachment.name;
+            
+            const detailsPara = document.createElement('small');
+            detailsPara.className = 'text-muted';
+            detailsPara.textContent = `Attached to: ${attachment.attachmentPoint}`;
+            
+            infoDiv.appendChild(namePara);
+            infoDiv.appendChild(detailsPara);
+            
+            item.appendChild(infoDiv);
+            
+            // Add touch button if the attachment is touchable
+            if (attachment.isTouchable && attachment.primUuid) {
+                const touchBtn = document.createElement('button');
+                touchBtn.className = 'btn btn-sm btn-primary';
+                touchBtn.innerHTML = '<i class="fas fa-hand-pointer me-1"></i>Touch';
+                touchBtn.addEventListener('click', () => {
+                    this.touchAttachment(attachment.primUuid, attachment.name);
+                });
+                item.appendChild(touchBtn);
+            } else {
+                const notTouchableSpan = document.createElement('span');
+                notTouchableSpan.className = 'badge bg-secondary';
+                notTouchableSpan.textContent = 'Not Touchable';
+                item.appendChild(notTouchableSpan);
+            }
+            
+            listContainer.appendChild(item);
+        });
+    }
+
+    async touchAttachment(primUuid, name) {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/attachments/${this.currentAccountId}/touch/${primUuid}`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                }
+            );
+
+            if (response.ok) {
+                const result = await response.json();
+                this.showAlert(`Touched "${name}"`, "success");
+            } else {
+                const error = await response.json();
+                this.showAlert("Failed to touch attachment: " + (error.message || "Unknown error"), "danger");
+            }
+        } catch (error) {
+            console.error("Error touching attachment:", error);
+            this.showAlert("Failed to touch attachment: " + error.message, "danger");
+        }
+    }
+
+    async refreshAttachments() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        // Show loading
+        document.getElementById('attachmentsLoading').classList.remove('d-none');
+        document.getElementById('attachmentsContent').classList.add('d-none');
+
+        try {
+            // Call the refresh endpoint
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/attachments/${this.currentAccountId}/refresh`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                }
+            );
+
+            if (response.ok) {
+                this.showAlert("Attachments refreshed successfully", "success");
+                // Reload the attachments list
+                await this.loadAttachments();
+            } else {
+                const error = await response.json();
+                this.showAlert("Failed to refresh attachments: " + (error.message || "Unknown error"), "danger");
+                // Still show the content even if refresh failed
+                document.getElementById('attachmentsLoading').classList.add('d-none');
+                document.getElementById('attachmentsContent').classList.remove('d-none');
+            }
+        } catch (error) {
+            console.error("Error refreshing attachments:", error);
+            this.showAlert("Failed to refresh attachments: " + error.message, "danger");
+            // Still show the content even if refresh failed
+            document.getElementById('attachmentsLoading').classList.add('d-none');
+            document.getElementById('attachmentsContent').classList.remove('d-none');
+        }
+    }
+
     async sendChat() {
         if (!this.currentAccountId) return;
 
@@ -2949,11 +3142,13 @@ class RadegastWebClient {
                 const loginBtn = document.getElementById('loginBtn');
                 const logoutBtn = document.getElementById('logoutBtn');
                 const regionInfoBtn = document.getElementById('regionInfoBtn');
+                const attachmentsBtn = document.getElementById('attachmentsBtn');
                 
                 if (status.isConnected) {
                     loginBtn.classList.add('d-none');
                     logoutBtn.classList.remove('d-none');
                     regionInfoBtn.classList.remove('d-none');
+                    attachmentsBtn.classList.remove('d-none');
                     // Start avatar refresh when account becomes connected
                     this.startAvatarRefresh();
                     
@@ -2977,6 +3172,7 @@ class RadegastWebClient {
                     loginBtn.classList.remove('d-none');
                     logoutBtn.classList.add('d-none');
                     regionInfoBtn.classList.add('d-none');
+                    attachmentsBtn.classList.add('d-none');
                     // Stop avatar refresh when account disconnects
                     this.stopAvatarRefresh();
                     

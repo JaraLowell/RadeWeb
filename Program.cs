@@ -149,6 +149,7 @@ builder.Services.AddSingleton<ITeleportRequestService, TeleportRequestService>()
 builder.Services.AddSingleton<IConnectionTrackingService, ConnectionTrackingService>();
 builder.Services.AddSingleton<IChatProcessingService, ChatProcessingService>();
 builder.Services.AddSingleton<ISLTimeService, SLTimeService>();
+builder.Services.AddSingleton<IAttachmentCacheService, AttachmentCacheService>();
 
 // Interactive notice services
 builder.Services.AddSingleton<IFriendshipRequestService, FriendshipRequestService>();

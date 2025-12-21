@@ -70,6 +70,9 @@
                                 <button id="regionInfoBtn" class="btn btn-info btn-sm me-2 d-none" title="Region Information">
                                     <i class="fas fa-globe me-1"></i>Region Info
                                 </button>
+                                <button id="attachmentsBtn" class="btn btn-secondary btn-sm me-2 d-none" title="View Attachments">
+                                    <i class="fas fa-paperclip me-1"></i>Attachments
+                                </button>
                                 <button id="loginBtn" class="btn btn-success btn-sm me-2">
                                     <i class="fas fa-sign-in-alt me-1"></i>Login
                                 </button>
@@ -619,6 +622,44 @@
                     <button type="button" class="btn btn-success" id="interactiveNoticeAccept">
                         <i class="fas fa-check me-1"></i>Accept
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Attachments Modal -->
+    <div class="modal fade" id="attachmentsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-paperclip me-2"></i>Worn Attachments</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="attachmentsLoading" class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2 text-muted">Loading attachments...</p>
+                    </div>
+                    <div id="attachmentsContent" class="d-none">
+                        <div class="mb-3">
+                            <button id="refreshAttachmentsBtn" class="btn btn-sm btn-outline-primary">
+                                <i class="fas fa-sync-alt me-1"></i>Refresh
+                            </button>
+                            <span id="attachmentCount" class="ms-2 text-muted"></span>
+                        </div>
+                        <div id="attachmentsList" class="list-group">
+                            <!-- Attachments will be populated here -->
+                        </div>
+                        <div id="noAttachments" class="text-center py-4 text-muted d-none">
+                            <i class="fas fa-info-circle fa-2x mb-2"></i>
+                            <p>No attachments cached. Login to cache your current attachments.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                 </div>
             </div>
         </div>
