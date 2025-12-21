@@ -501,12 +501,24 @@ namespace RadegastWeb.Services
                 var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
                 var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
                 
+                _logger.LogInformation("GetAllRegionStatsAsync: UTC range {StartDateUtc} to {EndDateUtc}, SLT range {StartDateSlt} to {EndDateSlt}",
+                    startDate, endDate, sltStartDate, sltEndDate);
+                
+                // Check if there's any data in the date range
+                var totalRecords = await context.VisitorStats
+                    .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate)
+                    .CountAsync();
+                
+                _logger.LogInformation("GetAllRegionStatsAsync: Found {TotalRecords} visitor records in date range", totalRecords);
+                
                 var regions = await context.VisitorStats
                     .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate)
                     .Select(vs => vs.RegionName)
                     .Distinct()
                     .Take(50) // Limit to prevent excessive memory usage
                     .ToListAsync();
+                
+                _logger.LogInformation("GetAllRegionStatsAsync: Found {RegionCount} distinct regions", regions.Count);
                 
                 var results = new List<VisitorStatsSummaryDto>();
                 foreach (var region in regions)
@@ -560,6 +572,9 @@ namespace RadegastWeb.Services
                 var sltTimeZone = _sltTimeService.GetSLTTimeZone();
                 var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
                 var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
+                
+                _logger.LogInformation("GetUniqueVisitorsAsync: UTC range {StartDateUtc} to {EndDateUtc}, SLT range {StartDateSlt} to {EndDateSlt}, Region: {RegionName}",
+                    startDate, endDate, sltStartDate, sltEndDate, regionName ?? "All");
                 
                 var query = context.VisitorStats
                     .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate);

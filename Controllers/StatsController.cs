@@ -283,6 +283,60 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
+        /// Debug endpoint to check database visitor stats
+        /// </summary>
+        [HttpGet("debug/database")]
+        public async Task<ActionResult<object>> DebugDatabase()
+        {
+            try
+            {
+                using var scope = HttpContext.RequestServices.CreateScope();
+                var dbFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
+                using var context = dbFactory.CreateDbContext();
+                
+                var totalRecords = await context.VisitorStats.CountAsync();
+                var distinctRegions = await context.VisitorStats.Select(vs => vs.RegionName).Distinct().ToListAsync();
+                var dateRange = await context.VisitorStats
+                    .OrderBy(vs => vs.VisitDate)
+                    .Select(vs => vs.VisitDate)
+                    .ToListAsync();
+                
+                var minDate = dateRange.Any() ? dateRange.Min() : (DateTime?)null;
+                var maxDate = dateRange.Any() ? dateRange.Max() : (DateTime?)null;
+                
+                var recentRecords = await context.VisitorStats
+                    .OrderByDescending(vs => vs.LastSeenAt)
+                    .Take(10)
+                    .Select(vs => new {
+                        vs.AvatarId,
+                        vs.RegionName,
+                        vs.VisitDate,
+                        vs.FirstSeenAt,
+                        vs.LastSeenAt,
+                        vs.VisitCount
+                    })
+                    .ToListAsync();
+                
+                return Ok(new {
+                    TotalRecords = totalRecords,
+                    DistinctRegions = distinctRegions,
+                    RegionCount = distinctRegions.Count,
+                    MinDate = minDate,
+                    MaxDate = maxDate,
+                    DateRangeInDays = minDate.HasValue && maxDate.HasValue ? (maxDate.Value - minDate.Value).Days : 0,
+                    RecentRecords = recentRecords,
+                    CurrentSLT = _sltTimeService.GetCurrentSLT(),
+                    CurrentUTC = DateTime.UtcNow
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in debug database endpoint");
+                return StatusCode(500, ex.Message);
+            }
+        }
+
+        /// <summary>
         /// Get hourly visitor activity for the past X days (default 7) in SLT time
         /// </summary>
         [HttpGet("hourly")]
