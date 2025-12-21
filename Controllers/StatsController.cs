@@ -495,7 +495,7 @@ namespace RadegastWeb.Controllers
                         s.TotalVisits,
                         AverageVisitorsPerDay = s.DailyStats.Count > 0 ? s.DailyStats.Average(d => d.UniqueVisitors) : 0,
                         AverageTrueUniquePerDay = s.DailyStats.Count > 0 ? s.DailyStats.Average(d => d.TrueUniqueVisitors) : 0
-                    }).OrderByDescending(s => s.TotalUniqueVisitors).Take(10),
+                    }).OrderByDescending(s => s.TotalUniqueVisitors).Take(10).ToList(),
                     RecentActivity = stats7Days.SelectMany(s => s.DailyStats)
                         .GroupBy(d => d.Date)
                         .Select(g => new
@@ -508,7 +508,7 @@ namespace RadegastWeb.Controllers
                         .OrderBy(d => d.Date)
                         .ToList(),
                     // Include recent visitors data for the Recent Visitors table
-                    RecentVisitors = recentVisitors,
+                    RecentVisitors = recentVisitors.ToList(),
                     // Add SLT context information - show the range that was actually requested for today's stats
                     SLTDateRange = new
                     {
