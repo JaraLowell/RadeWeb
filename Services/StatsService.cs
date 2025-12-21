@@ -381,9 +381,6 @@ namespace RadegastWeb.Services
                 var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
                 var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
                 
-                _logger.LogInformation("GetRegionStatsAsync: Region='{RegionName}', UTC range {StartDateUtc} to {EndDateUtc}, SLT range {StartDateSlt} to {EndDateSlt}",
-                    regionName, startDate, endDate, sltStartDate, sltEndDate);
-                
                 // Query using SLT dates (since we store data in SLT format now)
                 // Use case-insensitive comparison for region name
                 var rawStats = await context.VisitorStats
@@ -391,8 +388,6 @@ namespace RadegastWeb.Services
                         vs.VisitDate >= sltStartDate && 
                         vs.VisitDate <= sltEndDate)
                     .ToListAsync();
-                
-                _logger.LogInformation("GetRegionStatsAsync: Found {RecordCount} records for region '{RegionName}'", rawStats.Count, regionName);
                 
                 // Get ALL historical data before the start date to determine truly new vs returning visitors
                 var allHistoricalVisitors = await context.VisitorStats
@@ -504,24 +499,12 @@ namespace RadegastWeb.Services
                 var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
                 var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
                 
-                _logger.LogInformation("GetAllRegionStatsAsync: UTC range {StartDateUtc} to {EndDateUtc}, SLT range {StartDateSlt} to {EndDateSlt}",
-                    startDate, endDate, sltStartDate, sltEndDate);
-                
-                // Check if there's any data in the date range
-                var totalRecords = await context.VisitorStats
-                    .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate)
-                    .CountAsync();
-                
-                _logger.LogInformation("GetAllRegionStatsAsync: Found {TotalRecords} visitor records in date range", totalRecords);
-                
                 var regions = await context.VisitorStats
                     .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate)
                     .Select(vs => vs.RegionName)
                     .Distinct()
                     .Take(50) // Limit to prevent excessive memory usage
                     .ToListAsync();
-                
-                _logger.LogInformation("GetAllRegionStatsAsync: Found {RegionCount} distinct regions", regions.Count);
                 
                 var results = new List<VisitorStatsSummaryDto>();
                 foreach (var region in regions)
@@ -576,9 +559,6 @@ namespace RadegastWeb.Services
                 var sltStartDate = TimeZoneInfo.ConvertTimeFromUtc(startDate, sltTimeZone).Date;
                 var sltEndDate = TimeZoneInfo.ConvertTimeFromUtc(endDate, sltTimeZone).Date;
                 
-                _logger.LogInformation("GetUniqueVisitorsAsync: UTC range {StartDateUtc} to {EndDateUtc}, SLT range {StartDateSlt} to {EndDateSlt}, Region: {RegionName}",
-                    startDate, endDate, sltStartDate, sltEndDate, regionName ?? "All");
-                
                 var query = context.VisitorStats
                     .Where(vs => vs.VisitDate >= sltStartDate && vs.VisitDate <= sltEndDate);
                 
@@ -586,10 +566,6 @@ namespace RadegastWeb.Services
                 {
                     query = query.Where(vs => vs.RegionName.ToLower() == regionName.ToLower());
                 }
-                
-                // Check how many records match the query
-                var matchCount = await query.CountAsync();
-                _logger.LogInformation("GetUniqueVisitorsAsync: Found {MatchCount} records matching query for region '{RegionName}'", matchCount, regionName ?? "All");
                 
                 // MEMORY FIX: Significantly reduce query limits to prevent memory bloat
                 // For "true unique" determination, we look back 60 days from the start date but limit results
