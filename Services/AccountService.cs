@@ -47,14 +47,16 @@ namespace RadegastWeb.Services
         private readonly ConcurrentDictionary<Guid, WebRadegastInstance> _instances = new();
         private readonly IMasterDisplayNameService _masterDisplayNameService;
         private readonly ISLTimeService _sltTimeService;
+        private readonly IAttachmentCacheService _attachmentCacheService;
         private bool _disposed;
 
-        public AccountService(ILogger<AccountService> logger, IServiceProvider serviceProvider, IConfiguration configuration, IMasterDisplayNameService masterDisplayNameService, ISLTimeService sltTimeService)
+        public AccountService(ILogger<AccountService> logger, IServiceProvider serviceProvider, IConfiguration configuration, IMasterDisplayNameService masterDisplayNameService, ISLTimeService sltTimeService, IAttachmentCacheService attachmentCacheService)
         {
             _logger = logger;
             _serviceProvider = serviceProvider;
             _sltTimeService = sltTimeService;
             _masterDisplayNameService = masterDisplayNameService;
+            _attachmentCacheService = attachmentCacheService;
             
             // Get the connection string from configuration or build it
             var contentRoot = configuration.GetValue<string>("ContentRoot") ?? Directory.GetCurrentDirectory();
@@ -392,7 +394,7 @@ namespace RadegastWeb.Services
                 var autoSitService = _serviceProvider.GetRequiredService<IAutoSitService>();
                 var autoGreeterService = _serviceProvider.GetRequiredService<IAutoGreeterService>();
                 
-                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, _masterDisplayNameService, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService, regionMapCacheService, autoSitService, autoGreeterService);
+                var instance = new WebRadegastInstance(accountCopy, logger, displayNameService, noticeService, urlParser, nameResolutionService, groupService, globalDisplayNameCache, _masterDisplayNameService, statsService, corradeService, aiChatService, chatHistoryService, scriptDialogService, teleportRequestService, connectionTrackingService, chatProcessingService, slTimeService, presenceService, dbContextFactory, friendshipRequestService, groupInvitationService, regionMapCacheService, autoSitService, autoGreeterService, _attachmentCacheService);
                 
                 var loginResult = await instance.LoginAsync();
                 

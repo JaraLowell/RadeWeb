@@ -58,7 +58,7 @@ namespace RadegastWeb.Services
             }
         }
         
-        public async Task SaveAttachmentsAsync(Guid accountId, List<AttachmentItem> attachments)
+        public Task SaveAttachmentsAsync(Guid accountId, List<AttachmentItem> attachments)
         {
             try
             {
@@ -90,9 +90,11 @@ namespace RadegastWeb.Services
                 _logger.LogError(ex, "Error saving attachments cache for account {AccountId}", accountId);
                 throw;
             }
+            
+            return Task.CompletedTask;
         }
         
-        public async Task<List<AttachmentItem>> LoadAttachmentsAsync(Guid accountId)
+        public Task<List<AttachmentItem>> LoadAttachmentsAsync(Guid accountId)
         {
             try
             {
@@ -101,7 +103,7 @@ namespace RadegastWeb.Services
                 if (!File.Exists(cacheFilePath))
                 {
                     _logger.LogDebug("No attachments cache file found for account {AccountId}", accountId);
-                    return new List<AttachmentItem>();
+                    return Task.FromResult(new List<AttachmentItem>());
                 }
                 
                 using (var fileStream = new FileStream(cacheFilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
@@ -111,23 +113,23 @@ namespace RadegastWeb.Services
                     if (collection == null)
                     {
                         _logger.LogWarning("Failed to deserialize attachments cache for account {AccountId}", accountId);
-                        return new List<AttachmentItem>();
+                        return Task.FromResult(new List<AttachmentItem>());
                     }
                     
                     _logger.LogDebug("Loaded {Count} attachments from cache for account {AccountId}", 
                         collection.Items.Count, accountId);
                     
-                    return collection.Items;
+                    return Task.FromResult(collection.Items);
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error loading attachments cache for account {AccountId}", accountId);
-                return new List<AttachmentItem>();
+                return Task.FromResult(new List<AttachmentItem>());
             }
         }
         
-        public async Task ClearAttachmentsAsync(Guid accountId)
+        public Task ClearAttachmentsAsync(Guid accountId)
         {
             try
             {
@@ -143,6 +145,8 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error clearing attachments cache for account {AccountId}", accountId);
             }
+            
+            return Task.CompletedTask;
         }
         
         public bool HasCachedAttachments(Guid accountId)

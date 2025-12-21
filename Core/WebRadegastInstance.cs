@@ -5137,49 +5137,39 @@ namespace RadegastWeb.Core
                 
                 var attachments = new List<AttachmentItem>();
                 
-                // Get all worn attachments from LibreMetaverse
-                var wornAttachments = _client.Appearance.GetAttachments();
+                // Get all worn attachments by finding primitives attached to the avatar
+                if (_client.Network.Connected && _client.Network.CurrentSim != null)
+                {
+                    var attachedPrims = _client.Network.CurrentSim.ObjectsPrimitives.Values
+                        .Where(p => p.ParentID == _client.Self.LocalID)
+                        .ToList();
+                    
+                    foreach (var prim in attachedPrims)
+                    {
+                        // Try to get the attachment item ID from the primitive's name values
+                        string? attachItemId = null;
+                        if (prim.NameValues != null && prim.NameValues.Length > 0)
+                        {
+                            var attachItemNv = prim.NameValues.FirstOrDefault(nv => nv.Name == "AttachItemID");
+                            attachItemId = attachItemNv.Value?.ToString();
+                        }
+                        
+                        var attachmentInfo = new AttachmentItem
+                        {
+                            Uuid = attachItemId ?? prim.ID.ToString(),
+                            Name = prim.Properties?.Name ?? "Unknown",
+                            AttachmentPoint = prim.PrimData.AttachmentPoint.ToString(),
+                            IsTouchable = (prim.Flags & PrimFlags.Touch) != 0,
+                            PrimUuid = prim.ID.ToString(),
+                            CachedAt = DateTime.UtcNow
+                        };
+                        
+                        attachments.Add(attachmentInfo);
+                    }
+                }
                 
                 _logger.LogDebug("Caching {Count} worn attachments for account {AccountId}", 
-                    wornAttachments.Count, _accountId);
-                
-                foreach (var attachment in wornAttachments)
-                {
-                    var attachmentInfo = new AttachmentItem
-                    {
-                        Uuid = attachment.UUID.ToString(),
-                        Name = attachment.Properties?.Name ?? "Unknown",
-                        AttachmentPoint = attachment.Properties?.AttachmentPoint.ToString() ?? "Unknown",
-                        IsTouchable = false, // Will be updated below if we can find the prim
-                        PrimUuid = string.Empty,
-                        CachedAt = DateTime.UtcNow
-                    };
-                    
-                    // Try to find the actual primitive object to determine if it's touchable
-                    // and get its UUID for touch operations
-                    if (_client.Network.CurrentSim != null)
-                    {
-                        var prim = _client.Network.CurrentSim.ObjectsPrimitives.Values
-                            .FirstOrDefault(p => 
-                                p.ParentID == _client.Self.LocalID && 
-                                p.NameValues != null &&
-                                p.NameValues.Any(nv => nv.Name == "AttachItemID" && nv.Value?.ToString() == attachment.UUID.ToString()));
-                        
-                        if (prim != null)
-                        {
-                            attachmentInfo.PrimUuid = prim.ID.ToString();
-                            attachmentInfo.IsTouchable = (prim.Flags & PrimFlags.Touch) != 0;
-                            
-                            // Update name from actual prim if available
-                            if (prim.Properties?.Name != null)
-                            {
-                                attachmentInfo.Name = prim.Properties.Name;
-                            }
-                        }
-                    }
-                    
-                    attachments.Add(attachmentInfo);
-                }
+                    attachments.Count, _accountId);
                 
                 // Save to XML cache
                 await _attachmentCacheService.SaveAttachmentsAsync(Guid.Parse(_accountId), attachments);
