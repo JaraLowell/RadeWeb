@@ -312,6 +312,11 @@
                                         </button>
                                     </div>
                                     <div class="col-12">
+                                        <button id="captureAutoSitTargetBtn" class="btn btn-outline-success btn-sm w-100" title="Save current sitting position as auto-sit target">
+                                            <i class="fas fa-crosshairs me-1"></i>Capture Current Seat
+                                        </button>
+                                    </div>
+                                    <div class="col-12">
                                         <div class="mt-1">
                                             <small class="text-muted">Last target: <span id="autoSitLastTarget">None</span></small>
                                         </div>
@@ -320,9 +325,18 @@
                                         </div>
                                     </div>
                                     <div class="col-12">
-                                        <button id="saveAutoSitBtn" class="btn btn-primary btn-sm w-100">
-                                            <i class="fas fa-save me-1"></i>Save Auto-Sit Settings
-                                        </button>
+                                        <div class="row g-2">
+                                            <div class="col-6">
+                                                <button id="loadAutoSitBtn" class="btn btn-outline-secondary btn-sm w-100" title="Load current settings from server">
+                                                    <i class="fas fa-sync-alt me-1"></i>Load Settings
+                                                </button>
+                                            </div>
+                                            <div class="col-6">
+                                                <button id="saveAutoSitBtn" class="btn btn-primary btn-sm w-100">
+                                                    <i class="fas fa-save me-1"></i>Save Settings
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

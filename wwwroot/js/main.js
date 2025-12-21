@@ -1654,8 +1654,16 @@ class RadegastWebClient {
             this.toggleAutoSitSettings(e.target.checked);
         });
 
+        document.getElementById('loadAutoSitBtn').addEventListener('click', () => {
+            this.loadAutoSitConfig();
+        });
+
         document.getElementById('saveAutoSitBtn').addEventListener('click', () => {
             this.saveAutoSitSettings();
+        });
+
+        document.getElementById('captureAutoSitTargetBtn').addEventListener('click', () => {
+            this.captureAutoSitTarget();
         });
 
         document.getElementById('autoSitResitBtn').addEventListener('click', () => {
@@ -3521,9 +3529,49 @@ class RadegastWebClient {
                 
                 // Show/hide settings based on enabled state
                 this.toggleAutoSitSettings(config.enabled || false);
+                
+                // Show success notification only when manually triggered (check if event source exists)
+                if (event && event.isTrusted) {
+                    this.showAlert("Auto-sit settings loaded successfully!", "success");
+                }
+            } else {
+                this.showAlert("Failed to load auto-sit settings", "danger");
             }
         } catch (error) {
             console.error("Error loading auto-sit config:", error);
+            if (event && event.isTrusted) {
+                this.showAlert("Failed to load auto-sit settings: " + error.message, "danger");
+            }
+        }
+    }
+
+    async captureAutoSitTarget() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${this.currentAccountId}/auto-sit/capture-target`, {
+                method: 'POST'
+            });
+
+            if (response.ok) {
+                const result = await response.json();
+                this.showAlert(result.message, "success");
+                
+                // Update UI with captured values
+                document.getElementById('autoSitLastTarget').textContent = result.targetUuid;
+                document.getElementById('autoSitLastStatus').textContent = result.presenceStatus;
+                
+                console.log("Captured sit target:", result);
+            } else {
+                const error = await response.json();
+                this.showAlert(error.message || "Failed to capture sit target", "warning");
+            }
+        } catch (error) {
+            console.error("Error capturing auto-sit target:", error);
+            this.showAlert("Failed to capture sit target: " + error.message, "danger");
         }
     }
 

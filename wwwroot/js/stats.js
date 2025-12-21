@@ -85,6 +85,11 @@ class StatsManager {
     }
 
     updateDashboard(data) {
+        // Debug: Log dashboard data to check structure
+        console.log('Dashboard data received:', data);
+        console.log('RegionStats:', data.RegionStats || data.regionStats);
+        console.log('RecentVisitors:', data.RecentVisitors || data.recentVisitors);
+        
         // Use the correct property names from the backend, with fallbacks for both naming conventions
         const todayValue = data.TotalVisitorsToday || data.totalVisitorsToday || 0;
         
@@ -447,10 +452,16 @@ class StatsManager {
     updateRegionStats(regionStats) {
         const tbody = document.getElementById('regionStatsList');
         
+        console.log('updateRegionStats called with:', regionStats);
+        console.log('Is array?', Array.isArray(regionStats));
+        console.log('Length:', regionStats?.length);
+        
         if (!Array.isArray(regionStats) || regionStats.length === 0) {
             tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No region data</td></tr>';
             return;
         }
+
+        console.log('First region sample:', regionStats[0]);
 
         tbody.innerHTML = regionStats.map(region => {
             const regionName = region.RegionName || region.regionName || 'Unknown';

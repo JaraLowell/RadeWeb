@@ -646,6 +646,57 @@ namespace RadegastWeb.Controllers
         }
 
         /// <summary>
+        /// Capture current sit target and presence status for auto-sit
+        /// </summary>
+        [HttpPost("{id}/auto-sit/capture-target")]
+        public async Task<IActionResult> CaptureAutoSitTarget(Guid id)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(id);
+                if (instance == null)
+                {
+                    return NotFound(new { message = "Account not found or not connected" });
+                }
+
+                if (!instance.IsConnected)
+                {
+                    return BadRequest(new { message = "Account is not connected" });
+                }
+
+                if (!instance.IsSitting)
+                {
+                    return BadRequest(new { message = "Avatar is not currently sitting on an object" });
+                }
+
+                var objectUuid = instance.CurrentSittingObjectUuid;
+                if (!objectUuid.HasValue || objectUuid.Value == UUID.Zero)
+                {
+                    return BadRequest(new { message = "No valid sit target detected" });
+                }
+
+                var autoSitService = HttpContext.RequestServices.GetRequiredService<IAutoSitService>();
+                var presenceService = HttpContext.RequestServices.GetRequiredService<IPresenceService>();
+                
+                await autoSitService.UpdateLastSitTargetWithPresenceAsync(id, objectUuid.Value.ToString(), presenceService);
+                
+                var currentStatus = presenceService.GetAccountStatus(id);
+                
+                return Ok(new 
+                { 
+                    message = "Sit target captured successfully", 
+                    targetUuid = objectUuid.Value.ToString(),
+                    presenceStatus = currentStatus.ToString()
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error capturing auto-sit target for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
         /// Update auto-greeter settings for an account
         /// </summary>
         [HttpPost("{id}/auto-greeter")]
