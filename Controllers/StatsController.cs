@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
+using RadegastWeb.Data;
 
 namespace RadegastWeb.Controllers
 {
@@ -301,8 +303,8 @@ namespace RadegastWeb.Controllers
                     .Select(vs => vs.VisitDate)
                     .ToListAsync();
                 
-                var minDate = dateRange.Any() ? dateRange.Min() : (DateTime?)null;
-                var maxDate = dateRange.Any() ? dateRange.Max() : (DateTime?)null;
+                var minDate = dateRange.Any() ? (DateTime?)dateRange.Min() : null;
+                var maxDate = dateRange.Any() ? (DateTime?)dateRange.Max() : null;
                 
                 var recentRecords = await context.VisitorStats
                     .OrderByDescending(vs => vs.LastSeenAt)
@@ -313,7 +315,8 @@ namespace RadegastWeb.Controllers
                         vs.VisitDate,
                         vs.FirstSeenAt,
                         vs.LastSeenAt,
-                        vs.VisitCount
+                        vs.AvatarName,
+                        vs.DisplayName
                     })
                     .ToListAsync();
                 
