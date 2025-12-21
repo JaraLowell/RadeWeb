@@ -5144,6 +5144,21 @@ namespace RadegastWeb.Core
                         .Where(p => p.ParentID == _client.Self.LocalID)
                         .ToList();
                     
+                    // Request object properties for all attachments that don't have them yet
+                    var primsNeedingProperties = attachedPrims
+                        .Where(p => p.Properties == null || string.IsNullOrEmpty(p.Properties.Name))
+                        .Select(p => p.LocalID)
+                        .ToList();
+                    
+                    if (primsNeedingProperties.Any())
+                    {
+                        _logger.LogDebug("Requesting properties for {Count} attachments", primsNeedingProperties.Count);
+                        _client.Objects.SelectObjects(_client.Network.CurrentSim, primsNeedingProperties.ToArray());
+                        
+                        // Wait a bit for properties to arrive (non-blocking)
+                        await Task.Delay(1000);
+                    }
+                    
                     foreach (var prim in attachedPrims)
                     {
                         // Try to get the attachment item ID from the primitive's name values
