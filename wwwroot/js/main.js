@@ -34,6 +34,7 @@ class RadegastWebClient {
         this.setupTabs();
         this.initializeDarkMode();
         this.initializeGroupsToggleState();
+        this.initializeAutoGreeterToggleState();
         this.initializeRadarToggleState();
         this.initializeUIState();
         
@@ -1673,6 +1674,11 @@ class RadegastWebClient {
         // Groups toggle button
         document.getElementById('groupsToggleBtn').addEventListener('click', () => {
             this.toggleGroupsList();
+        });
+
+        // Auto Greeter toggle button
+        document.getElementById('autoGreeterToggleBtn').addEventListener('click', () => {
+            this.toggleAutoGreeter();
         });
 
         // Radar stats toggle button
@@ -3876,6 +3882,23 @@ class RadegastWebClient {
         }
     }
 
+    toggleAutoGreeter() {
+        const autoGreeterCardBody = document.getElementById('autoGreeterCardBody');
+        const toggleIcon = document.getElementById('autoGreeterToggleIcon');
+        
+        if (autoGreeterCardBody.style.display === 'none') {
+            // Show the auto greeter
+            autoGreeterCardBody.style.display = 'block';
+            toggleIcon.className = 'fas fa-chevron-up';
+            localStorage.setItem('autoGreeterCollapsed', 'false');
+        } else {
+            // Hide the auto greeter
+            autoGreeterCardBody.style.display = 'none';
+            toggleIcon.className = 'fas fa-chevron-down';
+            localStorage.setItem('autoGreeterCollapsed', 'true');
+        }
+    }
+
     initializeGroupsToggleState() {
         // Restore the toggle state from localStorage
         const isCollapsed = localStorage.getItem('groupsListCollapsed') === 'true';
@@ -3887,6 +3910,21 @@ class RadegastWebClient {
             toggleIcon.className = 'fas fa-chevron-down';
         } else {
             groupsCardBody.style.display = 'block';
+            toggleIcon.className = 'fas fa-chevron-up';
+        }
+    }
+
+    initializeAutoGreeterToggleState() {
+        // Restore the toggle state from localStorage, default to collapsed
+        const isCollapsed = localStorage.getItem('autoGreeterCollapsed') !== 'false';
+        const autoGreeterCardBody = document.getElementById('autoGreeterCardBody');
+        const toggleIcon = document.getElementById('autoGreeterToggleIcon');
+        
+        if (isCollapsed) {
+            autoGreeterCardBody.style.display = 'none';
+            toggleIcon.className = 'fas fa-chevron-down';
+        } else {
+            autoGreeterCardBody.style.display = 'block';
             toggleIcon.className = 'fas fa-chevron-up';
         }
     }

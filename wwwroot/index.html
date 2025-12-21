@@ -178,48 +178,6 @@
                             <div id="radarStats" class="p-2 border-top text-muted" style="display: none;">
                                 <!-- Radar statistics will appear here -->
                             </div>
-                            
-                            <!-- Auto Greeter Controls -->
-                            <div class="border-top p-2">
-                                <h6 class="small text-muted mb-2">
-                                    <i class="fas fa-hand-wave me-1"></i>Auto Greeter
-                                </h6>
-                                
-                                <!-- Initial Greeting -->
-                                <div class="mb-2">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" id="autoGreeterEnabled">
-                                        <label class="form-check-label" for="autoGreeterEnabled">
-                                            <small>Greet new people (20m)</small>
-                                        </label>
-                                    </div>
-                                    <input type="text" id="autoGreeterMessage" class="form-control form-control-sm mt-1" 
-                                           placeholder="Greetings {name}, welcome!" maxlength="500" style="font-size: 0.75rem;">
-                                    <small class="text-muted" style="font-size: 0.65rem;">Use {name} for clickable link, {user} for first name, {displayname} for full name</small>
-                                </div>
-                                
-                                <!-- Return Greeting -->
-                                <div class="mb-2">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" id="autoGreeterReturnEnabled">
-                                        <label class="form-check-label" for="autoGreeterReturnEnabled">
-                                            <small>Greet returning people</small>
-                                        </label>
-                                    </div>
-                                    <input type="text" id="autoGreeterReturnMessage" class="form-control form-control-sm mt-1" 
-                                           placeholder="Welcome back {name}!" maxlength="500" style="font-size: 0.75rem;">
-                                    <div class="input-group input-group-sm mt-1">
-                                        <span class="input-group-text" style="font-size: 0.7rem;">Within</span>
-                                        <input type="number" id="autoGreeterReturnTimeHours" class="form-control" 
-                                               min="1" max="24" value="3" style="font-size: 0.75rem;">
-                                        <span class="input-group-text" style="font-size: 0.7rem;">hours</span>
-                                    </div>
-                                </div>
-                                
-                                <button id="saveAutoGreeterBtn" class="btn btn-primary btn-sm w-100">
-                                    <i class="fas fa-save me-1"></i>Save Greeter Settings
-                                </button>
-                            </div>
                         </div>
                     </div>
 
@@ -235,6 +193,52 @@
                                     <p class="small">Connect to see region details</p>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Auto Greeter Panel -->
+                    <div class="card mt-3" id="autoGreeterPanel">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0"><i class="fas fa-hand-wave me-2"></i>Auto Greeter</h6>
+                            <button id="autoGreeterToggleBtn" class="btn btn-sm btn-outline-secondary" type="button" title="Toggle Auto Greeter">
+                                <i id="autoGreeterToggleIcon" class="fas fa-chevron-down"></i>
+                            </button>
+                        </div>
+                        <div class="card-body p-2" id="autoGreeterCardBody" style="display: none;">
+                            <!-- Initial Greeting -->
+                            <div class="mb-2">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="autoGreeterEnabled">
+                                    <label class="form-check-label" for="autoGreeterEnabled">
+                                        <small>Greet new people (20m)</small>
+                                    </label>
+                                </div>
+                                <input type="text" id="autoGreeterMessage" class="form-control form-control-sm mt-1" 
+                                       placeholder="Greetings {name}, welcome!" maxlength="500" style="font-size: 0.75rem;">
+                                <small class="text-muted" style="font-size: 0.65rem;">Use {name} for clickable link, {user} for first name, {displayname} for full name</small>
+                            </div>
+                            
+                            <!-- Return Greeting -->
+                            <div class="mb-2">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="autoGreeterReturnEnabled">
+                                    <label class="form-check-label" for="autoGreeterReturnEnabled">
+                                        <small>Greet returning people</small>
+                                    </label>
+                                </div>
+                                <input type="text" id="autoGreeterReturnMessage" class="form-control form-control-sm mt-1" 
+                                       placeholder="Welcome back {name}!" maxlength="500" style="font-size: 0.75rem;">
+                                <div class="input-group input-group-sm mt-1">
+                                    <span class="input-group-text" style="font-size: 0.7rem;">Within</span>
+                                    <input type="number" id="autoGreeterReturnTimeHours" class="form-control" 
+                                           min="1" max="24" value="3" style="font-size: 0.75rem;">
+                                    <span class="input-group-text" style="font-size: 0.7rem;">hours</span>
+                                </div>
+                            </div>
+                            
+                            <button id="saveAutoGreeterBtn" class="btn btn-primary btn-sm w-100">
+                                <i class="fas fa-save me-1"></i>Save Greeter Settings
+                            </button>
                         </div>
                     </div>
 
