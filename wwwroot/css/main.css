@@ -339,6 +339,39 @@ a {
     color: #adb5bd !important;
 }
 
+/* Modal z-index hierarchy - ensure script dialogs appear above attachment window */
+#scriptDialogModal {
+    z-index: 1060 !important;
+}
+
+#scriptDialogModal ~ .modal-backdrop {
+    z-index: 1055 !important;
+}
+
+#scriptPermissionModal {
+    z-index: 1060 !important;
+}
+
+#scriptPermissionModal ~ .modal-backdrop {
+    z-index: 1055 !important;
+}
+
+#interactiveNoticeModal {
+    z-index: 1060 !important;
+}
+
+#interactiveNoticeModal ~ .modal-backdrop {
+    z-index: 1055 !important;
+}
+
+#attachmentsModal {
+    z-index: 1050 !important;
+}
+
+#attachmentsModal ~ .modal-backdrop {
+    z-index: 1045 !important;
+}
+
 /* Dark mode toggle button animation */
 #darkModeToggle {
     transition: all 0.3s ease;
