@@ -249,5 +249,123 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, new { error = "Internal server error" });
             }
         }
+
+        /// <summary>
+        /// Get the current parcel music URL
+        /// </summary>
+        /// <param name="accountId">The account ID</param>
+        /// <returns>Current music URL from the parcel</returns>
+        [HttpGet("{accountId}/music")]
+        public ActionResult<object> GetParcelMusicUrl(Guid accountId)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null || !instance.IsConnected)
+                {
+                    return BadRequest(new { error = "Account not connected" });
+                }
+
+                var client = instance.Client;
+                var currentSim = client.Network.CurrentSim;
+                
+                if (currentSim == null)
+                {
+                    return BadRequest(new { error = "No current region" });
+                }
+
+                // Get the parcel at the avatar's current position
+                var parcel = currentSim.Parcels.FirstOrDefault(p => p.Value.LocalID == client.Parcels.GetParcelLocalID(currentSim, client.Self.SimPosition));
+                var musicUrl = parcel.Value?.MusicURL ?? string.Empty;
+
+                return Ok(new { musicUrl = musicUrl });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting parcel music URL for account {AccountId}", accountId);
+                return StatusCode(500, new { error = "Internal server error" });
+            }
+        }
+
+        /// <summary>
+        /// Set the parcel music URL (requires parcel permissions)
+        /// </summary>
+        /// <param name="accountId">The account ID</param>
+        /// <param name="request">Music URL to set</param>
+        /// <returns>Success or failure result</returns>
+        [HttpPost("{accountId}/music")]
+        public ActionResult<object> SetParcelMusicUrl(Guid accountId, [FromBody] SetMusicUrlRequest request)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null || !instance.IsConnected)
+                {
+                    return BadRequest(new { error = "Account not connected" });
+                }
+
+                var client = instance.Client;
+                var currentSim = client.Network.CurrentSim;
+                
+                if (currentSim == null)
+                {
+                    return BadRequest(new { error = "No current region" });
+                }
+
+                // TODO: Implement parcel music URL update
+                // The LibreMetaverse API for updating parcel properties needs to be researched further
+                // For now, return not implemented status
+                return StatusCode(501, new { error = "Music URL update not yet implemented", message = "This feature requires additional LibreMetaverse API research" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error setting parcel music URL for account {AccountId}", accountId);
+                return StatusCode(500, new { error = "Internal server error", message = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Restart the current region (requires Estate Manager or higher permissions)
+        /// </summary>
+        /// <param name="accountId">The account ID</param>
+        /// <returns>Success or failure result</returns>
+        [HttpPost("{accountId}/restart")]
+        public ActionResult<object> RestartRegion(Guid accountId)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null || !instance.IsConnected)
+                {
+                    return BadRequest(new { error = "Account not connected" });
+                }
+
+                var client = instance.Client;
+                var currentSim = client.Network.CurrentSim;
+                
+                if (currentSim == null)
+                {
+                    return BadRequest(new { error = "No current region" });
+                }
+
+                // Request region restart - this will only work if the user has Estate Manager or Owner permissions
+                // LibreMetaverse's EstateTools.RestartRegion() sends the appropriate packet
+                client.Estate.RestartRegion();
+
+                _logger.LogInformation("Region restart requested for account {AccountId} in region {RegionName}", accountId, currentSim.Name);
+
+                return Ok(new { success = true, message = "Region restart request sent. The region will restart shortly if you have the required permissions." });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error restarting region for account {AccountId}", accountId);
+                return StatusCode(500, new { error = "Internal server error", message = ex.Message });
+            }
+        }
+    }
+
+    public class SetMusicUrlRequest
+    {
+        public string? MusicUrl { get; set; }
     }
 }

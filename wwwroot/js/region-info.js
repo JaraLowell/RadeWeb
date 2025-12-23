@@ -15,7 +15,12 @@ class RegionInfoPanel {
             <div class="region-info-panel" style="display: none;">
                 <div class="region-header">
                     <h3>Region Information</h3>
-                    <button class="close-btn" aria-label="Close">&times;</button>
+                    <div class="header-buttons">
+                        <button class="btn btn-sm btn-warning restart-region-btn" type="button" title="Restart Region (requires Estate Manager permissions)">
+                            <i class="fas fa-sync-alt me-1"></i>Restart Region
+                        </button>
+                        <button class="close-btn" aria-label="Close">&times;</button>
+                    </div>
                 </div>
                 
                 <div class="region-content">
@@ -161,6 +166,32 @@ class RegionInfoPanel {
                             </div>
                         </div>
                     </div>
+
+                    <!-- Media Section -->
+                    <div class="region-section">
+                        <h4>Parcel Media</h4>
+                        <div class="media-controls">
+                            <div class="form-group mb-2">
+                                <label for="currentMusicUrl" class="form-label small">Current Music URL:</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control music-url" id="currentMusicUrl" readonly />
+                                    <button class="btn btn-outline-secondary btn-sm refresh-music-btn" type="button" title="Refresh">
+                                        <i class="fas fa-sync-alt"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label for="newMusicUrl" class="form-label small">Set New Music URL:</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control" id="newMusicUrl" placeholder="Enter music stream URL" />
+                                    <button class="btn btn-primary btn-sm set-music-btn" type="button">
+                                        <i class="fas fa-music me-1"></i>Set URL
+                                    </button>
+                                </div>
+                                <small class="text-muted">Note: You need appropriate parcel permissions to set the music URL</small>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         `;
@@ -171,11 +202,37 @@ class RegionInfoPanel {
         const closeBtn = this.container.querySelector('.close-btn');
         closeBtn.addEventListener('click', () => this.hide());
 
+        // Restart region button
+        const restartBtn = this.container.querySelector('.restart-region-btn');
+        restartBtn.addEventListener('click', () => this.restartRegion());
+
+        // Music URL refresh button
+        const refreshMusicBtn = this.container.querySelector('.refresh-music-btn');
+        refreshMusicBtn.addEventListener('click', () => this.refreshMusicUrl());
+
+        // Set music URL button
+        const setMusicBtn = this.container.querySelector('.set-music-btn');
+        setMusicBtn.addEventListener('click', () => this.setMusicUrl());
+
+        // Enter key in music URL input
+        const newMusicUrlInput = this.container.querySelector('#newMusicUrl');
+        newMusicUrlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this.setMusicUrl();
+            }
+        });
+
         // Subscribe to SignalR events
         if (window.radegastConnection) {
             window.radegastConnection.on('RegionStatsUpdated', (stats) => {
                 if (this.isVisible && stats.accountId === this.currentAccountId) {
                     this.updateDisplay(stats);
+                }
+            });
+
+            window.radegastConnection.on('ParcelMusicUrlUpdated', (data) => {
+                if (this.isVisible && data.accountId === this.currentAccountId) {
+                    this.updateMusicUrl(data.musicUrl);
                 }
             });
         }
@@ -190,11 +247,13 @@ class RegionInfoPanel {
 
         // Request initial data
         await this.refreshData();
+        await this.refreshMusicUrl();
 
         // Start periodic refresh for REST API fallback (every 5 seconds)
         this.updateInterval = setInterval(() => {
             if (this.isVisible) {
                 this.refreshData();
+                this.refreshMusicUrl();
             }
         }, 5000);
     }
@@ -307,6 +366,110 @@ class RegionInfoPanel {
             return '-';
         }
         return Number(value).toFixed(decimals);
+    }
+
+    async refreshMusicUrl() {
+        if (!this.currentAccountId) return;
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/region/${this.currentAccountId}/music`);
+            if (response.ok) {
+                const data = await response.json();
+                this.updateMusicUrl(data.musicUrl);
+            } else {
+                console.error('Failed to fetch music URL');
+            }
+        } catch (error) {
+            console.error('Error fetching music URL:', error);
+        }
+    }
+
+    async setMusicUrl() {
+        if (!this.currentAccountId) return;
+
+        const newMusicUrlInput = this.container.querySelector('#newMusicUrl');
+        const newUrl = newMusicUrlInput.value.trim();
+
+        if (!newUrl) {
+            alert('Please enter a music URL');
+            return;
+        }
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/region/${this.currentAccountId}/music`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ musicUrl: newUrl })
+                }
+            );
+
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                    alert('Music URL set successfully');
+                    this.updateMusicUrl(newUrl);
+                    newMusicUrlInput.value = '';
+                    // Refresh to get the actual current URL from server
+                    await this.refreshMusicUrl();
+                } else {
+                    alert(result.message || 'Failed to set music URL. You may not have permissions.');
+                }
+            } else {
+                const error = await response.json();
+                alert(error.error || 'Failed to set music URL');
+            }
+        } catch (error) {
+            console.error('Error setting music URL:', error);
+            alert('Error setting music URL: ' + error.message);
+        }
+    }
+
+    updateMusicUrl(url) {
+        const musicUrlInput = this.container.querySelector('#currentMusicUrl');
+        if (musicUrlInput) {
+            musicUrlInput.value = url || '(no music stream)';
+        }
+    }
+
+    async restartRegion() {
+        if (!this.currentAccountId) return;
+
+        const regionName = this.container.querySelector('.region-name')?.textContent || 'this region';
+        
+        if (!confirm(`Do you want to restart region ${regionName}?\n\nNote: This requires Estate Manager or higher permissions.`)) {
+            return;
+        }
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/region/${this.currentAccountId}/restart`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                    alert('Region restart request sent successfully. The region will restart shortly.');
+                } else {
+                    alert(result.message || 'Failed to restart region. You may not have the required permissions.');
+                }
+            } else {
+                const error = await response.json();
+                alert(error.error || 'Failed to restart region');
+            }
+        } catch (error) {
+            console.error('Error restarting region:', error);
+            alert('Error restarting region: ' + error.message);
+        }
     }
 }
 
