@@ -95,8 +95,7 @@ namespace RadegastWeb.Services
                 // Skip all processing if both greeting features are disabled
                 if (!account.AutoGreeterEnabled && !account.AutoGreeterReturnEnabled)
                 {
-                    // Still update last seen even if greeter is disabled (for tracking purposes)
-                    UpdateLastSeen(accountId, avatarId);
+                    // Don't populate dictionaries when auto-greeter is disabled
                     return;
                 }
                 
