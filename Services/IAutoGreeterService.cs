@@ -64,5 +64,11 @@ namespace RadegastWeb.Services
         /// <param name="accountId">Account ID</param>
         /// <param name="currentNearbyAvatarIds">List of currently nearby avatar UUIDs</param>
         void DetectDepartures(Guid accountId, IEnumerable<string> currentNearbyAvatarIds);
+        
+        /// <summary>
+        /// Clean up all tracking data for an account (called on logout/disconnect)
+        /// </summary>
+        /// <param name="accountId">Account ID</param>
+        void CleanupAccount(Guid accountId);
     }
 }

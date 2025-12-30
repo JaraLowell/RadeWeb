@@ -341,6 +341,7 @@ namespace RadegastWeb.Services
         
         /// <summary>
         /// Clear greeted avatars for an account (e.g., on region change)
+        /// This only clears the inner dictionaries, keeping the account keys for potential re-use
         /// </summary>
         public void ClearGreetedAvatars(Guid accountId)
         {
@@ -373,11 +374,20 @@ namespace RadegastWeb.Services
         
         /// <summary>
         /// Clean up old avatar tracking data
+        /// Only processes if we have tracking data for this account (i.e., auto-greet is/was enabled)
         /// </summary>
         public async Task CleanupOldTrackingDataAsync(Guid accountId)
         {
             try
             {
+                // Quick check: if account has no tracking data, skip entirely
+                if (!_avatarLastSeen.ContainsKey(accountId) && 
+                    !_avatarDepartures.ContainsKey(accountId) && 
+                    !_lastGreetingTime.ContainsKey(accountId))
+                {
+                    return; // No tracking data for this account - auto-greet likely disabled
+                }
+                
                 // Get account settings to use proper return time window
                 using var dbContext = await _dbContextFactory.CreateDbContextAsync();
                 var account = await dbContext.Accounts.FindAsync(accountId);
@@ -449,6 +459,7 @@ namespace RadegastWeb.Services
         
         /// <summary>
         /// Detect avatars that have left by comparing current nearby list with tracked avatars
+        /// Only processes if we have tracking data for this account (i.e., auto-greet is/was enabled)
         /// </summary>
         public void DetectDepartures(Guid accountId, IEnumerable<string> currentNearbyAvatarIds)
         {
@@ -457,7 +468,13 @@ namespace RadegastWeb.Services
                 // Get the list of avatars we're currently tracking via last seen
                 if (!_avatarLastSeen.TryGetValue(accountId, out var accountLastSeen))
                 {
-                    return; // No avatars tracked for this account
+                    return; // No avatars tracked for this account - auto-greet likely disabled
+                }
+                
+                // If the dictionary is empty, nothing to track
+                if (accountLastSeen.Count == 0)
+                {
+                    return;
                 }
                 
                 var currentSet = new HashSet<string>(currentNearbyAvatarIds);
@@ -477,6 +494,27 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error detecting departures for account {AccountId}", accountId);
+            }
+        }
+        
+        /// <summary>
+        /// Clean up all tracking data for an account (called on logout/disconnect)
+        /// This completely removes the account from all tracking dictionaries
+        /// </summary>
+        public void CleanupAccount(Guid accountId)
+        {
+            try
+            {
+                // Remove the account entirely from all tracking dictionaries
+                _lastGreetingTime.TryRemove(accountId, out _);
+                _avatarLastSeen.TryRemove(accountId, out _);
+                _avatarDepartures.TryRemove(accountId, out _);
+                
+                _logger.LogInformation("Cleaned up all auto-greeter tracking data for account {AccountId}", accountId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleaning up account {AccountId} from auto-greeter", accountId);
             }
         }
     }

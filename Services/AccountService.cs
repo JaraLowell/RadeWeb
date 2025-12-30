@@ -645,6 +645,18 @@ namespace RadegastWeb.Services
                     _logger.LogError(ex, "Failed to stop region stats updates for account {AccountId}", id);
                 }
                 
+                // Cleanup auto-greeter tracking data
+                try
+                {
+                    var autoGreeterService = _serviceProvider.GetRequiredService<IAutoGreeterService>();
+                    autoGreeterService.CleanupAccount(id);
+                    _logger.LogInformation("Cleaned up auto-greeter tracking for account {AccountId}", id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to cleanup auto-greeter tracking for account {AccountId}", id);
+                }
+                
                 // Unregister account from periodic display name processing
                 try
                 {
