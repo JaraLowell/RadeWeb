@@ -723,6 +723,15 @@ namespace RadegastWeb.Core
 
             try
             {
+                // CRITICAL: Prevent HTML-formatted messages from being sent to Second Life
+                // HTML tags are for web display only and will appear as literal text in-world
+                if (message.Contains("<a href=") || message.Contains("</a>") || message.Contains("<span") || message.Contains("</span>"))
+                {
+                    _logger.LogWarning("Attempted to send HTML-formatted message to group {GroupId} - HTML is not supported in Second Life. Message blocked: {Message}", 
+                        groupId, message.Length > 100 ? message.Substring(0, 100) + "..." : message);
+                    return false;
+                }
+
                 if (!UUID.TryParse(groupId, out UUID groupUUID))
                 {
                     _logger.LogWarning("Invalid group UUID format: {GroupId}", groupId);
@@ -2648,6 +2657,13 @@ namespace RadegastWeb.Core
             // DEBUG: Log all incoming IM details to troubleshoot IM relay
             _logger.LogDebug("INCOMING IM DEBUG - Dialog: {Dialog}, FromAgent: {FromAgent} ({FromAgentID}), IMSessionID: {IMSessionID}, Message: {Message}", 
                 e.IM.Dialog, e.IM.FromAgentName, e.IM.FromAgentID, e.IM.IMSessionID, e.IM.Message);
+            
+            // Skip messages from self to avoid duplicate echoes (Second Life echoes back group messages to sender)
+            if (e.IM.FromAgentID == _client.Self.AgentID)
+            {
+                _logger.LogDebug("Skipping self-echo message from {FromAgent} in Self_IM handler", e.IM.FromAgentName);
+                return;
+            }
             
             // First, check if this is a notice that needs special handling
             if (e.IM.Dialog == InstantMessageDialog.GroupNotice ||
