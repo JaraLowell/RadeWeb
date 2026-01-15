@@ -198,9 +198,8 @@ For issues and documentation, visit: https://github.com/JaraLowell/RadeWeb
         $tarPath = Join-Path $outputDir $tarFileName
         if (Get-Command tar -ErrorAction SilentlyContinue) {
             Push-Location $publishDir
-            tar -czf $tarFileName *
+            tar -czf $tarPath *
             Pop-Location
-            Move-Item (Join-Path $publishDir $tarFileName) $outputDir -Force
         } else {
             Write-Warning "tar not available. Creating zip instead of tar.gz for Linux."
             $zipPath = Join-Path $outputDir "$archiveName.zip"
