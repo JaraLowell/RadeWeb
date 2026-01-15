@@ -5,6 +5,11 @@ class RegionInfoPanel {
         this.currentAccountId = null;
         this.updateInterval = null;
         this.isVisible = false;
+        this.signalrSubscribed = false;
+        
+        // Store SignalR event handler references so we can clean them up
+        this.regionStatsHandler = null;
+        this.musicUrlHandler = null;
         
         this.createUI();
         this.bindEvents();
@@ -222,20 +227,57 @@ class RegionInfoPanel {
             }
         });
 
-        // Subscribe to SignalR events
-        if (window.radegastConnection) {
-            window.radegastConnection.on('RegionStatsUpdated', (stats) => {
-                if (this.isVisible && stats.accountId === this.currentAccountId) {
-                    this.updateDisplay(stats);
-                }
-            });
+        // Subscribe to SignalR events if connection is ready
+        this.subscribeToSignalREvents();
+    }
 
-            window.radegastConnection.on('ParcelMusicUrlUpdated', (data) => {
-                if (this.isVisible && data.accountId === this.currentAccountId) {
-                    this.updateMusicUrl(data.musicUrl);
-                }
-            });
+    subscribeToSignalREvents() {
+        // Only subscribe once
+        if (this.signalrSubscribed) return;
+        
+        // Wait for connection to be available
+        if (!window.radegastConnection) {
+            console.log('RegionInfoPanel: SignalR connection not yet available, will retry...');
+            return;
         }
+
+        console.log('RegionInfoPanel: Subscribing to SignalR events');
+        this.signalrSubscribed = true;
+
+        // Store handler references for cleanup
+        this.regionStatsHandler = (stats) => {
+            if (this.isVisible && stats.accountId === this.currentAccountId) {
+                this.updateDisplay(stats);
+            }
+        };
+
+        this.musicUrlHandler = (data) => {
+            if (this.isVisible && data.accountId === this.currentAccountId) {
+                this.updateMusicUrl(data.musicUrl);
+            }
+        };
+
+        window.radegastConnection.on('RegionStatsUpdated', this.regionStatsHandler);
+        window.radegastConnection.on('ParcelMusicUrlUpdated', this.musicUrlHandler);
+    }
+
+    unsubscribeFromSignalREvents() {
+        if (!this.signalrSubscribed || !window.radegastConnection) return;
+
+        console.log('RegionInfoPanel: Unsubscribing from SignalR events to prevent memory leaks');
+        
+        // Remove event handlers to prevent memory leaks
+        if (this.regionStatsHandler) {
+            window.radegastConnection.off('RegionStatsUpdated', this.regionStatsHandler);
+            this.regionStatsHandler = null;
+        }
+
+        if (this.musicUrlHandler) {
+            window.radegastConnection.off('ParcelMusicUrlUpdated', this.musicUrlHandler);
+            this.musicUrlHandler = null;
+        }
+
+        this.signalrSubscribed = false;
     }
 
     async show(accountId) {
@@ -244,6 +286,9 @@ class RegionInfoPanel {
         
         const panel = this.container.querySelector('.region-info-panel');
         panel.style.display = 'block';
+
+        // Ensure SignalR events are subscribed (in case connection wasn't available during initialization)
+        this.subscribeToSignalREvents();
 
         // Request initial data
         await this.refreshData();
@@ -263,10 +308,22 @@ class RegionInfoPanel {
         const panel = this.container.querySelector('.region-info-panel');
         panel.style.display = 'none';
 
+        // Clean up interval timer
         if (this.updateInterval) {
             clearInterval(this.updateInterval);
             this.updateInterval = null;
         }
+
+        // MEMORY FIX: Unsubscribe from SignalR events to prevent memory leaks
+        // Without this, event handlers accumulate every time the panel is shown
+        this.unsubscribeFromSignalREvents();
+    }
+
+    cleanup() {
+        console.log('RegionInfoPanel: Cleaning up resources');
+        this.hide();
+        this.unsubscribeFromSignalREvents();
+        this.currentAccountId = null;
     }
 
     async refreshData() {

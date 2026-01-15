@@ -14,10 +14,11 @@ namespace RadegastWeb.Hubs
         private readonly IScriptDialogService _scriptDialogService;
         private readonly ITeleportRequestService _teleportRequestService;
         private readonly IConnectionTrackingService _connectionTrackingService;
+        private readonly IRegionInfoService _regionInfoService;
         private readonly ILogger<RadegastHub> _logger;
         private readonly IHubContext<RadegastHub, IRadegastHubClient> _hubContext;
 
-        public RadegastHub(IAccountService accountService, IChatHistoryService chatHistoryService, IPresenceService presenceService, IAuthenticationService authService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, ILogger<RadegastHub> logger, IHubContext<RadegastHub, IRadegastHubClient> hubContext)
+        public RadegastHub(IAccountService accountService, IChatHistoryService chatHistoryService, IPresenceService presenceService, IAuthenticationService authService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IRegionInfoService regionInfoService, ILogger<RadegastHub> logger, IHubContext<RadegastHub, IRadegastHubClient> hubContext)
         {
             _accountService = accountService;
             _chatHistoryService = chatHistoryService;
@@ -26,6 +27,7 @@ namespace RadegastWeb.Hubs
             _scriptDialogService = scriptDialogService;
             _teleportRequestService = teleportRequestService;
             _connectionTrackingService = connectionTrackingService;
+            _regionInfoService = regionInfoService;
             _logger = logger;
             _hubContext = hubContext;
         }
@@ -2037,6 +2039,10 @@ namespace RadegastWeb.Hubs
                 _logger.LogInformation("Client disconnected: {ConnectionId}", connectionId);
             }
             
+            // MEMORY FIX: Get accounts associated with this connection BEFORE removing it
+            // so we can check if we need to stop services for accounts with no remaining connections
+            var affectedAccounts = _connectionTrackingService.GetAllConnectionAccounts(connectionId).ToList();
+            
             // Clean up connection tracking with error handling - use force removal to ensure cleanup
             try
             {
@@ -2045,6 +2051,30 @@ namespace RadegastWeb.Hubs
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error cleaning up connection tracking for {ConnectionId}", connectionId);
+            }
+            
+            // MEMORY FIX: Stop RegionInfoService periodic updates for accounts with no remaining connections
+            // This prevents timers from running and broadcasting to empty SignalR groups
+            foreach (var accountId in affectedAccounts)
+            {
+                try
+                {
+                    var remainingConnections = _connectionTrackingService.GetConnectionCount(accountId);
+                    if (remainingConnections == 0)
+                    {
+                        _logger.LogInformation("No remaining connections for account {AccountId}, stopping region stats updates", accountId);
+                        await _regionInfoService.StopPeriodicUpdatesAsync(accountId);
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Account {AccountId} still has {Count} active connections, keeping region stats updates active", 
+                            accountId, remainingConnections);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error stopping region stats for account {AccountId} on disconnect", accountId);
+                }
             }
             
             // Handle browser close event (automatic status changes disabled)

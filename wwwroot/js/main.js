@@ -4389,6 +4389,11 @@ class RadegastWebClient {
         // Stop avatar refresh
         this.stopAvatarRefresh();
         
+        // MEMORY FIX: Clean up region info panel to remove SignalR event handlers
+        if (window.regionInfoPanel) {
+            window.regionInfoPanel.cleanup();
+        }
+        
         console.log("Cleanup process completed");
     }
 
@@ -5792,6 +5797,7 @@ document.addEventListener('DOMContentLoaded', () => {
     radegastClient = new RadegastWebClient();
     // Make it globally available for other components
     window.radegastClient = radegastClient;
+    window.radegastConnection = radegastClient.connection;
     
     // Expose debug methods globally for console debugging
     window.debugAccountSwitching = (accountId) => radegastClient.debugAccountSwitching(accountId);
