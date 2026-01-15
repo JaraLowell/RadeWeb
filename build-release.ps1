@@ -194,12 +194,13 @@ For issues and documentation, visit: https://github.com/JaraLowell/RadeWeb
         }
     } else {
         # Create tar.gz for Linux
-        $tarPath = Join-Path $outputDir "$archiveName.tar.gz"
+        $tarFileName = "$archiveName.tar.gz"
+        $tarPath = Join-Path $outputDir $tarFileName
         if (Get-Command tar -ErrorAction SilentlyContinue) {
             Push-Location $publishDir
-            tar -czf $tarPath *
+            tar -czf $tarFileName *
             Pop-Location
-            Move-Item (Join-Path $publishDir $tarPath) $outputDir -Force
+            Move-Item (Join-Path $publishDir $tarFileName) $outputDir -Force
         } else {
             Write-Warning "tar not available. Creating zip instead of tar.gz for Linux."
             $zipPath = Join-Path $outputDir "$archiveName.zip"
