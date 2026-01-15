@@ -154,8 +154,13 @@ namespace RadegastWeb.Services
                 // Load cache on startup
                 await LoadCacheAsync();
                 
-                // Start periodic processing timer
+                // Start periodic processing timer (for refresh)
                 _periodicTimer = new Timer(ProcessPeriodicRefresh, null, _periodicInterval, _periodicInterval);
+                
+                // Start cleanup timer to prevent unbounded dictionary growth (runs every 10 minutes)
+                var cleanupTimer = new Timer(CleanupTrackingDictionaries, null, 
+                    TimeSpan.FromMinutes(10), 
+                    TimeSpan.FromMinutes(10));
 
                 // Run both main queue and retry queue processing in parallel
                 await Task.WhenAll(
@@ -678,6 +683,44 @@ namespace RadegastWeb.Services
             if (expiredRequests.Count > 0)
             {
                 _logger.LogDebug("Cleaned up {Count} expired pending requests", expiredRequests.Count);
+            }
+        }
+
+        /// <summary>
+        /// Cleanup tracking dictionaries to prevent unbounded growth (memory leak prevention)
+        /// </summary>
+        private void CleanupTrackingDictionaries(object? state)
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                
+                // Cleanup expired pending requests (older than timeout)
+                CleanupExpiredPendingRequests(now);
+                
+                // Cleanup retry attempts for avatars that have succeeded or exceeded max retries
+                var expiredRetries = _retryAttempts
+                    .Where(kvp => kvp.Value >= MaxRetryAttempts)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+                
+                foreach (var avatarId in expiredRetries)
+                {
+                    _retryAttempts.TryRemove(avatarId, out _);
+                }
+                
+                if (expiredRetries.Count > 0)
+                {
+                    _logger.LogDebug("Cleaned up {Count} exceeded retry attempts", expiredRetries.Count);
+                }
+                
+                // Log dictionary sizes for monitoring
+                _logger.LogDebug("MasterDisplayNameService dictionary sizes: PendingRequests={PendingCount}, RetryAttempts={RetryCount}, GridClients={ClientCount}, RegisteredAccounts={AccountCount}",
+                    _pendingRequests.Count, _retryAttempts.Count, _gridClients.Count, _registeredAccounts.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during tracking dictionary cleanup in MasterDisplayNameService");
             }
         }
 

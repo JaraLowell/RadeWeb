@@ -69,6 +69,7 @@ namespace RadegastWeb.Core
         private readonly ConcurrentDictionary<string, ChatSessionDto> _chatSessions = new();
         private readonly ConcurrentDictionary<UUID, Group> _groups = new();
         private System.Threading.Timer? _displayNameRefreshTimer;
+        private System.Threading.Timer? _trackingDataCleanupTimer;
 
         public string AccountId => _accountId;
         public GridClient Client => _client;
@@ -143,6 +144,13 @@ namespace RadegastWeb.Core
                 5000, // Initial delay - 5 seconds
                 30000 // Refresh every 30 seconds
             );
+            
+            // Initialize cleanup timer for tracking dictionaries (runs every 15 minutes)
+            _trackingDataCleanupTimer = new System.Threading.Timer(
+                CleanupTrackingData, 
+                null, 
+                TimeSpan.FromMinutes(15), 
+                TimeSpan.FromMinutes(15));
             
             // Load groups cache when instance is created and populate the local groups dictionary
             _ = Task.Run(async () =>
@@ -5224,6 +5232,65 @@ namespace RadegastWeb.Core
 
         #endregion
 
+        /// <summary>
+        /// Cleanup tracking dictionaries that can grow unbounded
+        /// This prevents memory leaks from avatars that have left but still have tracking data
+        /// </summary>
+        private void CleanupTrackingData(object? state)
+        {
+            try
+            {
+                var cutoffTime = DateTime.UtcNow.AddMinutes(-30); // Clean entries older than 30 minutes
+                
+                // Cleanup recent name requests - remove old entries
+                var expiredNameRequests = _recentNameRequests
+                    .Where(kvp => kvp.Value < cutoffTime)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+                
+                foreach (var key in expiredNameRequests)
+                {
+                    _recentNameRequests.TryRemove(key, out _);
+                }
+                
+                // Cleanup proximity alerted avatars - remove avatars not in our current avatar lists
+                var knownAvatarIds = new HashSet<UUID>(
+                    _nearbyAvatars.Keys.Concat(_coarseLocationAvatars.Keys)
+                );
+                
+                var orphanedProximityAlerts = _proximityAlertedAvatars
+                    .Where(kvp => !knownAvatarIds.Contains(kvp.Key))
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+                
+                foreach (var key in orphanedProximityAlerts)
+                {
+                    _proximityAlertedAvatars.TryRemove(key, out _);
+                }
+                
+                // Cleanup previous avatar positions - remove avatars not in our current avatar lists
+                var orphanedPositions = _previousAvatarPositions
+                    .Where(kvp => !knownAvatarIds.Contains(kvp.Key))
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+                
+                foreach (var key in orphanedPositions)
+                {
+                    _previousAvatarPositions.TryRemove(key, out _);
+                }
+                
+                if (expiredNameRequests.Count > 0 || orphanedProximityAlerts.Count > 0 || orphanedPositions.Count > 0)
+                {
+                    _logger.LogDebug("Cleaned up tracking data for account {AccountId}: {NameRequests} name requests, {ProximityAlerts} proximity alerts, {Positions} positions",
+                        _accountId, expiredNameRequests.Count, orphanedProximityAlerts.Count, orphanedPositions.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error cleaning up tracking data for account {AccountId}", _accountId);
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -5235,6 +5302,10 @@ namespace RadegastWeb.Core
                 // Stop the display name refresh timer
                 _displayNameRefreshTimer?.Dispose();
                 _displayNameRefreshTimer = null;
+                
+                // Stop the tracking data cleanup timer
+                _trackingDataCleanupTimer?.Dispose();
+                _trackingDataCleanupTimer = null;
                 
                 // Clean up display name service resources
                 _displayNameService.CleanupAccount(Guid.Parse(_accountId));

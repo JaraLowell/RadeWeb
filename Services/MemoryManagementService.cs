@@ -20,8 +20,10 @@ namespace RadegastWeb.Services
         private readonly Timer _memoryMonitorTimer;
         private readonly object _cleanupLock = new();
         private DateTime _lastForceCleanup = DateTime.MinValue;
+        private DateTime _lastGCCompact = DateTime.MinValue;
         private const long MEMORY_THRESHOLD_MB = 1500; // Force cleanup at 1.5GB
         private const long MEMORY_WARNING_MB = 1200; // Warn at 1.2GB
+        private const long MEMORY_COMPACT_MB = 1800; // Compact at 1.8GB
         private volatile bool _disposed = false;
 
         public MemoryManagementService(ILogger<MemoryManagementService> logger, IServiceProvider serviceProvider)
@@ -75,6 +77,37 @@ namespace RadegastWeb.Services
         public void TriggerMemoryCleanupIfNeeded()
         {
             var currentMemoryMB = GetCurrentMemoryUsageMB();
+            
+            // Aggressive heap compaction for very high memory usage
+            if (currentMemoryMB > MEMORY_COMPACT_MB)
+            {
+                lock (_cleanupLock)
+                {
+                    // Prevent too frequent compaction (minimum 20 minutes between compactions)
+                    if (DateTime.UtcNow - _lastGCCompact < TimeSpan.FromMinutes(20))
+                    {
+                        _logger.LogDebug("Skipping heap compaction - too recent (last: {LastCompact})", _lastGCCompact);
+                    }
+                    else
+                    {
+                        _lastGCCompact = DateTime.UtcNow;
+                        _logger.LogWarning("Memory usage ({CurrentMB}MB) exceeds compaction threshold ({CompactMB}MB) - performing heap compaction",
+                            currentMemoryMB, MEMORY_COMPACT_MB);
+                        
+                        try
+                        {
+                            // Compact large object heap
+                            System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+                            ForceGarbageCollection();
+                            _logger.LogInformation("Heap compaction completed");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error during heap compaction");
+                        }
+                    }
+                }
+            }
             
             if (currentMemoryMB > MEMORY_THRESHOLD_MB)
             {
