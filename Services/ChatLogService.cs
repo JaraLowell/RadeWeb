@@ -14,13 +14,31 @@ namespace RadegastWeb.Services
         Task<string> ReadChatLogAsync(Guid accountId, string logFileName, int maxLines = 100);
     }
 
-    public class ChatLogService : IChatLogService
+    public class ChatLogService : IChatLogService, IDisposable
     {
         private readonly ILogger<ChatLogService> _logger;
         private readonly IDisplayNameService _displayNameService;
         private readonly IGroupService _groupService;
         private readonly string _dataRoot;
         private readonly SemaphoreSlim _fileLock = new(1, 1);
+        
+        // Cache for keeping log file handles open
+        private readonly Dictionary<string, CachedLogWriter> _logWriterCache = new();
+        private readonly System.Threading.Timer _cleanupTimer;
+        private readonly TimeSpan _inactivityTimeout = TimeSpan.FromMinutes(5);
+        private bool _disposed = false;
+
+        private class CachedLogWriter
+        {
+            public StreamWriter Writer { get; }
+            public DateTime LastAccessed { get; set; }
+            
+            public CachedLogWriter(StreamWriter writer)
+            {
+                Writer = writer;
+                LastAccessed = DateTime.UtcNow;
+            }
+        }
 
         public ChatLogService(
             ILogger<ChatLogService> logger, 
@@ -41,6 +59,14 @@ namespace RadegastWeb.Services
             {
                 Directory.CreateDirectory(_dataRoot);
             }
+            
+            // Start cleanup timer to close inactive log files every 2 minutes
+            _cleanupTimer = new System.Threading.Timer(
+                CleanupInactiveWriters, 
+                null, 
+                TimeSpan.FromMinutes(2), 
+                TimeSpan.FromMinutes(2)
+            );
         }
 
         public async Task LogChatMessageAsync(ChatMessageDto message)
@@ -316,13 +342,92 @@ namespace RadegastWeb.Services
             await _fileLock.WaitAsync();
             try
             {
-                using var writer = new StreamWriter(filePath, append: true, Encoding.UTF8);
-                await writer.WriteLineAsync(message);
-                await writer.FlushAsync();
+                // Try to get or create a cached writer
+                if (!_logWriterCache.TryGetValue(filePath, out var cachedWriter))
+                {
+                    // Create new writer for this log file
+                    var writer = new StreamWriter(filePath, append: true, Encoding.UTF8)
+                    {
+                        AutoFlush = true // Auto-flush to ensure data is written
+                    };
+                    cachedWriter = new CachedLogWriter(writer);
+                    _logWriterCache[filePath] = cachedWriter;
+                    
+                    _logger.LogDebug("Opened log file handle: {LogFile}", Path.GetFileName(filePath));
+                }
+                
+                // Update last accessed time
+                cachedWriter.LastAccessed = DateTime.UtcNow;
+                
+                // Write the message
+                await cachedWriter.Writer.WriteLineAsync(message);
             }
             finally
             {
                 _fileLock.Release();
+            }
+        }
+        
+        private void CleanupInactiveWriters(object? state)
+        {
+            if (_disposed) return;
+            
+            _fileLock.Wait();
+            try
+            {
+                var now = DateTime.UtcNow;
+                var inactiveFiles = _logWriterCache
+                    .Where(kvp => now - kvp.Value.LastAccessed > _inactivityTimeout)
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+                
+                foreach (var filePath in inactiveFiles)
+                {
+                    var cachedWriter = _logWriterCache[filePath];
+                    cachedWriter.Writer.Dispose();
+                    _logWriterCache.Remove(filePath);
+                    
+                    _logger.LogDebug("Closed inactive log file: {LogFile}", Path.GetFileName(filePath));
+                }
+                
+                if (inactiveFiles.Any())
+                {
+                    _logger.LogInformation("Closed {Count} inactive chat log file(s)", inactiveFiles.Count);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during chat log cleanup");
+            }
+            finally
+            {
+                _fileLock.Release();
+            }
+        }
+        
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            
+            _cleanupTimer?.Dispose();
+            
+            _fileLock.Wait();
+            try
+            {
+                // Close all open log writers
+                foreach (var cachedWriter in _logWriterCache.Values)
+                {
+                    cachedWriter.Writer.Dispose();
+                }
+                _logWriterCache.Clear();
+                
+                _logger.LogInformation("Disposed ChatLogService and closed all log files");
+            }
+            finally
+            {
+                _fileLock.Release();
+                _fileLock.Dispose();
             }
         }
 
