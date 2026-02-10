@@ -115,6 +115,50 @@ namespace RadegastWeb.Services
                     _logger.LogDebug("Stored new stats name for {AvatarId}", avatarId);
                 }
             }
+            catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException sqliteEx && 
+                                               sqliteEx.SqliteErrorCode == 19)
+            {
+                // UNIQUE constraint violation - another thread inserted the record
+                // Query the now-existing record and update it
+                try
+                {
+                    using var context = _dbContextFactory.CreateDbContext();
+                    var existing = await context.StatsDisplayNames
+                        .FirstOrDefaultAsync(sdn => sdn.AvatarId == avatarId);
+                    
+                    if (existing != null)
+                    {
+                        bool updated = false;
+                        
+                        if (IsNameBetter(displayName, existing.DisplayName))
+                        {
+                            existing.DisplayName = displayName;
+                            updated = true;
+                        }
+                        
+                        if (IsNameBetter(avatarName, existing.AvatarName))
+                        {
+                            existing.AvatarName = avatarName;
+                            updated = true;
+                        }
+                        
+                        if (updated)
+                        {
+                            existing.LastUpdated = DateTime.UtcNow;
+                            await context.SaveChangesAsync();
+                            _logger.LogDebug("Updated stats name for {AvatarId} after race condition", avatarId);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogWarning("UNIQUE constraint error for {AvatarId} but record not found on retry", avatarId);
+                    }
+                }
+                catch (Exception retryEx)
+                {
+                    _logger.LogError(retryEx, "Error updating stats name for {AvatarId} after race condition", avatarId);
+                }
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error storing stats name for {AvatarId}", avatarId);
