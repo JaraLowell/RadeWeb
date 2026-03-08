@@ -2454,6 +2454,9 @@ class RadegastWebClient {
                     editCustomGridDiv.classList.remove('d-none');
                 }
                 
+                // Load auto-relog settings
+                await this.loadAutoRelogSettings(accountId);
+                
                 // Show the modal
                 const modal = new bootstrap.Modal(document.getElementById('editAccountModal'));
                 modal.show();
@@ -2490,6 +2493,8 @@ class RadegastWebClient {
 
         try {
             this.showLoading(true);
+            
+            // Update account details
             const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${accountId}`, {
                 method: 'PUT',
                 headers: {
@@ -2498,14 +2503,35 @@ class RadegastWebClient {
                 body: JSON.stringify(account)
             });
 
-            if (response.ok) {
-                this.showAlert("Account updated successfully", "success");
-                bootstrap.Modal.getInstance(document.getElementById('editAccountModal')).hide();
-                await this.loadAccounts();
-            } else {
+            if (!response.ok) {
                 const error = await response.text();
                 this.showAlert("Failed to update account: " + error, "danger");
+                return;
             }
+            
+            // Update auto-relog settings
+            const autoRelogSettings = {
+                enabled: document.getElementById('editAutoRelogEnabled').checked,
+                minutes: parseInt(document.getElementById('editAutoRelogMinutes').value) || 30
+            };
+            
+            const relogResponse = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${accountId}/auto-relog`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(autoRelogSettings)
+            });
+            
+            if (!relogResponse.ok) {
+                const error = await relogResponse.text();
+                this.showAlert("Account updated but failed to save auto-relog settings: " + error, "warning");
+            } else {
+                this.showAlert("Account updated successfully", "success");
+            }
+            
+            bootstrap.Modal.getInstance(document.getElementById('editAccountModal')).hide();
+            await this.loadAccounts();
         } catch (error) {
             console.error("Error updating account:", error);
             this.showAlert("Error updating account", "danger");
@@ -5750,6 +5776,24 @@ class RadegastWebClient {
             }
         } catch (error) {
             console.error("Error loading auto-greeter config:", error);
+        }
+    }
+
+    async loadAutoRelogSettings(accountId) {
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${accountId}/auto-relog`);
+            if (response.ok) {
+                const settings = await response.json();
+                
+                // Update UI elements in edit modal
+                document.getElementById('editAutoRelogEnabled').checked = settings.enabled || false;
+                document.getElementById('editAutoRelogMinutes').value = settings.minutes || 30;
+            }
+        } catch (error) {
+            console.error("Error loading auto-relog settings:", error);
+            // Set defaults on error
+            document.getElementById('editAutoRelogEnabled').checked = false;
+            document.getElementById('editAutoRelogMinutes').value = 30;
         }
     }
 

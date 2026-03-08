@@ -36,6 +36,8 @@ namespace RadegastWeb.Services
         Task ResetAllAccountsToOfflineAsync();
         Task CleanupDisconnectedAccountsAsync();
         Task<bool> UpdateAutoGreeterSettingsAsync(Guid accountId, AutoGreeterSettingsDto settings);
+        Task<bool> UpdateAutoRelogSettingsAsync(Guid accountId, AutoRelogSettingsDto settings);
+        Task ProcessAutoRelogAsync();
     }
 
     public class AccountService : IAccountService, IDisposable
@@ -611,6 +613,14 @@ namespace RadegastWeb.Services
                     account.Status = "Offline";
                     account.CurrentRegion = null; // Clear region
                     
+                    // Set LastDisconnectTime for auto-relog if enabled
+                    if (account.AutoRelogEnabled)
+                    {
+                        account.LastDisconnectTime = DateTime.UtcNow;
+                        _logger.LogInformation("Account {AccountId} disconnected with auto-relog enabled. Will relog in {Minutes} minutes.", 
+                            id, account.AutoRelogMinutes);
+                    }
+                    
                     // Update the database
                     try
                     {
@@ -621,6 +631,10 @@ namespace RadegastWeb.Services
                             dbAccount.IsConnected = false;
                             dbAccount.Status = "Offline";
                             dbAccount.CurrentRegion = null; // Clear region in DB too
+                            if (account.AutoRelogEnabled)
+                            {
+                                dbAccount.LastDisconnectTime = account.LastDisconnectTime;
+                            }
                             await context.SaveChangesAsync();
                             _logger.LogInformation("Updated account {AccountId} to offline status in database", id);
                         }
@@ -1125,6 +1139,97 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error updating auto-greeter settings for account {AccountId}", accountId);
                 return false;
+            }
+        }
+
+        public async Task<bool> UpdateAutoRelogSettingsAsync(Guid accountId, AutoRelogSettingsDto settings)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<RadegastDbContext>();
+                
+                var account = await dbContext.Accounts.FindAsync(accountId);
+                if (account == null)
+                {
+                    _logger.LogWarning("Account {AccountId} not found for auto-relog update", accountId);
+                    return false;
+                }
+                
+                account.AutoRelogEnabled = settings.Enabled;
+                account.AutoRelogMinutes = settings.Minutes;
+                
+                await dbContext.SaveChangesAsync();
+                
+                // Update in-memory account
+                if (_accounts.TryGetValue(accountId, out var cachedAccount))
+                {
+                    cachedAccount.AutoRelogEnabled = settings.Enabled;
+                    cachedAccount.AutoRelogMinutes = settings.Minutes;
+                }
+                
+                _logger.LogInformation("Updated auto-relog settings for account {AccountId}: enabled={Enabled}, minutes={Minutes}", 
+                    accountId, settings.Enabled, settings.Minutes);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating auto-relog settings for account {AccountId}", accountId);
+                return false;
+            }
+        }
+
+        public async Task ProcessAutoRelogAsync()
+        {
+            try
+            {
+                var now = DateTime.UtcNow;
+                var accountsToRelog = _accounts.Values
+                    .Where(a => a.AutoRelogEnabled && 
+                                !a.IsConnected && 
+                                a.LastDisconnectTime.HasValue &&
+                                now.Subtract(a.LastDisconnectTime.Value).TotalMinutes >= a.AutoRelogMinutes)
+                    .ToList();
+
+                foreach (var account in accountsToRelog)
+                {
+                    try
+                    {
+                        _logger.LogInformation("Auto-relogging account {AccountId} ({DisplayName}) after {Minutes} minutes", 
+                            account.Id, account.DisplayName ?? $"{account.FirstName} {account.LastName}", account.AutoRelogMinutes);
+                        
+                        // Clear LastDisconnectTime to prevent repeated relog attempts
+                        account.LastDisconnectTime = null;
+                        
+                        // Update in database
+                        using var context = CreateDbContext();
+                        var dbAccount = await context.Accounts.FindAsync(account.Id);
+                        if (dbAccount != null)
+                        {
+                            dbAccount.LastDisconnectTime = null;
+                            await context.SaveChangesAsync();
+                        }
+                        
+                        // Attempt to login
+                        var loginSuccess = await LoginAccountAsync(account.Id);
+                        if (loginSuccess)
+                        {
+                            _logger.LogInformation("Successfully auto-relogged account {AccountId}", account.Id);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Failed to auto-relog account {AccountId}", account.Id);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error during auto-relog for account {AccountId}", account.Id);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing auto-relog");
             }
         }
     }

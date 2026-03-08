@@ -750,6 +750,58 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, "Internal server error");
             }
         }
+
+        /// <summary>
+        /// Update auto-relog settings for an account
+        /// </summary>
+        [HttpPost("{id}/auto-relog")]
+        public async Task<IActionResult> UpdateAutoRelog(Guid id, [FromBody] AutoRelogSettingsDto settings)
+        {
+            try
+            {
+                var updated = await _accountService.UpdateAutoRelogSettingsAsync(id, settings);
+                if (!updated)
+                {
+                    return NotFound(new { message = "Account not found" });
+                }
+
+                return Ok(new { message = "Auto-relog settings updated successfully", settings });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error updating auto-relog settings for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
+
+        /// <summary>
+        /// Get auto-relog settings for an account
+        /// </summary>
+        [HttpGet("{id}/auto-relog")]
+        public async Task<ActionResult<AutoRelogSettingsDto>> GetAutoRelog(Guid id)
+        {
+            try
+            {
+                var account = await _accountService.GetAccountAsync(id);
+                if (account == null)
+                {
+                    return NotFound(new { message = "Account not found" });
+                }
+
+                var settings = new AutoRelogSettingsDto
+                {
+                    Enabled = account.AutoRelogEnabled,
+                    Minutes = account.AutoRelogMinutes
+                };
+
+                return Ok(settings);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving auto-relog settings for account {AccountId}", id);
+                return StatusCode(500, "Internal server error");
+            }
+        }
     }
 
     public class ToggleAutoSitRequest

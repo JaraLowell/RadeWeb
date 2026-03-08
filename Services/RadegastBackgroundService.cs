@@ -70,6 +70,7 @@ namespace RadegastWeb.Services
                 var lastPeriodicRecording = DateTime.UtcNow;
                 var lastLibOpenMetaverseCleanup = DateTime.UtcNow;
                 var lastRegionStatsManagement = DateTime.UtcNow;
+                var lastAutoRelogCheck = DateTime.UtcNow;
 
                 while (!stoppingToken.IsCancellationRequested && !_isShuttingDown)
                 {
@@ -104,6 +105,13 @@ namespace RadegastWeb.Services
                         {
                             await ManageRegionStatsUpdatesAsync(stoppingToken);
                             lastRegionStatsManagement = now;
+                        }
+                        
+                        // Periodic auto-relog check (every 1 minute) to relog accounts after their configured delay
+                        if (now - lastAutoRelogCheck >= TimeSpan.FromMinutes(1))
+                        {
+                            await ProcessAutoRelogAsync(stoppingToken);
+                            lastAutoRelogCheck = now;
                         }
                         
                         // Periodic cleanup of disconnected accounts (every 5 minutes) to ensure proper status
@@ -1104,6 +1112,24 @@ namespace RadegastWeb.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during periodic cleanup of disconnected accounts");
+            }
+        }
+
+        /// <summary>
+        /// Process auto-relog for accounts that have been disconnected for the configured duration
+        /// </summary>
+        private async Task ProcessAutoRelogAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+                
+                await accountService.ProcessAutoRelogAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during auto-relog processing");
             }
         }
 

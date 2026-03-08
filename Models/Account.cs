@@ -50,6 +50,13 @@ namespace RadegastWeb.Models
         
         public int AutoGreeterReturnTimeHours { get; set; } = 3;
         
+        // Auto Relog settings
+        public bool AutoRelogEnabled { get; set; } = false;
+        
+        public int AutoRelogMinutes { get; set; } = 30;
+        
+        public DateTime? LastDisconnectTime { get; set; }
+        
         // Navigation properties
         public virtual ICollection<ChatMessage> ChatMessages { get; set; } = new List<ChatMessage>();
         public virtual ICollection<Notice> Notices { get; set; } = new List<Notice>();
