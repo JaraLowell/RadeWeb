@@ -63,25 +63,36 @@ RadegastWeb is a modern, web-based Second Life client inspired by the original R
    ```
 
 3. **Build the Project**
-   ```powershell
+   ```bash
    dotnet build RadeWeb.sln
    ```
 
-4. **Update Database** (if upgrading from older version)
-   ```powershell
-   ./update-database.ps1
+4. **Install Entity Framework Tools** (first time only)
+   ```bash
+   dotnet tool install --global dotnet-ef
+   export PATH="$PATH:$HOME/.dotnet/tools"
+   ```
+   Add to your `.bashrc` or `.bash_profile` to make it permanent:
+   ```bash
+   echo 'export PATH="$PATH:$HOME/.dotnet/tools"' >> ~/.bashrc
+   source ~/.bashrc
+   ```
+
+5. **Update Database** (if upgrading from older version)
+   ```bash
+   ./update-database.sh
    ```
    Or manually:
-   ```powershell
+   ```bash
    dotnet ef database update --project RadegastWeb.csproj
    ```
 
-5. **Run the Application**
-   ```powershell
+6. **Run the Application**
+   ```bash
    dotnet run
    ```
 
-6. **Open in Browser**
+7. **Open in Browser**
    - Main application: `http://localhost:15269`
    - Login page: `http://localhost:15269/login.html`
    - Statistics dashboard: `http://localhost:15269/stats.html`
@@ -453,12 +464,27 @@ dotnet ef database update
 
 #### Apply Database Migrations (for updates)
 When updating to a new version, apply any pending migrations:
-```powershell
+```bash
 # Windows
 ./update-database.ps1
 
 # Linux/macOS
 ./update-database.sh
+```
+
+**Linux/macOS First-Time Setup:**
+If you get "dotnet-ef does not exist" error, install EF tools:
+```bash
+dotnet tool install --global dotnet-ef
+export PATH="$PATH:$HOME/.dotnet/tools"
+# Make it permanent:
+echo 'export PATH="$PATH:$HOME/.dotnet/tools"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Then run the update script again, or manually:
+```bash
+dotnet ef database update --project RadegastWeb.csproj
 ```
 
 #### Database Troubleshooting Scripts

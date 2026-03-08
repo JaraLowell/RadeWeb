@@ -5,7 +5,7 @@
 echo "Updating RadeWeb database..."
 
 # Check if dotnet ef is installed
-if ! command -v dotnet-ef &> /dev/null; then
+if ! dotnet ef --version &> /dev/null; then
     echo "Entity Framework Core tools not found. Installing..."
     dotnet tool install --global dotnet-ef
     
@@ -13,6 +13,20 @@ if ! command -v dotnet-ef &> /dev/null; then
         echo "Failed to install Entity Framework Core tools!"
         exit 1
     fi
+    
+    # Add .NET tools to PATH for current session
+    export PATH="$PATH:$HOME/.dotnet/tools"
+    
+    # Verify installation
+    if ! dotnet ef --version &> /dev/null; then
+        echo "Entity Framework Core tools installed but not in PATH."
+        echo "Please add ~/.dotnet/tools to your PATH:"
+        echo "  export PATH=\"\$PATH:\$HOME/.dotnet/tools\""
+        echo "Or run: source ~/.bashrc (or ~/.bash_profile)"
+        exit 1
+    fi
+    
+    echo "Entity Framework Core tools installed successfully!"
 fi
 
 # Function to handle database migration conflicts
