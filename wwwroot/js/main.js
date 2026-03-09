@@ -2515,6 +2515,8 @@ class RadegastWebClient {
                 minutes: parseInt(document.getElementById('editAutoRelogMinutes').value) || 30
             };
             
+            console.log('Saving auto-relog settings:', autoRelogSettings);
+            
             const relogResponse = await window.authManager.makeAuthenticatedRequest(`/api/accounts/${accountId}/auto-relog`, {
                 method: 'POST',
                 headers: {

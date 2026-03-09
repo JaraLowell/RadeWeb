@@ -487,6 +487,16 @@ Then run the update script again, or manually:
 dotnet ef database update --project RadegastWeb.csproj
 ```
 
+**Auto-Relog Value Fix:**
+If you upgraded from an earlier version and auto-relog triggers immediately instead of waiting for the configured time, run:
+```bash
+# Linux/macOS
+./fix-auto-relog-values.sh
+
+# Or manually with sqlite3:
+sqlite3 ./data/radegast.db "UPDATE Accounts SET AutoRelogMinutes = 30 WHERE AutoRelogMinutes < 1;"
+```
+
 #### Database Troubleshooting Scripts
 
 **Quick Migration Fix** (for "table already exists" errors):

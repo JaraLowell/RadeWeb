@@ -616,6 +616,14 @@ namespace RadegastWeb.Services
                     // Set LastDisconnectTime for auto-relog if enabled
                     if (account.AutoRelogEnabled)
                     {
+                        // Safety check: ensure valid auto-relog minutes (minimum 20 minutes)
+                        if (account.AutoRelogMinutes < 1)
+                        {
+                            _logger.LogWarning("Account {AccountId} has auto-relog enabled but invalid minutes ({Minutes}). Defaulting to 20 minutes.", 
+                                id, account.AutoRelogMinutes);
+                            account.AutoRelogMinutes = 20;
+                        }
+                        
                         account.LastDisconnectTime = DateTime.UtcNow;
                         _logger.LogInformation("Account {AccountId} disconnected with auto-relog enabled. Will relog in {Minutes} minutes.", 
                             id, account.AutoRelogMinutes);
@@ -633,6 +641,8 @@ namespace RadegastWeb.Services
                             dbAccount.CurrentRegion = null; // Clear region in DB too
                             if (account.AutoRelogEnabled)
                             {
+                                // Also update the corrected AutoRelogMinutes in database
+                                dbAccount.AutoRelogMinutes = account.AutoRelogMinutes;
                                 dbAccount.LastDisconnectTime = account.LastDisconnectTime;
                             }
                             await context.SaveChangesAsync();
@@ -1146,6 +1156,9 @@ namespace RadegastWeb.Services
         {
             try
             {
+                _logger.LogDebug("Received auto-relog settings for account {AccountId}: enabled={Enabled}, minutes={Minutes}", 
+                    accountId, settings.Enabled, settings.Minutes);
+                
                 using var scope = _serviceProvider.CreateScope();
                 var dbContext = scope.ServiceProvider.GetRequiredService<RadegastDbContext>();
                 
@@ -1156,8 +1169,13 @@ namespace RadegastWeb.Services
                     return false;
                 }
                 
+                // Ensure minimum of 1 minute if enabled, otherwise use configured value
+                var minutes = settings.Enabled && settings.Minutes < 1 ? 30 : settings.Minutes;
+                
+                _logger.LogDebug("After validation - saving: enabled={Enabled}, minutes={Minutes}", settings.Enabled, minutes);
+                
                 account.AutoRelogEnabled = settings.Enabled;
-                account.AutoRelogMinutes = settings.Minutes;
+                account.AutoRelogMinutes = minutes;
                 
                 await dbContext.SaveChangesAsync();
                 
@@ -1165,11 +1183,11 @@ namespace RadegastWeb.Services
                 if (_accounts.TryGetValue(accountId, out var cachedAccount))
                 {
                     cachedAccount.AutoRelogEnabled = settings.Enabled;
-                    cachedAccount.AutoRelogMinutes = settings.Minutes;
+                    cachedAccount.AutoRelogMinutes = minutes;
                 }
                 
                 _logger.LogInformation("Updated auto-relog settings for account {AccountId}: enabled={Enabled}, minutes={Minutes}", 
-                    accountId, settings.Enabled, settings.Minutes);
+                    accountId, settings.Enabled, minutes);
                 return true;
             }
             catch (Exception ex)
@@ -1188,6 +1206,7 @@ namespace RadegastWeb.Services
                     .Where(a => a.AutoRelogEnabled && 
                                 !a.IsConnected && 
                                 a.LastDisconnectTime.HasValue &&
+                                a.AutoRelogMinutes > 0 && // Must have valid minutes configured
                                 now.Subtract(a.LastDisconnectTime.Value).TotalMinutes >= a.AutoRelogMinutes)
                     .ToList();
 
@@ -1195,8 +1214,13 @@ namespace RadegastWeb.Services
                 {
                     try
                     {
-                        _logger.LogInformation("Auto-relogging account {AccountId} ({DisplayName}) after {Minutes} minutes", 
-                            account.Id, account.DisplayName ?? $"{account.FirstName} {account.LastName}", account.AutoRelogMinutes);
+                        // Safety check (should always be true due to LINQ filter above)
+                        if (!account.LastDisconnectTime.HasValue)
+                            continue;
+                        
+                        var minutesElapsed = now.Subtract(account.LastDisconnectTime.Value).TotalMinutes;
+                        _logger.LogInformation("Auto-relogging account {AccountId} ({DisplayName}) after {MinutesElapsed:F1} minutes (configured: {Minutes} minutes)", 
+                            account.Id, account.DisplayName ?? $"{account.FirstName} {account.LastName}", minutesElapsed, account.AutoRelogMinutes);
                         
                         // Clear LastDisconnectTime to prevent repeated relog attempts
                         account.LastDisconnectTime = null;
