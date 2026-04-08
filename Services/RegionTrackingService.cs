@@ -24,6 +24,7 @@ namespace RadegastWeb.Services
         private readonly IServiceProvider _serviceProvider;
         private readonly string _configPath;
         private readonly SemaphoreSlim _parallelCheckLimiter = new SemaphoreSlim(10, 10); // Max 10 concurrent region checks
+        private readonly SemaphoreSlim _agentCountSerializer = new SemaphoreSlim(1, 1); // Only 1 RequestMapItems at a time
         private bool _disposed = false;
 
         public RegionTrackingService(
@@ -245,84 +246,58 @@ namespace RadegastWeb.Services
                             
                             if (regionHandle.HasValue)
                             {
-                                // Retrieve agent count using RequestMapItems
-                                var agentItemsReceived = new TaskCompletionSource<int>();
-                                int agentCount = 0;
-                                var expectedHandle = regionHandle.Value;
-
-                                EventHandler<GridItemsEventArgs> itemHandler = (s, e) =>
+                                // Serialize agent count queries - only 1 at a time to prevent event cross-contamination
+                                await _agentCountSerializer.WaitAsync();
+                                try
                                 {
-                                    // Check if this event is for OUR region by comparing RegionHandle
-                                    bool isCorrectRegion = false;
+                                    // Retrieve agent count using RequestMapItems
+                                    var agentItemsReceived = new TaskCompletionSource<int>();
+                                    int agentCount = 0;
+
+                                    EventHandler<GridItemsEventArgs> itemHandler = (s, e) =>
+                                    {
+                                        if (e.Type == GridItemType.AgentLocations)
+                                        {
+                                            agentCount = e.Items.Count;
+                                            agentItemsReceived.TrySetResult(agentCount);
+                                        }
+                                    };
+
                                     try
                                     {
-                                        var eventType = e.GetType();
-                                        var regionHandleField = eventType.GetField("RegionHandle");
-                                        if (regionHandleField != null)
+                                        client.Grid.GridItems += itemHandler;
+                                        
+                                        client.Grid.RequestMapItems(
+                                            regionHandle.Value,
+                                            GridItemType.AgentLocations,
+                                            GridLayerType.Objects);
+                                        
+                                        // Wait for agent count or timeout
+                                        await Task.WhenAny(agentItemsReceived.Task, Task.Delay(10000)); // 10 second timeout
+                                        
+                                        if (agentItemsReceived.Task.IsCompleted)
                                         {
-                                            var handleValue = regionHandleField.GetValue(e);
-                                            if (handleValue != null)
-                                            {
-                                                var eventHandle = (ulong)handleValue;
-                                                isCorrectRegion = (eventHandle == expectedHandle);
-                                                if (!isCorrectRegion)
-                                                {
-                                                    _logger.LogDebug("Ignoring GridItems for handle {EventHandle}, waiting for {ExpectedHandle}", 
-                                                        eventHandle, expectedHandle);
-                                                    return;
-                                                }
-                                            }
+                                            status.AgentCount = agentItemsReceived.Task.Result;
                                         }
                                         else
                                         {
-                                            // No RegionHandle field found - log this once
-                                            _logger.LogWarning("GridItemsEventArgs has no RegionHandle field - cannot filter events by region");
+                                            status.AgentCount = 0; // Timeout, assume 0 agents
+                                            _logger.LogWarning("Timeout getting agent count for {RegionName}", trackedRegion.RegionName);
                                         }
                                     }
                                     catch (Exception ex)
                                     {
-                                        _logger.LogDebug("Error checking RegionHandle in GridItemsEventArgs: {Error}", ex.Message);
+                                        status.AgentCount = 0;
+                                        _logger.LogWarning("Error getting agent count for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
                                     }
-                                    
-                                    if (e.Type == GridItemType.AgentLocations)
+                                    finally
                                     {
-                                        agentCount = e.Items.Count;
-                                        _logger.LogDebug("Received {Count} agent locations for region handle {Handle}", 
-                                            agentCount, expectedHandle);
-                                        agentItemsReceived.TrySetResult(agentCount);
+                                        client.Grid.GridItems -= itemHandler;
                                     }
-                                };
-
-                                try
-                                {
-                                    client.Grid.GridItems += itemHandler;
-                                    
-                                    client.Grid.RequestMapItems(
-                                        regionHandle.Value,
-                                        GridItemType.AgentLocations,
-                                        GridLayerType.Objects);
-                                    
-                                    // Wait for agent count or timeout
-                                    await Task.WhenAny(agentItemsReceived.Task, Task.Delay(10000)); // 10 second timeout
-                                    
-                                    if (agentItemsReceived.Task.IsCompleted)
-                                    {
-                                        status.AgentCount = agentItemsReceived.Task.Result;
-                                    }
-                                    else
-                                    {
-                                        status.AgentCount = 0; // Timeout, assume 0 agents
-                                        _logger.LogWarning("Timeout getting agent count for {RegionName}", trackedRegion.RegionName);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    status.AgentCount = 0;
-                                    _logger.LogWarning("Error getting agent count for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
                                 }
                                 finally
                                 {
-                                    client.Grid.GridItems -= itemHandler;
+                                    _agentCountSerializer.Release();
                                 }
                             }
                             else
@@ -500,6 +475,7 @@ namespace RadegastWeb.Services
             if (!_disposed)
             {
                 _parallelCheckLimiter?.Dispose();
+                _agentCountSerializer?.Dispose();
                 _disposed = true;
             }
         }
