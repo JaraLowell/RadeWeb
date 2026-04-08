@@ -187,7 +187,8 @@
             const headerContent = region.description 
                 ? `<div class="region-name">${region.description}</div>
                    <div class="region-description">${region.regionName}</div>`
-                : `<div class="region-name">${region.regionName}</div>`;
+                : `<div class="region-name">${region.regionName}</div>
+                   <div class="region-description">&nbsp;</div>`;
 
             return `
                 <div class="region-card">
