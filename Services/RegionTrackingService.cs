@@ -549,75 +549,92 @@ namespace RadegastWeb.Services
             var instancesField = accountService.GetType().GetField("_instances",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             
-            if (instancesField != null)
+            if (instancesField == null)
             {
-                var instances = instancesField.GetValue(accountService) as System.Collections.Concurrent.ConcurrentDictionary<Guid, Core.WebRadegastInstance>;
-                if (instances != null)
+                _logger.LogError("Could not find _instances field via reflection in AccountService");
+                return null;
+            }
+            
+            var instances = instancesField.GetValue(accountService) as System.Collections.Concurrent.ConcurrentDictionary<Guid, Core.WebRadegastInstance>;
+            if (instances == null)
+            {
+                _logger.LogError("_instances field exists but could not be cast to ConcurrentDictionary<Guid, WebRadegastInstance>");
+                return null;
+            }
+            
+            _logger.LogInformation("Checking {Count} account instance(s) for region tracking eligibility", instances.Count);
+            
+            if (instances.Count == 0)
+            {
+                _logger.LogWarning("No account instances in dictionary to check");
+            }
+            
+            // Try all instances to find a properly connected one
+            foreach (var kvp in instances)
+            {
+                _logger.LogInformation("Checking instance for AccountId: {AccountId}", kvp.Key);
+                
+                var instance = kvp.Value;
+                if (instance == null)
                 {
-                    _logger.LogInformation("Checking {Count} account instance(s) for region tracking eligibility", instances.Count);
+                    _logger.LogWarning("Instance for AccountId {AccountId} is null, skipping", kvp.Key);
+                    continue;
+                }
+                
+                // Check multiple indicators of a healthy connection:
+                // 1. Network.Connected must be true
+                // 2. Client must be initialized
+                // 3. Status should not indicate offline or login in progress
+                // 4. Client should have a valid session
+                
+                try
+                {
+                    bool isNetworkConnected = instance.Client?.Network?.Connected == true;
+                    bool hasValidClient = instance.Client != null;
+                    string status = instance.Status ?? "Unknown";
+                    bool statusIndicatesOnline = !status.Contains("Offline", StringComparison.OrdinalIgnoreCase) 
+                                               && !status.Contains("Disconnected", StringComparison.OrdinalIgnoreCase)
+                                               && !status.StartsWith("Login:", StringComparison.OrdinalIgnoreCase);
                     
-                    // Try all instances to find a properly connected one
-                    foreach (var kvp in instances)
+                    // Additional check: verify the account info shows connected state
+                    // Note: This is advisory only - Network.Connected is the source of truth
+                    bool accountInfoConnected = instance.AccountInfo?.IsConnected == true;
+                    
+                    // Primary check: Network must be connected AND status must indicate online
+                    // AccountInfo.IsConnected is advisory (may be out of sync due to being a copy)
+                    if (isNetworkConnected && hasValidClient && statusIndicatesOnline)
                     {
-                        var instance = kvp.Value;
-                        if (instance == null) continue;
+                        string accountName = instance.AccountInfo != null ? $"{instance.AccountInfo.FirstName} {instance.AccountInfo.LastName}" : "unknown";
                         
-                        // Check multiple indicators of a healthy connection:
-                        // 1. Network.Connected must be true
-                        // 2. Client must be initialized
-                        // 3. Status should not indicate offline or login in progress
-                        // 4. Client should have a valid session
+                        if (!accountInfoConnected)
+                        {
+                            _logger.LogWarning("Using account {AccountId} ({Name}) for region tracking despite AccountInfo.IsConnected=false. Network reports connected. Status: {Status}", 
+                                kvp.Key, accountName, status);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("Using account {AccountId} ({Name}) for region tracking - Status: {Status}", 
+                                kvp.Key, accountName, status);
+                        }
                         
-                        try
-                        {
-                            bool isNetworkConnected = instance.Client?.Network?.Connected == true;
-                            bool hasValidClient = instance.Client != null;
-                            string status = instance.Status ?? "Unknown";
-                            bool statusIndicatesOnline = !status.Contains("Offline", StringComparison.OrdinalIgnoreCase) 
-                                                       && !status.Contains("Disconnected", StringComparison.OrdinalIgnoreCase)
-                                                       && !status.StartsWith("Login:", StringComparison.OrdinalIgnoreCase);
-                            
-                            // Additional check: verify the account info shows connected state
-                            // Note: This is advisory only - Network.Connected is the source of truth
-                            bool accountInfoConnected = instance.AccountInfo?.IsConnected == true;
-                            
-                            // Primary check: Network must be connected AND status must indicate online
-                            // AccountInfo.IsConnected is advisory (may be out of sync due to being a copy)
-                            if (isNetworkConnected && hasValidClient && statusIndicatesOnline)
-                            {
-                                string accountName = instance.AccountInfo != null ? $"{instance.AccountInfo.FirstName} {instance.AccountInfo.LastName}" : "unknown";
-                                
-                                if (!accountInfoConnected)
-                                {
-                                    _logger.LogWarning("Using account {AccountId} ({Name}) for region tracking despite AccountInfo.IsConnected=false. Network reports connected. Status: {Status}", 
-                                        kvp.Key, accountName, status);
-                                }
-                                else
-                                {
-                                    _logger.LogDebug("Using account {AccountId} ({Name}) for region tracking - Status: {Status}", 
-                                        kvp.Key, accountName, status);
-                                }
-                                
-                                return instance;
-                            }
-                            else
-                            {
-                                string accountName = instance.AccountInfo != null ? $"{instance.AccountInfo.FirstName} {instance.AccountInfo.LastName}" : "unknown";
-                                _logger.LogInformation("Skipping account {AccountId} ({Name}) - NetworkConnected: {Network}, ValidClient: {Client}, StatusOnline: {Status}, AccountConnected: {Account}, CurrentStatus: '{CurrentStatus}'", 
-                                    kvp.Key,
-                                    accountName,
-                                    isNetworkConnected,
-                                    hasValidClient,
-                                    statusIndicatesOnline,
-                                    accountInfoConnected,
-                                    status);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning("Error checking connection status for account {AccountId}: {Error}", kvp.Key, ex.Message);
-                        }
+                        return instance;
                     }
+                    else
+                    {
+                        string accountName = instance.AccountInfo != null ? $"{instance.AccountInfo.FirstName} {instance.AccountInfo.LastName}" : "unknown";
+                        _logger.LogInformation("Skipping account {AccountId} ({Name}) - NetworkConnected: {Network}, ValidClient: {Client}, StatusOnline: {Status}, AccountConnected: {Account}, CurrentStatus: '{CurrentStatus}'", 
+                            kvp.Key,
+                            accountName,
+                            isNetworkConnected,
+                            hasValidClient,
+                            statusIndicatesOnline,
+                            accountInfoConnected,
+                            status);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Error checking connection status for account {AccountId}: {Error}", kvp.Key, ex.Message);
                 }
             }
             
