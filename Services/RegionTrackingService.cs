@@ -177,46 +177,54 @@ namespace RadegastWeb.Services
                             try
                             {
                                 // Store what we can access - GridRegion structure varies
-                                // We'll try properties, but some may not exist
                                 var regionType = e.Region.GetType();
                                 
-                                // Log all properties to debug
-                                _logger.LogInformation("Region {RegionName} found, properties:", trackedRegion.RegionName);
-                                foreach (var prop in regionType.GetProperties())
+                                // Log type information
+                                _logger.LogInformation("Region {RegionName} found, Type: {TypeName}", 
+                                    trackedRegion.RegionName, regionType.FullName);
+                                
+                                // Try both properties and fields
+                                var allMembers = regionType.GetMembers(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+                                _logger.LogInformation("Region {RegionName} has {Count} public members", 
+                                    trackedRegion.RegionName, allMembers.Length);
+                                
+                                foreach (var member in allMembers)
                                 {
-                                    try
+                                    if (member.MemberType == System.Reflection.MemberTypes.Property)
                                     {
-                                        var value = prop.GetValue(e.Region);
-                                        _logger.LogInformation("  {PropName} = {Value} (type: {Type})", 
-                                            prop.Name, value, prop.PropertyType.Name);
+                                        var prop = (System.Reflection.PropertyInfo)member;
+                                        try
+                                        {
+                                            var value = prop.GetValue(e.Region);
+                                            _logger.LogInformation("  Property: {Name} = {Value}", prop.Name, value);
+                                        }
+                                        catch { }
                                     }
-                                    catch { }
+                                    else if (member.MemberType == System.Reflection.MemberTypes.Field)
+                                    {
+                                        var field = (System.Reflection.FieldInfo)member;
+                                        try
+                                        {
+                                            var value = field.GetValue(e.Region);
+                                            _logger.LogInformation("  Field: {Name} = {Value}", field.Name, value);
+                                        }
+                                        catch { }
+                                    }
                                 }
                                 
-                                // Try to get RegionHandle
+                                // Try to get RegionHandle (could be property or field)
                                 var handleProp = regionType.GetProperty("RegionHandle");
+                                var handleField = regionType.GetField("RegionHandle");
+                                
                                 if (handleProp != null)
                                 {
                                     status.RegionHandle = (ulong?)handleProp.GetValue(e.Region);
-                                    _logger.LogInformation("RegionHandle for {RegionName}: {Handle}", 
-                                        trackedRegion.RegionName, status.RegionHandle);
+                                    _logger.LogInformation("Got RegionHandle from property: {Handle}", status.RegionHandle);
                                 }
-                                
-                                // Try coordinates
-                                var xProp = regionType.GetProperty("X");
-                                var yProp = regionType.GetProperty("Y");
-                                if (xProp != null && yProp != null)
+                                else if (handleField != null)
                                 {
-                                    status.LocationX = (uint?)xProp.GetValue(e.Region);
-                                    status.LocationY = (uint?)yProp.GetValue(e.Region);
-                                }
-                                
-                                // Check if there's an AgentCount or Agents property
-                                var agentsProp = regionType.GetProperty("Agents");
-                                if (agentsProp != null)
-                                {
-                                    var agentsValue = agentsProp.GetValue(e.Region);
-                                    _logger.LogInformation("Found Agents property: {Value}", agentsValue);
+                                    status.RegionHandle = (ulong?)handleField.GetValue(e.Region);
+                                    _logger.LogInformation("Got RegionHandle from field: {Handle}", status.RegionHandle);
                                 }
                                 
                                 status.SizeX = 256; // Standard region size
