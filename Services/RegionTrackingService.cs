@@ -24,7 +24,7 @@ namespace RadegastWeb.Services
         private readonly IServiceProvider _serviceProvider;
         private readonly string _configPath;
         private readonly SemaphoreSlim _parallelCheckLimiter = new SemaphoreSlim(10, 10); // Max 10 concurrent region checks
-        private readonly SemaphoreSlim _agentCountSerializer = new SemaphoreSlim(1, 1); // Only 1 RequestMapItems at a time
+        private readonly SemaphoreSlim _agentCountLimiter = new SemaphoreSlim(5, 5); // Max 5 concurrent agent count queries
         private bool _disposed = false;
 
         public RegionTrackingService(
@@ -246,15 +246,12 @@ namespace RadegastWeb.Services
                             
                             if (regionHandle.HasValue)
                             {
-                                // Serialize agent count queries - only 1 at a time to prevent event cross-contamination
-                                await _agentCountSerializer.WaitAsync();
+                                // Limit concurrent agent count queries to prevent event handler cross-contamination
+                                // 5 concurrent queries is a good balance between speed and reliability
+                                await _agentCountLimiter.WaitAsync();
                                 try
                                 {
-                                    // Log the logged-in account's UUID for comparison
-                                    _logger.LogDebug("Requesting agents for {RegionName}, our UUID: {SelfUUID}", 
-                                        trackedRegion.RegionName, client.Self.AgentID);
-                                    
-                                    // Retrieve agent count using RequestMapItems
+                                    var currentRegionHandle = regionHandle.Value;
                                     var agentItemsReceived = new TaskCompletionSource<int>();
                                     int agentCount = 0;
 
@@ -263,34 +260,8 @@ namespace RadegastWeb.Services
                                         if (e.Type == GridItemType.AgentLocations)
                                         {
                                             agentCount = e.Items.Count;
-                                            
-                                            // Debug: log items to see what we're getting
-                                            _logger.LogDebug("GridItems received for region handle {Handle}: {Count} items", 
-                                                regionHandle.Value, e.Items.Count);
-                                            foreach (var item in e.Items)
-                                            {
-                                                var itemType = item.GetType();
-                                                _logger.LogDebug("  Item type: {Type}", itemType.FullName);
-                                                
-                                                // Try to get ID/UUID if it exists
-                                                try
-                                                {
-                                                    var idProp = itemType.GetProperty("ID");
-                                                    var idField = itemType.GetField("ID");
-                                                    var nameProp = itemType.GetProperty("Name");
-                                                    var nameField = itemType.GetField("Name");
-                                                    
-                                                    var id = idProp != null ? idProp.GetValue(item) : (idField != null ? idField.GetValue(item) : null);
-                                                    var name = nameProp != null ? nameProp.GetValue(item) : (nameField != null ? nameField.GetValue(item) : null);
-                                                    
-                                                    _logger.LogDebug("    ID: {Id}, Name: {Name}", id, name ?? "N/A");
-                                                }
-                                                catch (Exception ex)
-                                                {
-                                                    _logger.LogDebug("    Could not read item properties: {Error}", ex.Message);
-                                                }
-                                            }
-                                            
+                                            _logger.LogDebug("GridItems received for {RegionName}: {Count} agents", 
+                                                trackedRegion.RegionName, agentCount);
                                             agentItemsReceived.TrySetResult(agentCount);
                                         }
                                     };
@@ -300,12 +271,12 @@ namespace RadegastWeb.Services
                                         client.Grid.GridItems += itemHandler;
                                         
                                         client.Grid.RequestMapItems(
-                                            regionHandle.Value,
+                                            currentRegionHandle,
                                             GridItemType.AgentLocations,
                                             GridLayerType.Objects);
                                         
-                                        // Wait for agent count or timeout
-                                        await Task.WhenAny(agentItemsReceived.Task, Task.Delay(10000)); // 10 second timeout
+                                        // Wait for agent count or timeout (reduced from 10s to 5s for faster parallel execution)
+                                        await Task.WhenAny(agentItemsReceived.Task, Task.Delay(5000));
                                         
                                         if (agentItemsReceived.Task.IsCompleted)
                                         {
@@ -329,7 +300,7 @@ namespace RadegastWeb.Services
                                 }
                                 finally
                                 {
-                                    _agentCountSerializer.Release();
+                                    _agentCountLimiter.Release();
                                 }
                             }
                             else
@@ -507,7 +478,7 @@ namespace RadegastWeb.Services
             if (!_disposed)
             {
                 _parallelCheckLimiter?.Dispose();
-                _agentCountSerializer?.Dispose();
+                _agentCountLimiter?.Dispose();
                 _disposed = true;
             }
         }
