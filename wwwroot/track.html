@@ -195,12 +195,10 @@
                 : `<div class="region-name">${region.regionName}</div>
                    <div class="region-description">&nbsp;</div>`;
             
-            // Calculate map tile coordinates (divide by 256 to get tile position)
+            // Use grid coordinates directly from API (already in grid units, not meters)
             let minimapHtml = '';
             if (region.locationX && region.locationY) {
-                const tileX = Math.floor(region.locationX / 256);
-                const tileY = Math.floor(region.locationY / 256);
-                const mapUrl = `http://map.secondlife.com/map-1-${tileX}-${tileY}-objects.jpg`;
+                const mapUrl = `http://map.secondlife.com/map-1-${region.locationX}-${region.locationY}-objects.jpg`;
                 minimapHtml = `<div class="minimap"><img src="${mapUrl}" alt="${region.regionName} map" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\'minimap-placeholder\'>Map<br>N/A</div>'"></div>`;
             } else {
                 minimapHtml = `<div class="minimap"><div class="minimap-placeholder">Map<br>N/A</div></div>`;
