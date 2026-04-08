@@ -25,6 +25,7 @@
         .region-card { background: #2d2d2d; border-radius: 10px; padding: 10px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border: 1px solid #495057; transition: transform 0.2s; }
         .region-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1px; }
         .region-name { font-size: 1.3em; font-weight: bold; color: #e1e1e1; }
+        .region-description { font-size: 0.8em; color: #adb5bd; margin-top: 3px; font-style: italic; }
         .status-badge { padding: 5px 12px; border-radius: 20px; font-size: 0.8em; font-weight: bold; }
         .status-online { background: #10b981; color: white; }
         .status-offline { background: #ef4444; color: white; }
@@ -180,11 +181,15 @@
             const statusText = region.isOnline ? 'Online' : 'Offline';
             const agentCount = region.isOnline ? region.agentCount : 'N/A';
             const lastChecked = formatDate(new Date(region.lastChecked));
+            const description = region.description ? `<div class="region-description">${region.description}</div>` : '';
 
             return `
                 <div class="region-card">
                     <div class="region-header">
-                        <div class="region-name">${region.regionName}</div>
+                        <div>
+                            <div class="region-name">${region.regionName}</div>
+                            ${description}
+                        </div>
                         <div class="status-badge ${statusClass}">${statusText}</div>
                     </div>
                     

@@ -13,9 +13,7 @@ namespace RadegastWeb.Models
         [StringLength(255)]
         public string RegionName { get; set; } = string.Empty;
         
-        [StringLength(500)]
-        public string? GridUrl { get; set; }
-        
+
         /// <summary>
         /// True if region is online/accessible
         /// </summary>

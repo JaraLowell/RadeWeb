@@ -194,11 +194,19 @@ namespace RadegastWeb.Controllers
             {
                 var latestStatuses = await _trackingService.GetLatestStatusesAsync();
                 
+                // Load config to get descriptions
+                var config = await _trackingService.GetConfigAsync();
+                var descriptionLookup = config?.Regions
+                    .Where(r => !string.IsNullOrEmpty(r.Description))
+                    .ToDictionary(r => r.RegionName, r => (string?)r.Description, StringComparer.OrdinalIgnoreCase)
+                    ?? new Dictionary<string, string?>();
+                
                 var agentData = latestStatuses
                     .OrderByDescending(r => r.AgentCount ?? 0)
                     .Select(r => new
                     {
                         regionName = r.RegionName,
+                        description = descriptionLookup.GetValueOrDefault(r.RegionName),
                         isOnline = r.IsOnline,
                         agentCount = r.AgentCount ?? 0,
                         lastChecked = r.CheckedAt,

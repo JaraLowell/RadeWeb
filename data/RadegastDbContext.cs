@@ -177,7 +177,6 @@ namespace RadegastWeb.Data
             {
                 entity.HasKey(e => e.Id);
                 entity.Property(e => e.RegionName).IsRequired().HasMaxLength(255);
-                entity.Property(e => e.GridUrl).HasMaxLength(500);
                 entity.Property(e => e.RegionUuid).HasMaxLength(36);
                 entity.Property(e => e.AccessLevel).HasMaxLength(50);
                 entity.Property(e => e.ErrorMessage);

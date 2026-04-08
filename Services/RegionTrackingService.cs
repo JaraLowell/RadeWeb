@@ -147,7 +147,6 @@ namespace RadegastWeb.Services
             var status = new RegionStatus
             {
                 RegionName = trackedRegion.RegionName,
-                GridUrl = trackedRegion.GridUrl,
                 CheckedAt = DateTime.UtcNow
             };
 
