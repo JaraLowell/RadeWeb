@@ -248,12 +248,47 @@ namespace RadegastWeb.Services
                                 // Retrieve agent count using RequestMapItems
                                 var agentItemsReceived = new TaskCompletionSource<int>();
                                 int agentCount = 0;
+                                var expectedHandle = regionHandle.Value;
 
                                 EventHandler<GridItemsEventArgs> itemHandler = (s, e) =>
                                 {
+                                    // Check if this event is for OUR region by comparing RegionHandle
+                                    bool isCorrectRegion = false;
+                                    try
+                                    {
+                                        var eventType = e.GetType();
+                                        var regionHandleField = eventType.GetField("RegionHandle");
+                                        if (regionHandleField != null)
+                                        {
+                                            var handleValue = regionHandleField.GetValue(e);
+                                            if (handleValue != null)
+                                            {
+                                                var eventHandle = (ulong)handleValue;
+                                                isCorrectRegion = (eventHandle == expectedHandle);
+                                                if (!isCorrectRegion)
+                                                {
+                                                    _logger.LogDebug("Ignoring GridItems for handle {EventHandle}, waiting for {ExpectedHandle}", 
+                                                        eventHandle, expectedHandle);
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // No RegionHandle field found - log this once
+                                            _logger.LogWarning("GridItemsEventArgs has no RegionHandle field - cannot filter events by region");
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        _logger.LogDebug("Error checking RegionHandle in GridItemsEventArgs: {Error}", ex.Message);
+                                    }
+                                    
                                     if (e.Type == GridItemType.AgentLocations)
                                     {
                                         agentCount = e.Items.Count;
+                                        _logger.LogDebug("Received {Count} agent locations for region handle {Handle}", 
+                                            agentCount, expectedHandle);
                                         agentItemsReceived.TrySetResult(agentCount);
                                     }
                                 };
