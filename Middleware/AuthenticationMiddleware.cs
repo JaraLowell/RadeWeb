@@ -17,7 +17,8 @@ namespace RadegastWeb.Middleware
             "/css/",
             "/js/",
             "/img/",
-            "/favicon.ico"
+            "/favicon.ico",
+            "/robots.txt"
         };
 
         public AuthenticationMiddleware(RequestDelegate next, ILogger<AuthenticationMiddleware> logger)
