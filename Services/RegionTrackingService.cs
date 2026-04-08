@@ -353,11 +353,11 @@ namespace RadegastWeb.Services
                                                         // DEBUG: Log all properties and fields of this item type (only once)
                                                         if (itemsForOurRegion == 1)
                                                         {
-                                                            _logger.LogDebug("GridItem type: {TypeName}", itemType.FullName);
+                                                            _logger.LogInformation("DEBUG: GridItem type: {TypeName}", itemType.FullName);
                                                             var allProps = itemType.GetProperties();
                                                             var allFields = itemType.GetFields();
-                                                            _logger.LogDebug("Available properties: {Props}", string.Join(", ", allProps.Select(p => $"{p.Name}:{p.PropertyType.Name}")));
-                                                            _logger.LogDebug("Available fields: {Fields}", string.Join(", ", allFields.Select(f => $"{f.Name}:{f.FieldType.Name}")));
+                                                            _logger.LogInformation("DEBUG: Available properties: {Props}", string.Join(", ", allProps.Select(p => $"{p.Name}:{p.PropertyType.Name}")));
+                                                            _logger.LogInformation("DEBUG: Available fields: {Fields}", string.Join(", ", allFields.Select(f => $"{f.Name}:{f.FieldType.Name}")));
                                                         }
                                                         
                                                         // Get the agent count from the item
