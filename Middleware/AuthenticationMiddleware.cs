@@ -10,6 +10,8 @@ namespace RadegastWeb.Middleware
             "/api/auth/login",
             "/api/auth/verify",
             "/api/stats/",
+            "/api/regiontracking/",
+            "/track.html",
             "/login.html",
             "/stats.html",
             "/css/",

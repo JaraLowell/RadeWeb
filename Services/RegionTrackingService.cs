@@ -104,9 +104,24 @@ namespace RadegastWeb.Services
 
             _logger.LogInformation("Starting region tracking check for {Count} regions", enabledRegions.Count);
 
-            // All regions are checked in parallel using the same account (obtained inside each CheckRegionAsync)
-            // The first call to CheckRegionAsync will get the first connected account
-            // All subsequent calls in this batch will reuse that same account
+            // Verify we have at least one connected account before starting the checks
+            var accountService = _serviceProvider.GetService<IAccountService>();
+            if (accountService == null)
+            {
+                _logger.LogError("AccountService not available - cannot perform region tracking");
+                return;
+            }
+
+            var testInstance = GetFirstConnectedInstance(accountService);
+            if (testInstance == null)
+            {
+                _logger.LogWarning("No connected accounts available at start of region check cycle. All region checks will be marked as unavailable. Login at least one account to enable region tracking.");
+                // Continue anyway to record the failure status in the database
+            }
+
+            // All regions are checked in parallel
+            // Each CheckRegionAsync call will get a connected account dynamically
+            // If the initially connected account disconnects mid-check, other checks may find a different account
             // Throttle to max 10 concurrent checks to prevent resource exhaustion
             var tasks = enabledRegions.Select(region => CheckRegionWithThrottleAsync(region));
 
@@ -156,7 +171,7 @@ namespace RadegastWeb.Services
                     status.IsOnline = false;
                     status.AgentCount = null;
                     status.ErrorMessage = "No connected accounts available";
-                    _logger.LogDebug("No connected accounts available to check region {RegionName}", trackedRegion.RegionName);
+                    _logger.LogWarning("No connected accounts available to check region {RegionName}. Ensure at least one account is logged in.", trackedRegion.RegionName);
                 }
                 else
                 {
@@ -523,7 +538,8 @@ namespace RadegastWeb.Services
 
         /// <summary>
         /// Get the first connected account instance for region checking.
-        /// Automatically uses whichever account is logged in.
+        /// Automatically uses whichever account is logged in and fully functional.
+        /// This method performs thorough validation to ensure the account can perform region queries.
         /// </summary>
         private Core.WebRadegastInstance? GetFirstConnectedInstance(IAccountService accountService)
         {
@@ -538,18 +554,57 @@ namespace RadegastWeb.Services
                 var instances = instancesField.GetValue(accountService) as System.Collections.Concurrent.ConcurrentDictionary<Guid, Core.WebRadegastInstance>;
                 if (instances != null)
                 {
+                    // Try all instances to find a properly connected one
                     foreach (var kvp in instances)
                     {
-                        if (kvp.Value?.Client?.Network?.Connected == true)
+                        var instance = kvp.Value;
+                        if (instance == null) continue;
+                        
+                        // Check multiple indicators of a healthy connection:
+                        // 1. Network.Connected must be true
+                        // 2. Client must be initialized
+                        // 3. Status should not indicate offline or login in progress
+                        // 4. Client should have a valid session
+                        
+                        try
                         {
-                            _logger.LogDebug("Using account {AccountId} for region tracking", kvp.Key);
-                            return kvp.Value;
+                            bool isNetworkConnected = instance.Client?.Network?.Connected == true;
+                            bool hasValidClient = instance.Client != null;
+                            string status = instance.Status ?? "Unknown";
+                            bool statusIndicatesOnline = !status.Contains("Offline", StringComparison.OrdinalIgnoreCase) 
+                                                       && !status.Contains("Disconnected", StringComparison.OrdinalIgnoreCase)
+                                                       && !status.StartsWith("Login:", StringComparison.OrdinalIgnoreCase);
+                            
+                            // Additional check: verify the account info shows connected state
+                            bool accountInfoConnected = instance.AccountInfo?.IsConnected == true;
+                            
+                            if (isNetworkConnected && hasValidClient && statusIndicatesOnline && accountInfoConnected)
+                            {
+                                _logger.LogDebug("Using account {AccountId} ({Username}) for region tracking - Status: {Status}", 
+                                    kvp.Key, 
+                                    instance.AccountInfo?.Username ?? "unknown",
+                                    status);
+                                return instance;
+                            }
+                            else
+                            {
+                                _logger.LogDebug("Skipping account {AccountId} - NetworkConnected: {Network}, ValidClient: {Client}, StatusOnline: {Status}, AccountConnected: {Account}", 
+                                    kvp.Key, 
+                                    isNetworkConnected,
+                                    hasValidClient,
+                                    statusIndicatesOnline,
+                                    accountInfoConnected);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("Error checking connection status for account {AccountId}: {Error}", kvp.Key, ex.Message);
                         }
                     }
                 }
             }
             
-            _logger.LogDebug("No connected accounts found for region tracking");
+            _logger.LogWarning("No connected accounts found for region tracking. Check that at least one account is logged in.");
             return null;
         }
 
