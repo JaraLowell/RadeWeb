@@ -180,11 +180,26 @@ namespace RadegastWeb.Services
                                 // We'll try properties, but some may not exist
                                 var regionType = e.Region.GetType();
                                 
+                                // Log all properties to debug
+                                _logger.LogInformation("Region {RegionName} found, properties:", trackedRegion.RegionName);
+                                foreach (var prop in regionType.GetProperties())
+                                {
+                                    try
+                                    {
+                                        var value = prop.GetValue(e.Region);
+                                        _logger.LogInformation("  {PropName} = {Value} (type: {Type})", 
+                                            prop.Name, value, prop.PropertyType.Name);
+                                    }
+                                    catch { }
+                                }
+                                
                                 // Try to get RegionHandle
                                 var handleProp = regionType.GetProperty("RegionHandle");
                                 if (handleProp != null)
                                 {
                                     status.RegionHandle = (ulong?)handleProp.GetValue(e.Region);
+                                    _logger.LogInformation("RegionHandle for {RegionName}: {Handle}", 
+                                        trackedRegion.RegionName, status.RegionHandle);
                                 }
                                 
                                 // Try coordinates
@@ -194,6 +209,14 @@ namespace RadegastWeb.Services
                                 {
                                     status.LocationX = (uint?)xProp.GetValue(e.Region);
                                     status.LocationY = (uint?)yProp.GetValue(e.Region);
+                                }
+                                
+                                // Check if there's an AgentCount or Agents property
+                                var agentsProp = regionType.GetProperty("Agents");
+                                if (agentsProp != null)
+                                {
+                                    var agentsValue = agentsProp.GetValue(e.Region);
+                                    _logger.LogInformation("Found Agents property: {Value}", agentsValue);
                                 }
                                 
                                 status.SizeX = 256; // Standard region size
@@ -238,15 +261,23 @@ namespace RadegastWeb.Services
                             
                             if (regionHandle.HasValue)
                             {
+                                _logger.LogInformation("Requesting agent items for {RegionName} with handle {Handle}", 
+                                    trackedRegion.RegionName, regionHandle.Value);
+                                
                                 // Now retrieve agent count using RequestMapItems
                                 var agentItemsReceived = new TaskCompletionSource<int>();
                                 int agentCount = 0;
 
                                 EventHandler<GridItemsEventArgs> itemHandler = (s, e) =>
                                 {
+                                    _logger.LogInformation("GridItems event received: Type={Type}, ItemCount={Count}", 
+                                        e.Type, e.Items.Count);
+                                    
                                     if (e.Type == GridItemType.AgentLocations)
                                     {
                                         agentCount = e.Items.Count;
+                                        _logger.LogInformation("Agent locations received for {RegionName}: {Count} agents", 
+                                            trackedRegion.RegionName, agentCount);
                                         agentItemsReceived.TrySetResult(agentCount);
                                     }
                                 };
@@ -254,10 +285,15 @@ namespace RadegastWeb.Services
                                 try
                                 {
                                     client.Grid.GridItems += itemHandler;
+                                    _logger.LogInformation("Calling RequestMapItems for {RegionName}, Handle={Handle}, Type=AgentLocations", 
+                                        trackedRegion.RegionName, regionHandle.Value);
+                                    
                                     client.Grid.RequestMapItems(
                                         regionHandle.Value,
                                         GridItemType.AgentLocations,
                                         GridLayerType.Objects);
+                                    
+                                    _logger.LogInformation("RequestMapItems called, waiting for response...");
                                     
                                     // Wait for agent count or timeout
                                     await Task.WhenAny(agentItemsReceived.Task, Task.Delay(10000)); // 10 second timeout
@@ -265,12 +301,12 @@ namespace RadegastWeb.Services
                                     if (agentItemsReceived.Task.IsCompleted)
                                     {
                                         status.AgentCount = agentItemsReceived.Task.Result;
-                                        _logger.LogDebug("Region {RegionName} has {AgentCount} agents", trackedRegion.RegionName, status.AgentCount);
+                                        _logger.LogInformation("Region {RegionName} has {AgentCount} agents (SUCCESS)", trackedRegion.RegionName, status.AgentCount);
                                     }
                                     else
                                     {
                                         status.AgentCount = 0; // Timeout, assume 0 agents
-                                        _logger.LogDebug("Timeout getting agent count for {RegionName}, assuming 0", trackedRegion.RegionName);
+                                        _logger.LogWarning("Timeout getting agent count for {RegionName} after 10 seconds, assuming 0", trackedRegion.RegionName);
                                     }
                                 }
                                 catch (Exception ex)
