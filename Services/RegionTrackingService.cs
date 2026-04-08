@@ -171,32 +171,39 @@ namespace RadegastWeb.Services
                     {
                         if (e.Region.Name.Equals(trackedRegion.RegionName, StringComparison.OrdinalIgnoreCase))
                         {
-                            // Debug: Log all properties of GridRegion to discover structure
-                            var gridRegionType = e.Region.GetType();
-                            _logger.LogDebug("GridRegion type: {Type}", gridRegionType.FullName);
-                            foreach (var prop in gridRegionType.GetProperties())
+                            status.IsOnline = true;
+                            
+                            // Try standard LibreMetaverse GridRegion properties
+                            try
                             {
-                                try
+                                // Store what we can access - GridRegion structure varies
+                                // We'll try properties, but some may not exist
+                                var regionType = e.Region.GetType();
+                                
+                                // Try to get RegionHandle
+                                var handleProp = regionType.GetProperty("RegionHandle");
+                                if (handleProp != null)
                                 {
-                                    var value = prop.GetValue(e.Region);
-                                    _logger.LogDebug("GridRegion.{PropName} = {Value}", prop.Name, value);
+                                    status.RegionHandle = (ulong?)handleProp.GetValue(e.Region);
                                 }
-                                catch (Exception ex)
+                                
+                                // Try coordinates
+                                var xProp = regionType.GetProperty("X");
+                                var yProp = regionType.GetProperty("Y");
+                                if (xProp != null && yProp != null)
                                 {
-                                    _logger.LogDebug("Could not read GridRegion.{PropName}: {Error}", prop.Name, ex.Message);
+                                    status.LocationX = (uint?)xProp.GetValue(e.Region);
+                                    status.LocationY = (uint?)yProp.GetValue(e.Region);
                                 }
+                                
+                                status.SizeX = 256; // Standard region size
+                                status.SizeY = 256;
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning("Could not set all region properties for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
                             }
                             
-                            status.IsOnline = true;
-                            // Note: GridRegion structure may not have all these properties
-                            // Uncomment as we discover the correct property names
-                            // status.RegionHandle = e.Region.Handle;
-                            // status.RegionUuid = e.Region.ID.ToString();
-                            // status.LocationX = (uint?)e.Region.X;
-                            // status.LocationY = (uint?)e.Region.Y;
-                            status.SizeX = 256; // Default region size
-                            status.SizeY = 256;
-                            // status.AccessLevel = e.Region.Access.ToString();
                             regionReceived.TrySetResult(e.Region);
                         }
                     };
@@ -214,53 +221,73 @@ namespace RadegastWeb.Services
                         {
                             var region = regionReceived.Task.Result;
                             
-                            // Try to get a region handle - GridRegion structure is unclear
-                            // For now, we'll skip agent count retrieval until we can properly access the handle
-                            // TODO: Figure out correct GridRegion properties for handle lookup
-                            
-                            _logger.LogDebug("Region {RegionName} found but agent count lookup needs handle property fix", trackedRegion.RegionName);
-                            status.AgentCount = 0; // Placeholder until we fix the handle lookup
-                            
-                            /* 
-                            // Original code - needs correct GridRegion properties
-                            var agentItemsReceived = new TaskCompletionSource<int>();
-                            int agentCount = 0;
-
-                            EventHandler<GridItemsEventArgs> itemHandler = (s, e) =>
-                            {
-                                if (e.Type == GridItemType.AgentLocations)
-                                {
-                                    agentCount = e.Items.Count;
-                                    agentItemsReceived.TrySetResult(agentCount);
-                                }
-                            };
-
+                            // Get region handle using reflection (property name may vary)
+                            ulong? regionHandle = null;
                             try
                             {
-                                client.Grid.GridItems += itemHandler;
-                                client.Grid.RequestMapItems(
-                                    region.Handle,  // Need correct property name here
-                                    GridItemType.AgentLocations,
-                                    GridLayerType.Objects);
-                                
-                                // Wait for agent count or timeout
-                                await Task.WhenAny(agentItemsReceived.Task, Task.Delay(10000)); // 10 second timeout
-                                
-                                if (agentItemsReceived.Task.IsCompleted)
+                                var handleProp = region.GetType().GetProperty("RegionHandle");
+                                if (handleProp != null)
                                 {
-                                    status.AgentCount = agentItemsReceived.Task.Result;
-                                }
-                                else
-                                {
-                                    status.AgentCount = 0; // Timeout, assume 0 agents
-                                    _logger.LogDebug("Timeout getting agent count for {RegionName}, assuming 0", trackedRegion.RegionName);
+                                    regionHandle = (ulong?)handleProp.GetValue(region);
                                 }
                             }
-                            finally
+                            catch (Exception ex)
                             {
-                                client.Grid.GridItems -= itemHandler;
+                                _logger.LogWarning("Could not get RegionHandle for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
                             }
-                            */
+                            
+                            if (regionHandle.HasValue)
+                            {
+                                // Now retrieve agent count using RequestMapItems
+                                var agentItemsReceived = new TaskCompletionSource<int>();
+                                int agentCount = 0;
+
+                                EventHandler<GridItemsEventArgs> itemHandler = (s, e) =>
+                                {
+                                    if (e.Type == GridItemType.AgentLocations)
+                                    {
+                                        agentCount = e.Items.Count;
+                                        agentItemsReceived.TrySetResult(agentCount);
+                                    }
+                                };
+
+                                try
+                                {
+                                    client.Grid.GridItems += itemHandler;
+                                    client.Grid.RequestMapItems(
+                                        regionHandle.Value,
+                                        GridItemType.AgentLocations,
+                                        GridLayerType.Objects);
+                                    
+                                    // Wait for agent count or timeout
+                                    await Task.WhenAny(agentItemsReceived.Task, Task.Delay(10000)); // 10 second timeout
+                                    
+                                    if (agentItemsReceived.Task.IsCompleted)
+                                    {
+                                        status.AgentCount = agentItemsReceived.Task.Result;
+                                        _logger.LogDebug("Region {RegionName} has {AgentCount} agents", trackedRegion.RegionName, status.AgentCount);
+                                    }
+                                    else
+                                    {
+                                        status.AgentCount = 0; // Timeout, assume 0 agents
+                                        _logger.LogDebug("Timeout getting agent count for {RegionName}, assuming 0", trackedRegion.RegionName);
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    status.AgentCount = 0;
+                                    _logger.LogWarning("Error getting agent count for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
+                                }
+                                finally
+                                {
+                                    client.Grid.GridItems -= itemHandler;
+                                }
+                            }
+                            else
+                            {
+                                status.AgentCount = 0;
+                                _logger.LogDebug("Could not get RegionHandle for {RegionName}, cannot query agent count", trackedRegion.RegionName);
+                            }
                         }
                         else
                         {
