@@ -350,29 +350,76 @@ namespace RadegastWeb.Services
                                                     {
                                                         itemsForOurRegion++;
                                                         
-                                                        // Get the Count property - this tells us how many agents are at this location
-                                                        // Each map item can represent multiple agents at the same approximate position
-                                                        // A count of 0 means the position is empty (used to clear old data)
-                                                        int agentCount = 0;
-                                                        
-                                                        var countProp = itemType.GetProperty("Count");
-                                                        if (countProp != null)
+                                                        // DEBUG: Log all properties and fields of this item type (only once)
+                                                        if (itemsForOurRegion == 1)
                                                         {
-                                                            var countValue = countProp.GetValue(item);
-                                                            agentCount = countValue != null ? Convert.ToInt32(countValue) : 0;
+                                                            _logger.LogDebug("GridItem type: {TypeName}", itemType.FullName);
+                                                            var allProps = itemType.GetProperties();
+                                                            var allFields = itemType.GetFields();
+                                                            _logger.LogDebug("Available properties: {Props}", string.Join(", ", allProps.Select(p => $"{p.Name}:{p.PropertyType.Name}")));
+                                                            _logger.LogDebug("Available fields: {Fields}", string.Join(", ", allFields.Select(f => $"{f.Name}:{f.FieldType.Name}")));
+                                                        }
+                                                        
+                                                        // Get the agent count from the item
+                                                        // In LibreMetaverse, the agent count is typically stored in the "Extra" field
+                                                        // (from MapItemReply message's Extra parameter)
+                                                        // Each map item can represent multiple agents at the same approximate position
+                                                        int agentCount = 0;
+                                                        bool foundCount = false;
+                                                        
+                                                        // Try Extra field/property first (most common for agent locations)
+                                                        var extraProp = itemType.GetProperty("Extra");
+                                                        if (extraProp != null)
+                                                        {
+                                                            var extraValue = extraProp.GetValue(item);
+                                                            agentCount = extraValue != null ? Convert.ToInt32(extraValue) : 0;
+                                                            foundCount = true;
+                                                            _logger.LogTrace("Found Extra property: {Count}", agentCount);
                                                         }
                                                         else
                                                         {
-                                                            var countField = itemType.GetField("Count");
-                                                            if (countField != null)
+                                                            var extraField = itemType.GetField("Extra");
+                                                            if (extraField != null)
                                                             {
-                                                                var countValue = countField.GetValue(item);
-                                                                agentCount = countValue != null ? Convert.ToInt32(countValue) : 0;
+                                                                var extraValue = extraField.GetValue(item);
+                                                                agentCount = extraValue != null ? Convert.ToInt32(extraValue) : 0;
+                                                                foundCount = true;
+                                                                _logger.LogTrace("Found Extra field: {Count}", agentCount);
                                                             }
                                                         }
                                                         
+                                                        // Fallback: try Count property/field
+                                                        if (!foundCount)
+                                                        {
+                                                            var countProp = itemType.GetProperty("Count");
+                                                            if (countProp != null)
+                                                            {
+                                                                var countValue = countProp.GetValue(item);
+                                                                agentCount = countValue != null ? Convert.ToInt32(countValue) : 0;
+                                                                foundCount = true;
+                                                                _logger.LogTrace("Found Count property: {Count}", agentCount);
+                                                            }
+                                                            else
+                                                            {
+                                                                var countField = itemType.GetField("Count");
+                                                                if (countField != null)
+                                                                {
+                                                                    var countValue = countField.GetValue(item);
+                                                                    agentCount = countValue != null ? Convert.ToInt32(countValue) : 0;
+                                                                    foundCount = true;
+                                                                    _logger.LogTrace("Found Count field: {Count}", agentCount);
+                                                                }
+                                                            }
+                                                        }
+                                                        
+                                                        if (!foundCount)
+                                                        {
+                                                            _logger.LogWarning("Neither Extra nor Count property/field found on GridItem - falling back to counting items (count=1)");
+                                                            agentCount = 1; // Fallback: treat as one agent per item
+                                                        }
+                                                        
                                                         // Sum the count from each item (don't just count items)
-                                                        // Items at (0,0) are valid - they can contain actual agents or have Count=0 for empty regions
+                                                        // A count of 0 means the position is empty (used to clear old data)
                                                         matchingAgentCount += agentCount;
                                                     }
                                                 }
