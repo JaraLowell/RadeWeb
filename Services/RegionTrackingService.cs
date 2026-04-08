@@ -250,6 +250,10 @@ namespace RadegastWeb.Services
                                 await _agentCountSerializer.WaitAsync();
                                 try
                                 {
+                                    // Log the logged-in account's UUID for comparison
+                                    _logger.LogDebug("Requesting agents for {RegionName}, our UUID: {SelfUUID}", 
+                                        trackedRegion.RegionName, client.Self.AgentID);
+                                    
                                     // Retrieve agent count using RequestMapItems
                                     var agentItemsReceived = new TaskCompletionSource<int>();
                                     int agentCount = 0;
@@ -259,6 +263,34 @@ namespace RadegastWeb.Services
                                         if (e.Type == GridItemType.AgentLocations)
                                         {
                                             agentCount = e.Items.Count;
+                                            
+                                            // Debug: log items to see what we're getting
+                                            _logger.LogDebug("GridItems received for region handle {Handle}: {Count} items", 
+                                                regionHandle.Value, e.Items.Count);
+                                            foreach (var item in e.Items)
+                                            {
+                                                var itemType = item.GetType();
+                                                _logger.LogDebug("  Item type: {Type}", itemType.FullName);
+                                                
+                                                // Try to get ID/UUID if it exists
+                                                try
+                                                {
+                                                    var idProp = itemType.GetProperty("ID");
+                                                    var idField = itemType.GetField("ID");
+                                                    var nameProp = itemType.GetProperty("Name");
+                                                    var nameField = itemType.GetField("Name");
+                                                    
+                                                    var id = idProp != null ? idProp.GetValue(item) : (idField != null ? idField.GetValue(item) : null);
+                                                    var name = nameProp != null ? nameProp.GetValue(item) : (nameField != null ? nameField.GetValue(item) : null);
+                                                    
+                                                    _logger.LogDebug("    ID: {Id}, Name: {Name}", id, name ?? "N/A");
+                                                }
+                                                catch (Exception ex)
+                                                {
+                                                    _logger.LogDebug("    Could not read item properties: {Error}", ex.Message);
+                                                }
+                                            }
+                                            
                                             agentItemsReceived.TrySetResult(agentCount);
                                         }
                                     };
