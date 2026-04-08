@@ -554,6 +554,8 @@ namespace RadegastWeb.Services
                 var instances = instancesField.GetValue(accountService) as System.Collections.Concurrent.ConcurrentDictionary<Guid, Core.WebRadegastInstance>;
                 if (instances != null)
                 {
+                    _logger.LogInformation("Checking {Count} account instance(s) for region tracking eligibility", instances.Count);
+                    
                     // Try all instances to find a properly connected one
                     foreach (var kvp in instances)
                     {
@@ -576,24 +578,39 @@ namespace RadegastWeb.Services
                                                        && !status.StartsWith("Login:", StringComparison.OrdinalIgnoreCase);
                             
                             // Additional check: verify the account info shows connected state
+                            // Note: This is advisory only - Network.Connected is the source of truth
                             bool accountInfoConnected = instance.AccountInfo?.IsConnected == true;
                             
-                            if (isNetworkConnected && hasValidClient && statusIndicatesOnline && accountInfoConnected)
+                            // Primary check: Network must be connected AND status must indicate online
+                            // AccountInfo.IsConnected is advisory (may be out of sync due to being a copy)
+                            if (isNetworkConnected && hasValidClient && statusIndicatesOnline)
                             {
-                                _logger.LogDebug("Using account {AccountId} ({Username}) for region tracking - Status: {Status}", 
-                                    kvp.Key, 
-                                    instance.AccountInfo != null ? $"{instance.AccountInfo.FirstName} {instance.AccountInfo.LastName}" : "unknown",
-                                    status);
+                                string accountName = instance.AccountInfo != null ? $"{instance.AccountInfo.FirstName} {instance.AccountInfo.LastName}" : "unknown";
+                                
+                                if (!accountInfoConnected)
+                                {
+                                    _logger.LogWarning("Using account {AccountId} ({Name}) for region tracking despite AccountInfo.IsConnected=false. Network reports connected. Status: {Status}", 
+                                        kvp.Key, accountName, status);
+                                }
+                                else
+                                {
+                                    _logger.LogDebug("Using account {AccountId} ({Name}) for region tracking - Status: {Status}", 
+                                        kvp.Key, accountName, status);
+                                }
+                                
                                 return instance;
                             }
                             else
                             {
-                                _logger.LogDebug("Skipping account {AccountId} - NetworkConnected: {Network}, ValidClient: {Client}, StatusOnline: {Status}, AccountConnected: {Account}", 
-                                    kvp.Key, 
+                                string accountName = instance.AccountInfo != null ? $"{instance.AccountInfo.FirstName} {instance.AccountInfo.LastName}" : "unknown";
+                                _logger.LogInformation("Skipping account {AccountId} ({Name}) - NetworkConnected: {Network}, ValidClient: {Client}, StatusOnline: {Status}, AccountConnected: {Account}, CurrentStatus: '{CurrentStatus}'", 
+                                    kvp.Key,
+                                    accountName,
                                     isNetworkConnected,
                                     hasValidClient,
                                     statusIndicatesOnline,
-                                    accountInfoConnected);
+                                    accountInfoConnected,
+                                    status);
                             }
                         }
                         catch (Exception ex)
