@@ -338,18 +338,18 @@ namespace RadegastWeb.Services
                 // Clean display name at database level: only strip "Resident" if it's a default display name 
                 // and the legacy last name is "Resident" (indicating it's a legacy SL naming artifact, not intentional)
                 var cleanedDisplayName = agentDisplayName.IsDefaultDisplayName && 
-                                        agentDisplayName.LegacyLastName.Equals("Resident", StringComparison.OrdinalIgnoreCase) &&
-                                        agentDisplayName.DisplayName.EndsWith(" Resident", StringComparison.OrdinalIgnoreCase)
+                                        agentDisplayName.LegacyLastName?.Equals("Resident", StringComparison.OrdinalIgnoreCase) == true &&
+                                        agentDisplayName.DisplayName?.EndsWith(" Resident", StringComparison.OrdinalIgnoreCase) == true
                     ? agentDisplayName.DisplayName.Substring(0, agentDisplayName.DisplayName.Length - " Resident".Length)
-                    : agentDisplayName.DisplayName;
+                    : agentDisplayName.DisplayName ?? string.Empty;
 
                 var displayName = new DisplayName
                 {
                     AvatarId = avatarId,
                     DisplayNameValue = cleanedDisplayName,
-                    UserName = agentDisplayName.UserName,
-                    LegacyFirstName = agentDisplayName.LegacyFirstName,
-                    LegacyLastName = agentDisplayName.LegacyLastName.Equals("Resident", StringComparison.OrdinalIgnoreCase) ? string.Empty : agentDisplayName.LegacyLastName,
+                    UserName = agentDisplayName.UserName ?? string.Empty,
+                    LegacyFirstName = agentDisplayName.LegacyFirstName ?? string.Empty,
+                    LegacyLastName = agentDisplayName.LegacyLastName?.Equals("Resident", StringComparison.OrdinalIgnoreCase) == true ? string.Empty : agentDisplayName.LegacyLastName ?? string.Empty,
                     IsDefaultDisplayName = agentDisplayName.IsDefaultDisplayName,
                     NextUpdate = agentDisplayName.NextUpdate,
                     LastUpdated = DateTime.UtcNow,

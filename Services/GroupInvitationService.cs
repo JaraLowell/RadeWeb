@@ -103,7 +103,7 @@ namespace RadegastWeb.Services
                     InstantMessageOnline.Online,
                     Vector3.Zero,
                     UUID.Zero,
-                    null);
+                    Array.Empty<byte>());
                 
                 var actionText = request.Accept ? "Accepted" : "Declined";
                 _logger.LogInformation("{Action} group invitation to {GroupName} from {FromAgentName} ({FromAgentId}) for account {AccountId}",

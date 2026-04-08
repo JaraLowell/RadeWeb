@@ -331,7 +331,7 @@ namespace RadegastWeb.Core
                 _logger.LogInformation("Attempting login for {FirstName} {LastName}", 
                     AccountInfo.FirstName, AccountInfo.LastName);
 
-                var loginResult = await Task.Run(() => _client.Network.Login(loginParams));
+                var loginResult = await _client.Network.LoginAsync(loginParams);
                 
                 if (loginResult)
                 {
@@ -3275,7 +3275,7 @@ namespace RadegastWeb.Core
         {
             try
             {
-                if (!UUID.TryParse(AccountInfo.AvatarRelayUuid, out UUID relayUuid))
+                if (!UUID.TryParse(AccountInfo.AvatarRelayUuid ?? string.Empty, out UUID relayUuid))
                 {
                     _logger.LogWarning("Invalid relay UUID '{RelayUuid}' for account {AccountId}", 
                         AccountInfo.AvatarRelayUuid, _accountId);
@@ -3370,7 +3370,7 @@ namespace RadegastWeb.Core
             // Update any existing conference sessions that might actually be group sessions
             foreach (var session in _chatSessions.Values.Where(s => s.ChatType == "Conference"))
             {
-                if (UUID.TryParse(session.TargetId, out UUID groupId) && _groups.ContainsKey(groupId))
+                if (UUID.TryParse(session.TargetId ?? string.Empty, out UUID groupId) && _groups.ContainsKey(groupId))
                 {
                     // Convert conference session to group session
                     var updatedSession = new ChatSessionDto
@@ -3399,7 +3399,7 @@ namespace RadegastWeb.Core
             // Update any existing group sessions that have placeholder names
             foreach (var session in _chatSessions.Values.Where(s => s.ChatType == "Group"))
             {
-                if (UUID.TryParse(session.TargetId, out UUID groupId) && _groups.ContainsKey(groupId))
+                if (UUID.TryParse(session.TargetId ?? string.Empty, out UUID groupId) && _groups.ContainsKey(groupId))
                 {
                     var groupName = _groups[groupId].Name;
                     if (session.SessionName != groupName && session.SessionName.StartsWith("Group Chat ("))
