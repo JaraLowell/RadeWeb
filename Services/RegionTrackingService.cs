@@ -24,7 +24,7 @@ namespace RadegastWeb.Services
         private readonly IServiceProvider _serviceProvider;
         private readonly string _configPath;
         private readonly SemaphoreSlim _parallelCheckLimiter = new SemaphoreSlim(10, 10); // Max 10 concurrent region checks
-        private readonly SemaphoreSlim _agentCountLimiter = new SemaphoreSlim(5, 5); // Max 5 concurrent agent count queries
+        private readonly SemaphoreSlim _agentCountSerializer = new SemaphoreSlim(1, 1); // MUST be serialized - GridItemsEventArgs has no region identifier
         private bool _disposed = false;
 
         public RegionTrackingService(
@@ -246,9 +246,10 @@ namespace RadegastWeb.Services
                             
                             if (regionHandle.HasValue)
                             {
-                                // Limit concurrent agent count queries to prevent event handler cross-contamination
-                                // 5 concurrent queries is a good balance between speed and reliability
-                                await _agentCountLimiter.WaitAsync();
+                                // CRITICAL: Agent count queries MUST be serialized (1 at a time)
+                                // GridItemsEventArgs doesn't expose RegionHandle, so concurrent requests
+                                // cause event handler cross-contamination with wrong agent counts
+                                await _agentCountSerializer.WaitAsync();
                                 try
                                 {
                                     var currentRegionHandle = regionHandle.Value;
@@ -260,8 +261,6 @@ namespace RadegastWeb.Services
                                         if (e.Type == GridItemType.AgentLocations)
                                         {
                                             agentCount = e.Items.Count;
-                                            _logger.LogDebug("GridItems received for {RegionName}: {Count} agents", 
-                                                trackedRegion.RegionName, agentCount);
                                             agentItemsReceived.TrySetResult(agentCount);
                                         }
                                     };
@@ -275,8 +274,8 @@ namespace RadegastWeb.Services
                                             GridItemType.AgentLocations,
                                             GridLayerType.Objects);
                                         
-                                        // Wait for agent count or timeout (reduced from 10s to 5s for faster parallel execution)
-                                        await Task.WhenAny(agentItemsReceived.Task, Task.Delay(5000));
+                                        // Optimized timeout: 3s is enough for most responses
+                                        await Task.WhenAny(agentItemsReceived.Task, Task.Delay(3000));
                                         
                                         if (agentItemsReceived.Task.IsCompleted)
                                         {
@@ -300,7 +299,7 @@ namespace RadegastWeb.Services
                                 }
                                 finally
                                 {
-                                    _agentCountLimiter.Release();
+                                    _agentCountSerializer.Release();
                                 }
                             }
                             else
@@ -478,7 +477,7 @@ namespace RadegastWeb.Services
             if (!_disposed)
             {
                 _parallelCheckLimiter?.Dispose();
-                _agentCountLimiter?.Dispose();
+                _agentCountSerializer?.Dispose();
                 _disposed = true;
             }
         }
