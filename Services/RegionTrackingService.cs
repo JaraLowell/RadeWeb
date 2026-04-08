@@ -111,8 +111,6 @@ namespace RadegastWeb.Services
             var tasks = enabledRegions.Select(region => CheckRegionWithThrottleAsync(region));
 
             await Task.WhenAll(tasks);
-
-            _logger.LogInformation("Completed region tracking check");
         }
 
         private async Task CheckRegionWithThrottleAsync(TrackedRegion trackedRegion)
@@ -140,8 +138,6 @@ namespace RadegastWeb.Services
 
             try
             {
-                _logger.LogInformation("Checking region: {RegionName} for agent count", trackedRegion.RegionName);
-                
                 // Get a connected account instance
                 var accountService = _serviceProvider.GetService<IAccountService>();
                 if (accountService == null)
@@ -199,6 +195,28 @@ namespace RadegastWeb.Services
                                     status.LocationY = yValue != null ? Convert.ToUInt32(yValue) : (uint?)null;
                                 }
                                 
+                                // Get access level (maturity rating)
+                                var accessField = regionType.GetField("Access");
+                                var accessProp = regionType.GetProperty("Access");
+                                
+                                if (accessProp != null)
+                                {
+                                    var accessValue = accessProp.GetValue(e.Region);
+                                    if (accessValue != null)
+                                    {
+                                        // Access is typically a SimAccess enum: PG=13, Mature=21, Adult=42
+                                        status.AccessLevel = ConvertAccessLevel(accessValue);
+                                    }
+                                }
+                                else if (accessField != null)
+                                {
+                                    var accessValue = accessField.GetValue(e.Region);
+                                    if (accessValue != null)
+                                    {
+                                        status.AccessLevel = ConvertAccessLevel(accessValue);
+                                    }
+                                }
+                                
                                 status.SizeX = 256; // Standard region size
                                 status.SizeY = 256;
                             }
@@ -217,7 +235,13 @@ namespace RadegastWeb.Services
                         client.Grid.RequestMapRegion(trackedRegion.RegionName, GridLayerType.Objects);
                         
                         // Wait for response or timeout
-                        await Task.WhenAny(regionReceived.Task, Task.Delay(10000)); // 10 second timeout
+                        var completedTask = await Task.WhenAny(regionReceived.Task, Task.Delay(10000)); // 10 second timeout
+                        
+                        // If timeout occurred, cancel the TaskCompletionSource to prevent memory leaks
+                        if (completedTask != regionReceived.Task)
+                        {
+                            regionReceived.TrySetCanceled();
+                        }
                         
                         // Get agent count if region was found
                         if (regionReceived.Task.IsCompleted && regionReceived.Task.Result != null)
@@ -258,9 +282,9 @@ namespace RadegastWeb.Services
                                     {
                                         if (e.Type == GridItemType.AgentLocations)
                                         {
-                                            // Filter items by RegionHandle to prevent cross-contamination
-                                            var matchingAgents = new List<object>();
-                                            int itemsForOurRegion = 0; // Track if we found ANY items for our region
+                                            // Use counter instead of List to reduce memory allocations
+                                            int matchingAgentCount = 0;
+                                            int itemsForOurRegion = 0;
                                             
                                             foreach (var item in e.Items)
                                             {
@@ -269,64 +293,66 @@ namespace RadegastWeb.Services
                                                     var itemType = item.GetType();
                                                     
                                                     // Get RegionHandle from the item
-                                                    var handleProp = itemType.GetProperty("RegionHandle");
-                                                    var handleField = itemType.GetField("RegionHandle");
-                                                    
                                                     ulong? itemRegionHandle = null;
+                                                    var handleProp = itemType.GetProperty("RegionHandle");
                                                     if (handleProp != null)
                                                     {
                                                         itemRegionHandle = (ulong?)handleProp.GetValue(item);
                                                     }
-                                                    else if (handleField != null)
+                                                    else
                                                     {
-                                                        itemRegionHandle = (ulong?)handleField.GetValue(item);
+                                                        var handleField = itemType.GetField("RegionHandle");
+                                                        if (handleField != null)
+                                                        {
+                                                            itemRegionHandle = (ulong?)handleField.GetValue(item);
+                                                        }
                                                     }
                                                     
                                                     // Only process items for the region we're querying
                                                     if (itemRegionHandle.HasValue && itemRegionHandle.Value == currentRegionHandle)
                                                     {
-                                                        itemsForOurRegion++; // Found an item for our region
+                                                        itemsForOurRegion++;
                                                         
                                                         // Get position to detect placeholder items
                                                         byte? localX = null;
                                                         byte? localY = null;
                                                         
                                                         var xProp = itemType.GetProperty("LocalX");
-                                                        var xField = itemType.GetField("LocalX");
-                                                        var yProp = itemType.GetProperty("LocalY");
-                                                        var yField = itemType.GetField("LocalY");
-                                                        
                                                         if (xProp != null)
                                                         {
                                                             var xValue = xProp.GetValue(item);
                                                             localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
                                                         }
-                                                        else if (xField != null)
+                                                        else
                                                         {
-                                                            var xValue = xField.GetValue(item);
-                                                            localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
+                                                            var xField = itemType.GetField("LocalX");
+                                                            if (xField != null)
+                                                            {
+                                                                var xValue = xField.GetValue(item);
+                                                                localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
+                                                            }
                                                         }
                                                         
+                                                        var yProp = itemType.GetProperty("LocalY");
                                                         if (yProp != null)
                                                         {
                                                             var yValue = yProp.GetValue(item);
                                                             localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
                                                         }
-                                                        else if (yField != null)
+                                                        else
                                                         {
-                                                            var yValue = yField.GetValue(item);
-                                                            localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
+                                                            var yField = itemType.GetField("LocalY");
+                                                            if (yField != null)
+                                                            {
+                                                                var yValue = yField.GetValue(item);
+                                                                localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
+                                                            }
                                                         }
                                                         
                                                         // Filter out 0,0 placeholders - these indicate region online but empty
                                                         if (localX.HasValue && localY.HasValue && (localX.Value != 0 || localY.Value != 0))
                                                         {
-                                                            matchingAgents.Add(item);
-                                                            _logger.LogDebug("  Valid agent at ({X},{Y}) in {Region}", localX.Value, localY.Value, trackedRegion.RegionName);
-                                                        }
-                                                        else if (localX == 0 && localY == 0)
-                                                        {
-                                                            _logger.LogDebug("  Skipping 0,0 placeholder in {Region}", trackedRegion.RegionName);
+                                                            matchingAgentCount++;
                                                         }
                                                     }
                                                 }
@@ -336,12 +362,12 @@ namespace RadegastWeb.Services
                                                 }
                                             }
                                             
-                                            // Only complete if this event contains items for OUR region, or if the response is empty (no agents anywhere)
+                                            // Only complete if this event contains items for OUR region, or if the response is empty
                                             if (itemsForOurRegion > 0 || e.Items.Count == 0)
                                             {
                                                 _logger.LogDebug("Region {RegionName}: Filtered {Matching} real agents from {RegionItems} items for our region, {Total} total (handle: {Handle})", 
-                                                    trackedRegion.RegionName, matchingAgents.Count, itemsForOurRegion, e.Items.Count, currentRegionHandle);
-                                                agentItemsReceived.TrySetResult(matchingAgents.Count);
+                                                    trackedRegion.RegionName, matchingAgentCount, itemsForOurRegion, e.Items.Count, currentRegionHandle);
+                                                agentItemsReceived.TrySetResult(matchingAgentCount);
                                             }
                                             else
                                             {
@@ -364,7 +390,7 @@ namespace RadegastWeb.Services
                                             GridLayerType.Objects);
                                         
                                         // Wait for response or timeout (3s should be enough)
-                                        await Task.WhenAny(agentItemsReceived.Task, Task.Delay(3000));
+                                        var agentCompletedTask = await Task.WhenAny(agentItemsReceived.Task, Task.Delay(3000));
                                         
                                         if (agentItemsReceived.Task.IsCompleted)
                                         {
@@ -373,6 +399,8 @@ namespace RadegastWeb.Services
                                         else
                                         {
                                             status.AgentCount = 0; // Timeout, assume 0 agents
+                                            // Cancel the TaskCompletionSource to prevent memory leak
+                                            agentItemsReceived.TrySetCanceled();
                                             _logger.LogWarning("Timeout getting agent count for {RegionName}", trackedRegion.RegionName);
                                         }
                                     }
@@ -383,7 +411,15 @@ namespace RadegastWeb.Services
                                     }
                                     finally
                                     {
-                                        client.Grid.GridItems -= itemHandler;
+                                        // Ensure event handler is removed to prevent memory leaks
+                                        try
+                                        {
+                                            client.Grid.GridItems -= itemHandler;
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            _logger.LogWarning("Error removing GridItems event handler: {Error}", ex.Message);
+                                        }
                                     }
                                 }
                                 finally
@@ -407,7 +443,15 @@ namespace RadegastWeb.Services
                     }
                     finally
                     {
-                        client.Grid.GridRegion -= handler;
+                        // Ensure event handler is removed to prevent memory leaks
+                        try
+                        {
+                            client.Grid.GridRegion -= handler;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("Error removing GridRegion event handler: {Error}", ex.Message);
+                        }
                     }
                 }
             }
@@ -426,16 +470,54 @@ namespace RadegastWeb.Services
                 await using var context = await _contextFactory.CreateDbContextAsync();
                 context.RegionStatuses.Add(status);
                 await context.SaveChangesAsync();
-                
-                _logger.LogInformation(
-                    "Region {RegionName} status: {Status}, Agents: {AgentCount}",
-                    trackedRegion.RegionName,
-                    status.IsOnline ? "Online" : "Offline",
-                    status.AgentCount?.ToString() ?? "unknown");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error saving region status for {RegionName}", trackedRegion.RegionName);
+            }
+        }
+
+        /// <summary>
+        /// Convert SimAccess enum value to human-readable string
+        /// </summary>
+        private string ConvertAccessLevel(object accessValue)
+        {
+            try
+            {
+                // SimAccess enum values: PG=13, Mature=21, Adult=42
+                // The value could be the enum itself or the integer value
+                string? accessStr = accessValue.ToString();
+                
+                if (string.IsNullOrEmpty(accessStr))
+                {
+                    return "Unknown";
+                }
+                
+                // First try to parse as integer
+                if (int.TryParse(accessStr, out int accessInt))
+                {
+                    return accessInt switch
+                    {
+                        13 => "General (PG)",
+                        21 => "Moderate",
+                        42 => "Adult",
+                        _ => $"Unknown ({accessInt})"
+                    };
+                }
+                
+                // Try enum name
+                return accessStr switch
+                {
+                    "PG" => "General (PG)",
+                    "Mature" => "Moderate",
+                    "Adult" => "Adult",
+                    _ => accessStr ?? "Unknown"
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Error converting access level: {Error}", ex.Message);
+                return "Unknown";
             }
         }
 
@@ -559,15 +641,36 @@ namespace RadegastWeb.Services
         }
 
         /// <summary>
-        /// Dispose of unmanaged resources
+        /// Dispose of unmanaged resources and release any waiting threads
         /// </summary>
         public void Dispose()
         {
             if (!_disposed)
             {
-                _parallelCheckLimiter?.Dispose();
-                _agentCountLimiter?.Dispose();
-                _disposed = true;
+                try
+                {
+                    // Release any threads waiting on the semaphores before disposing
+                    // This prevents potential deadlocks if Dispose is called during operation
+                    while (_parallelCheckLimiter.CurrentCount < 10)
+                    {
+                        try { _parallelCheckLimiter.Release(); } catch { break; }
+                    }
+                    
+                    while (_agentCountLimiter.CurrentCount < 5)
+                    {
+                        try { _agentCountLimiter.Release(); } catch { break; }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Error releasing semaphores during dispose: {Error}", ex.Message);
+                }
+                finally
+                {
+                    _parallelCheckLimiter?.Dispose();
+                    _agentCountLimiter?.Dispose();
+                    _disposed = true;
+                }
             }
         }
     }
