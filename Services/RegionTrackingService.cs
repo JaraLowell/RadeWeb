@@ -562,8 +562,6 @@ namespace RadegastWeb.Services
                 return null;
             }
             
-            _logger.LogInformation("Checking {Count} account instance(s) for region tracking eligibility", instances.Count);
-            
             if (instances.Count == 0)
             {
                 _logger.LogWarning("No account instances in dictionary to check");
