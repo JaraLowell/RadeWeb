@@ -184,11 +184,19 @@ namespace RadegastWeb.Services
                                     status.RegionHandle = (ulong?)handleField.GetValue(e.Region);
                                 }
                                 
-                                // Get location coordinates
+                                // Get location coordinates (fields return int, convert to uint)
                                 var xField = regionType.GetField("X");
                                 var yField = regionType.GetField("Y");
-                                if (xField != null) status.LocationX = (uint?)xField.GetValue(e.Region);
-                                if (yField != null) status.LocationY = (uint?)yField.GetValue(e.Region);
+                                if (xField != null)
+                                {
+                                    var xValue = xField.GetValue(e.Region);
+                                    status.LocationX = xValue != null ? Convert.ToUInt32(xValue) : (uint?)null;
+                                }
+                                if (yField != null)
+                                {
+                                    var yValue = yField.GetValue(e.Region);
+                                    status.LocationY = yValue != null ? Convert.ToUInt32(yValue) : (uint?)null;
+                                }
                                 
                                 status.SizeX = 256; // Standard region size
                                 status.SizeY = 256;
