@@ -572,12 +572,9 @@ namespace RadegastWeb.Services
             // Try all instances to find a properly connected one
             foreach (var kvp in instances)
             {
-                _logger.LogInformation("Checking instance for AccountId: {AccountId}", kvp.Key);
-                
                 var instance = kvp.Value;
                 if (instance == null)
                 {
-                    _logger.LogWarning("Instance for AccountId {AccountId} is null, skipping", kvp.Key);
                     continue;
                 }
                 
