@@ -181,14 +181,19 @@
             const statusText = region.isOnline ? 'Online' : 'Offline';
             const agentCount = region.isOnline ? region.agentCount : 'N/A';
             const lastChecked = formatDate(new Date(region.lastChecked));
-            const description = region.description ? `<div class="region-description">${region.description}</div>` : '';
+            
+            // If description exists, show it in bold with region name below in small text
+            // Otherwise, show region name in bold
+            const headerContent = region.description 
+                ? `<div class="region-name">${region.description}</div>
+                   <div class="region-description">${region.regionName}</div>`
+                : `<div class="region-name">${region.regionName}</div>`;
 
             return `
                 <div class="region-card">
                     <div class="region-header">
                         <div>
-                            <div class="region-name">${region.regionName}</div>
-                            ${description}
+                            ${headerContent}
                         </div>
                         <div class="status-badge ${statusClass}">${statusText}</div>
                     </div>
