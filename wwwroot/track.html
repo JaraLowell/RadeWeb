@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Region Tracking - RadeWeb</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            border-radius: 10px;
+            padding: 20px 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #667eea;
+            font-size: 2em;
+            margin-bottom: 5px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .stats-bar {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .stat-card {
+            text-align: center;
+            padding: 10px;
+        }
+
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .regions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .region-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transition: transform 0.2s;
+        }
+
+        .region-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .region-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .region-name {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .status-badge {
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .status-online {
+            background: #10b981;
+            color: white;
+        }
+
+        .status-offline {
+            background: #ef4444;
+            color: white;
+        }
+
+        .agent-count {
+            font-size: 3em;
+            font-weight: bold;
+            color: #667eea;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .agent-label {
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .region-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+            font-size: 0.85em;
+        }
+
+        .info-item {
+            color: #666;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .chart-container {
+            margin-top: 20px;
+            height: 150px;
+        }
+
+        .last-update {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 0.9em;
+            margin-top: 20px;
+        }
+
+        .disabled-message {
+            background: white;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .disabled-message h2 {
+            color: #ef4444;
+            margin-bottom: 10px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: white;
+            font-size: 1.2em;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .regions-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats-bar {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🗺️ Region Tracking Dashboard</h1>
+            <p class="subtitle">Live Second Life region monitoring - Updates every 5 minutes</p>
+        </header>
+
+        <div id="content">
+            <div class="loading">
+                <div class="spinner"></div>
+                Loading region data...
+            </div>
+        </div>
+
+        <div class="last-update">
+            Last updated: <span id="lastUpdate">Never</span>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        let charts = {};
+        let updateInterval;
+
+        // Load data on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadData();
+            // Auto-refresh every 5 minutes (300000 ms)
+            updateInterval = setInterval(loadData, 300000);
+        });
+
+        async function loadData() {
+            try {
+                // Check if tracking is enabled
+                const configResponse = await fetch('/api/regiontracking/config');
+                const config = await configResponse.json();
+
+                if (!config.enabled) {
+                    showDisabledMessage();
+                    return;
+                }
+
+                // Get current agent counts
+                const agentsResponse = await fetch('/api/regiontracking/agents/current');
+                const agentsData = await agentsResponse.json();
+
+                // Check if there's any data
+                if (!agentsData.regions || agentsData.regions.length === 0) {
+                    showNoDataMessage();
+                    return;
+                }
+
+                // Display the data
+                displayDashboard(agentsData);
+
+                // Load 24-hour charts for each region
+                for (const region of agentsData.regions) {
+                    await load24HourChart(region.regionName);
+                }
+
+                // Update last update time
+                document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
+
+            } catch (error) {
+                console.error('Error loading data:', error);
+                showError('Failed to load region data. Please check if the API is running.');
+            }
+        }
+
+        function displayDashboard(data) {
+            const content = document.getElementById('content');
+            
+            const html = `
+                <div class="stats-bar">
+                    <div class="stat-card">
+                        <div class="stat-value">${data.totalRegions}</div>
+                        <div class="stat-label">Total Regions</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${data.onlineRegions}</div>
+                        <div class="stat-label">Online</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${data.totalRegions - data.onlineRegions}</div>
+                        <div class="stat-label">Offline</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${data.totalAgents}</div>
+                        <div class="stat-label">Total Agents</div>
+                    </div>
+                </div>
+
+                <div class="regions-grid">
+                    ${data.regions.map(region => createRegionCard(region)).join('')}
+                </div>
+            `;
+
+            content.innerHTML = html;
+        }
+
+        function createRegionCard(region) {
+            const statusClass = region.isOnline ? 'status-online' : 'status-offline';
+            const statusText = region.isOnline ? 'Online' : 'Offline';
+            const agentCount = region.isOnline ? region.agentCount : 'N/A';
+            const lastChecked = new Date(region.lastChecked).toLocaleString();
+
+            return `
+                <div class="region-card">
+                    <div class="region-header">
+                        <div class="region-name">${region.regionName}</div>
+                        <div class="status-badge ${statusClass}">${statusText}</div>
+                    </div>
+                    
+                    <div class="agent-count">${agentCount}</div>
+                    <div class="agent-label">Agents Online</div>
+
+                    <div class="region-info">
+                        <div class="info-item">
+                            <span class="info-label">Access:</span> ${region.accessLevel || 'Unknown'}
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Last Check:</span> ${lastChecked}
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <canvas id="chart-${region.regionName.replace(/\s+/g, '-')}"></canvas>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function load24HourChart(regionName) {
+            try {
+                // Get data for last 24 hours
+                const since = new Date();
+                since.setHours(since.getHours() - 24);
+                
+                const response = await fetch(`/api/regiontracking/status/${encodeURIComponent(regionName)}?since=${since.toISOString()}`);
+                const history = await response.json();
+
+                if (!history || history.length === 0) {
+                    return;
+                }
+
+                // Prepare chart data
+                const sortedHistory = history.sort((a, b) => new Date(a.checkedAt) - new Date(b.checkedAt));
+                
+                const labels = sortedHistory.map(h => {
+                    const date = new Date(h.checkedAt);
+                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                });
+
+                const agentData = sortedHistory.map(h => h.agentCount || 0);
+
+                // Create chart
+                const chartId = `chart-${regionName.replace(/\s+/g, '-')}`;
+                const ctx = document.getElementById(chartId);
+                
+                if (!ctx) return;
+
+                // Destroy existing chart if it exists
+                if (charts[regionName]) {
+                    charts[regionName].destroy();
+                }
+
+                charts[regionName] = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Agents',
+                            data: agentData,
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            tension: 0.4,
+                            fill: true,
+                            pointRadius: 2,
+                            pointHoverRadius: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        return `Agents: ${context.parsed.y}`;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                display: true,
+                                ticks: {
+                                    maxTicksLimit: 6,
+                                    font: {
+                                        size: 10
+                                    }
+                                },
+                                grid: {
+                                    display: false
+                                }
+                            },
+                            y: {
+                                display: true,
+                                beginAtZero: true,
+                                ticks: {
+                                    precision: 0,
+                                    font: {
+                                        size: 10
+                                    }
+                                },
+                                grid: {
+                                    color: 'rgba(0, 0, 0, 0.05)'
+                                }
+                            }
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error(`Error loading chart for ${regionName}:`, error);
+            }
+        }
+
+        function showDisabledMessage() {
+            const content = document.getElementById('content');
+            content.innerHTML = `
+                <div class="disabled-message">
+                    <h2>Region Tracking Disabled</h2>
+                    <p>Region tracking is currently disabled in the configuration.</p>
+                    <p>Enable it in <code>data/tracking.json</code> to see region data.</p>
+                </div>
+            `;
+        }
+
+        function showNoDataMessage() {
+            const content = document.getElementById('content');
+            content.innerHTML = `
+                <div class="disabled-message">
+                    <h2>⏳ No Data Available Yet</h2>
+                    <p>Region tracking is enabled but no data has been collected yet.</p>
+                    <p>This can happen if:</p>
+                    <ul style="text-align: left; max-width: 500px; margin: 20px auto;">
+                        <li>No accounts are logged in to check regions</li>
+                        <li>The background service hasn't run its first check yet (waits 30 seconds on startup)</li>
+                        <li>The database is empty and no checks have been performed</li>
+                    </ul>
+                    <p style="margin-top: 20px;">
+                        <strong>Next steps:</strong> Log in an account and wait for the next check cycle (every 5 minutes), 
+                        or trigger a manual check via the API: <code>POST /api/regiontracking/check</code>
+                    </p>
+                </div>
+            `;
+        }
+
+        function showError(message) {
+            const content = document.getElementById('content');
+            content.innerHTML = `
+                <div class="error">
+                    <strong>Error:</strong> ${message}
+                </div>
+            `;
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (updateInterval) {
+                clearInterval(updateInterval);
+            }
+            // Destroy all charts
+            Object.values(charts).forEach(chart => chart.destroy());
+        });
+    </script>
+</body>
+</html>

@@ -15,6 +15,7 @@ namespace RadegastWeb.Data
         public DbSet<Notice> Notices { get; set; }
         public DbSet<VisitorStats> VisitorStats { get; set; }
         public DbSet<StatsDisplayName> StatsDisplayNames { get; set; }
+        public DbSet<RegionStatus> RegionStatuses { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -169,6 +170,30 @@ namespace RadegastWeb.Data
                 // Create index for efficient lookups by update time
                 entity.HasIndex(e => e.LastUpdated)
                       .HasDatabaseName("IX_StatsDisplayName_LastUpdated");
+            });
+
+            // Configure RegionStatus entity
+            modelBuilder.Entity<RegionStatus>(entity =>
+            {
+                entity.HasKey(e => e.Id);
+                entity.Property(e => e.RegionName).IsRequired().HasMaxLength(255);
+                entity.Property(e => e.GridUrl).HasMaxLength(500);
+                entity.Property(e => e.RegionUuid).HasMaxLength(36);
+                entity.Property(e => e.AccessLevel).HasMaxLength(50);
+                entity.Property(e => e.ErrorMessage);
+                entity.Property(e => e.CheckedAt).IsRequired();
+
+                // Create index for efficient lookups by region name and time
+                entity.HasIndex(e => new { e.RegionName, e.CheckedAt })
+                      .HasDatabaseName("IX_RegionStatus_Region_Time");
+
+                // Create index for querying by checked time (for cleanup)
+                entity.HasIndex(e => e.CheckedAt)
+                      .HasDatabaseName("IX_RegionStatus_CheckedAt");
+
+                // Create index for querying latest status
+                entity.HasIndex(e => new { e.RegionName, e.IsOnline, e.CheckedAt })
+                      .HasDatabaseName("IX_RegionStatus_Region_Online_Time");
             });
         }
 

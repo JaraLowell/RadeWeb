@@ -172,6 +172,9 @@ builder.Services.AddSingleton<IAutoSitService, AutoSitService>();
 // Auto-greeter service
 builder.Services.AddSingleton<IAutoGreeterService, AutoGreeterService>();
 
+// Region tracking service
+builder.Services.AddSingleton<IRegionTrackingService, RegionTrackingService>();
+
 // Memory management service for preventing memory leaks
 builder.Services.AddSingleton<IMemoryManagementService, MemoryManagementService>();
 
@@ -182,6 +185,9 @@ builder.Services.AddHostedService<MasterDisplayNameService>();
 
 // Stats name cache initialization service
 builder.Services.AddHostedService<StatsNameCacheInitializationService>();
+
+// Region tracking background service
+builder.Services.AddHostedService<RegionTrackingBackgroundService>();
 
 // Add logging configuration with additional filters
 builder.Services.AddLogging(logging =>

@@ -1,0 +1,28 @@
+{
+  "_comment": "Region tracking config - tracks how many people (agents) are in each region, like Firestorm's world map",
+  "_note_enabled": "Set 'enabled: false' to completely disable tracking and preserve memory",
+  "_note_accounts": "Only ONE logged-in account is needed to check all regions. If that account logs off, automatically switches to another.",
+  "_note_cleanup": "Old records (older than 32 days) are automatically deleted once per day to prevent database bloat",
+  "enabled": true,
+  "pollingIntervalMinutes": 5,
+  "regions": [
+    {
+      "regionName": "Ahern",
+      "gridUrl": "https://login.agni.lindenlab.com/cgi-bin/login.cgi",
+      "description": "Second Life welcome region",
+      "enabled": true
+    },
+    {
+      "regionName": "Morris",
+      "gridUrl": "https://login.agni.lindenlab.com/cgi-bin/login.cgi",
+      "description": "Second Life sandbox",
+      "enabled": true
+    },
+    {
+      "regionName": "Pooley",
+      "gridUrl": "https://login.agni.lindenlab.com/cgi-bin/login.cgi",
+      "description": "Second Life sandbox",
+      "enabled": true
+    }
+  ]
+}
