@@ -260,6 +260,7 @@ namespace RadegastWeb.Services
                                         {
                                             // Filter items by RegionHandle to prevent cross-contamination
                                             var matchingAgents = new List<object>();
+                                            int itemsForOurRegion = 0; // Track if we found ANY items for our region
                                             
                                             foreach (var item in e.Items)
                                             {
@@ -281,41 +282,42 @@ namespace RadegastWeb.Services
                                                         itemRegionHandle = (ulong?)handleField.GetValue(item);
                                                     }
                                                     
-                                                    // Get position to detect placeholder items
-                                                    byte? localX = null;
-                                                    byte? localY = null;
-                                                    
-                                                    var xProp = itemType.GetProperty("LocalX");
-                                                    var xField = itemType.GetField("LocalX");
-                                                    var yProp = itemType.GetProperty("LocalY");
-                                                    var yField = itemType.GetField("LocalY");
-                                                    
-                                                    if (xProp != null)
-                                                    {
-                                                        var xValue = xProp.GetValue(item);
-                                                        localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
-                                                    }
-                                                    else if (xField != null)
-                                                    {
-                                                        var xValue = xField.GetValue(item);
-                                                        localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
-                                                    }
-                                                    
-                                                    if (yProp != null)
-                                                    {
-                                                        var yValue = yProp.GetValue(item);
-                                                        localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
-                                                    }
-                                                    else if (yField != null)
-                                                    {
-                                                        var yValue = yField.GetValue(item);
-                                                        localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
-                                                    }
-                                                    
-                                                    // Only count agents in the region we're querying
-                                                    // SKIP items at 0,0 which appear to be placeholders for empty regions
+                                                    // Only process items for the region we're querying
                                                     if (itemRegionHandle.HasValue && itemRegionHandle.Value == currentRegionHandle)
                                                     {
+                                                        itemsForOurRegion++; // Found an item for our region
+                                                        
+                                                        // Get position to detect placeholder items
+                                                        byte? localX = null;
+                                                        byte? localY = null;
+                                                        
+                                                        var xProp = itemType.GetProperty("LocalX");
+                                                        var xField = itemType.GetField("LocalX");
+                                                        var yProp = itemType.GetProperty("LocalY");
+                                                        var yField = itemType.GetField("LocalY");
+                                                        
+                                                        if (xProp != null)
+                                                        {
+                                                            var xValue = xProp.GetValue(item);
+                                                            localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
+                                                        }
+                                                        else if (xField != null)
+                                                        {
+                                                            var xValue = xField.GetValue(item);
+                                                            localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
+                                                        }
+                                                        
+                                                        if (yProp != null)
+                                                        {
+                                                            var yValue = yProp.GetValue(item);
+                                                            localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
+                                                        }
+                                                        else if (yField != null)
+                                                        {
+                                                            var yValue = yField.GetValue(item);
+                                                            localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
+                                                        }
+                                                        
                                                         // Filter out 0,0 placeholders - these indicate region online but empty
                                                         if (localX.HasValue && localY.HasValue && (localX.Value != 0 || localY.Value != 0))
                                                         {
@@ -334,10 +336,18 @@ namespace RadegastWeb.Services
                                                 }
                                             }
                                             
-                                            // Complete the task with the count (0 or more)
-                                            _logger.LogDebug("Region {RegionName}: Filtered {Matching} real agents from {Total} total items (handle: {Handle})", 
-                                                trackedRegion.RegionName, matchingAgents.Count, e.Items.Count, currentRegionHandle);
-                                            agentItemsReceived.TrySetResult(matchingAgents.Count);
+                                            // Only complete if this event contains items for OUR region, or if the response is empty (no agents anywhere)
+                                            if (itemsForOurRegion > 0 || e.Items.Count == 0)
+                                            {
+                                                _logger.LogDebug("Region {RegionName}: Filtered {Matching} real agents from {RegionItems} items for our region, {Total} total (handle: {Handle})", 
+                                                    trackedRegion.RegionName, matchingAgents.Count, itemsForOurRegion, e.Items.Count, currentRegionHandle);
+                                                agentItemsReceived.TrySetResult(matchingAgents.Count);
+                                            }
+                                            else
+                                            {
+                                                _logger.LogDebug("Ignoring GridItems event - no items for region {RegionName} (handle: {Handle}), total items: {Total}", 
+                                                    trackedRegion.RegionName, currentRegionHandle, e.Items.Count);
+                                            }
                                         }
                                     };
 
