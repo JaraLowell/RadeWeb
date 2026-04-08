@@ -281,10 +281,51 @@ namespace RadegastWeb.Services
                                                         itemRegionHandle = (ulong?)handleField.GetValue(item);
                                                     }
                                                     
+                                                    // Get position to detect placeholder items
+                                                    byte? localX = null;
+                                                    byte? localY = null;
+                                                    
+                                                    var xProp = itemType.GetProperty("LocalX");
+                                                    var xField = itemType.GetField("LocalX");
+                                                    var yProp = itemType.GetProperty("LocalY");
+                                                    var yField = itemType.GetField("LocalY");
+                                                    
+                                                    if (xProp != null)
+                                                    {
+                                                        var xValue = xProp.GetValue(item);
+                                                        localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
+                                                    }
+                                                    else if (xField != null)
+                                                    {
+                                                        var xValue = xField.GetValue(item);
+                                                        localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
+                                                    }
+                                                    
+                                                    if (yProp != null)
+                                                    {
+                                                        var yValue = yProp.GetValue(item);
+                                                        localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
+                                                    }
+                                                    else if (yField != null)
+                                                    {
+                                                        var yValue = yField.GetValue(item);
+                                                        localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
+                                                    }
+                                                    
                                                     // Only count agents in the region we're querying
+                                                    // SKIP items at 0,0 which appear to be placeholders for empty regions
                                                     if (itemRegionHandle.HasValue && itemRegionHandle.Value == currentRegionHandle)
                                                     {
-                                                        matchingAgents.Add(item);
+                                                        // Filter out 0,0 placeholders - these indicate region online but empty
+                                                        if (localX.HasValue && localY.HasValue && (localX.Value != 0 || localY.Value != 0))
+                                                        {
+                                                            matchingAgents.Add(item);
+                                                            _logger.LogDebug("  Valid agent at ({X},{Y}) in {Region}", localX.Value, localY.Value, trackedRegion.RegionName);
+                                                        }
+                                                        else if (localX == 0 && localY == 0)
+                                                        {
+                                                            _logger.LogDebug("  Skipping 0,0 placeholder in {Region}", trackedRegion.RegionName);
+                                                        }
                                                     }
                                                 }
                                                 catch (Exception ex)
@@ -293,13 +334,10 @@ namespace RadegastWeb.Services
                                                 }
                                             }
                                             
-                                            // Only complete if we found matching agents for our region
-                                            if (matchingAgents.Count > 0 || e.Items.Count == 0)
-                                            {
-                                                _logger.LogDebug("Region {RegionName}: Filtered {Matching} agents from {Total} total items (handle: {Handle})", 
-                                                    trackedRegion.RegionName, matchingAgents.Count, e.Items.Count, currentRegionHandle);
-                                                agentItemsReceived.TrySetResult(matchingAgents.Count);
-                                            }
+                                            // Complete the task with the count (0 or more)
+                                            _logger.LogDebug("Region {RegionName}: Filtered {Matching} real agents from {Total} total items (handle: {Handle})", 
+                                                trackedRegion.RegionName, matchingAgents.Count, e.Items.Count, currentRegionHandle);
+                                            agentItemsReceived.TrySetResult(matchingAgents.Count);
                                         }
                                     };
 
