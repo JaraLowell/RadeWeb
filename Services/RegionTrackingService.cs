@@ -582,7 +582,7 @@ namespace RadegastWeb.Services
                             {
                                 _logger.LogDebug("Using account {AccountId} ({Username}) for region tracking - Status: {Status}", 
                                     kvp.Key, 
-                                    instance.AccountInfo?.Username ?? "unknown",
+                                    instance.AccountInfo != null ? $"{instance.AccountInfo.FirstName} {instance.AccountInfo.LastName}" : "unknown",
                                     status);
                                 return instance;
                             }
