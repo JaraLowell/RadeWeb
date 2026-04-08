@@ -74,6 +74,30 @@
         let charts = {};
         let updateInterval;
 
+        // Format date as "April 8th at 16:59"
+        function formatDate(date) {
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            
+            const day = date.getDate();
+            const month = months[date.getMonth()];
+            const hours = date.getHours().toString().padStart(2, '0');
+            const minutes = date.getMinutes().toString().padStart(2, '0');
+            
+            // Add ordinal suffix (st, nd, rd, th)
+            const suffix = (day) => {
+                if (day > 3 && day < 21) return 'th';
+                switch (day % 10) {
+                    case 1: return 'st';
+                    case 2: return 'nd';
+                    case 3: return 'rd';
+                    default: return 'th';
+                }
+            };
+            
+            return `${month} ${day}${suffix(day)} at ${hours}:${minutes}`;
+        }
+
         // Load data on page load
         document.addEventListener('DOMContentLoaded', () => {
             loadData();
@@ -111,7 +135,7 @@
                 }
 
                 // Update last update time
-                document.getElementById('lastUpdate').textContent = new Date().toLocaleString();
+                document.getElementById('lastUpdate').textContent = formatDate(new Date());
 
             } catch (error) {
                 console.error('Error loading data:', error);
@@ -138,7 +162,7 @@
                     </div>
                     <div class="stat-card">
                         <div class="stat-value">${data.totalAgents}</div>
-                        <div class="stat-label">Total Agents</div>
+                        <div class="stat-label">Total Avatars</div>
                     </div>
                 </div>
 
@@ -154,7 +178,7 @@
             const statusClass = region.isOnline ? 'status-online' : 'status-offline';
             const statusText = region.isOnline ? 'Online' : 'Offline';
             const agentCount = region.isOnline ? region.agentCount : 'N/A';
-            const lastChecked = new Date(region.lastChecked).toLocaleString();
+            const lastChecked = formatDate(new Date(region.lastChecked));
 
             return `
                 <div class="region-card">
@@ -164,7 +188,7 @@
                     </div>
                     
                     <div class="agent-count">${agentCount}</div>
-                    <div class="agent-label">Agents Online</div>
+                    <div class="agent-label">Avatars Online</div>
 
                     <div class="region-info">
                         <div class="info-item">
