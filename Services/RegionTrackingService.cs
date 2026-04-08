@@ -173,66 +173,29 @@ namespace RadegastWeb.Services
                         {
                             status.IsOnline = true;
                             
-                            // Try standard LibreMetaverse GridRegion properties
                             try
                             {
-                                // Store what we can access - GridRegion structure varies
                                 var regionType = e.Region.GetType();
                                 
-                                // Log type information
-                                _logger.LogInformation("Region {RegionName} found, Type: {TypeName}", 
-                                    trackedRegion.RegionName, regionType.FullName);
-                                
-                                // Try both properties and fields
-                                var allMembers = regionType.GetMembers(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
-                                _logger.LogInformation("Region {RegionName} has {Count} public members", 
-                                    trackedRegion.RegionName, allMembers.Length);
-                                
-                                foreach (var member in allMembers)
-                                {
-                                    if (member.MemberType == System.Reflection.MemberTypes.Property)
-                                    {
-                                        var prop = (System.Reflection.PropertyInfo)member;
-                                        try
-                                        {
-                                            var value = prop.GetValue(e.Region);
-                                            _logger.LogInformation("  Property: {Name} = {Value}", prop.Name, value);
-                                        }
-                                        catch { }
-                                    }
-                                    else if (member.MemberType == System.Reflection.MemberTypes.Field)
-                                    {
-                                        var field = (System.Reflection.FieldInfo)member;
-                                        try
-                                        {
-                                            var value = field.GetValue(e.Region);
-                                            _logger.LogInformation("  Field: {Name} = {Value}", field.Name, value);
-                                        }
-                                        catch { }
-                                    }
-                                }
-                                
-                                // Try to get RegionHandle (could be property or field)
-                                var handleProp = regionType.GetProperty("RegionHandle");
+                                // Get RegionHandle from field
                                 var handleField = regionType.GetField("RegionHandle");
-                                
-                                if (handleProp != null)
-                                {
-                                    status.RegionHandle = (ulong?)handleProp.GetValue(e.Region);
-                                    _logger.LogInformation("Got RegionHandle from property: {Handle}", status.RegionHandle);
-                                }
-                                else if (handleField != null)
+                                if (handleField != null)
                                 {
                                     status.RegionHandle = (ulong?)handleField.GetValue(e.Region);
-                                    _logger.LogInformation("Got RegionHandle from field: {Handle}", status.RegionHandle);
                                 }
+                                
+                                // Get location coordinates
+                                var xField = regionType.GetField("X");
+                                var yField = regionType.GetField("Y");
+                                if (xField != null) status.LocationX = (uint?)xField.GetValue(e.Region);
+                                if (yField != null) status.LocationY = (uint?)yField.GetValue(e.Region);
                                 
                                 status.SizeX = 256; // Standard region size
                                 status.SizeY = 256;
                             }
                             catch (Exception ex)
                             {
-                                _logger.LogWarning("Could not set all region properties for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
+                                _logger.LogWarning("Could not get region properties for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
                             }
                             
                             regionReceived.TrySetResult(e.Region);
@@ -274,23 +237,15 @@ namespace RadegastWeb.Services
                             
                             if (regionHandle.HasValue)
                             {
-                                _logger.LogInformation("Requesting agent items for {RegionName} with handle {Handle}", 
-                                    trackedRegion.RegionName, regionHandle.Value);
-                                
-                                // Now retrieve agent count using RequestMapItems
+                                // Retrieve agent count using RequestMapItems
                                 var agentItemsReceived = new TaskCompletionSource<int>();
                                 int agentCount = 0;
 
                                 EventHandler<GridItemsEventArgs> itemHandler = (s, e) =>
                                 {
-                                    _logger.LogInformation("GridItems event received: Type={Type}, ItemCount={Count}", 
-                                        e.Type, e.Items.Count);
-                                    
                                     if (e.Type == GridItemType.AgentLocations)
                                     {
                                         agentCount = e.Items.Count;
-                                        _logger.LogInformation("Agent locations received for {RegionName}: {Count} agents", 
-                                            trackedRegion.RegionName, agentCount);
                                         agentItemsReceived.TrySetResult(agentCount);
                                     }
                                 };
@@ -298,15 +253,11 @@ namespace RadegastWeb.Services
                                 try
                                 {
                                     client.Grid.GridItems += itemHandler;
-                                    _logger.LogInformation("Calling RequestMapItems for {RegionName}, Handle={Handle}, Type=AgentLocations", 
-                                        trackedRegion.RegionName, regionHandle.Value);
                                     
                                     client.Grid.RequestMapItems(
                                         regionHandle.Value,
                                         GridItemType.AgentLocations,
                                         GridLayerType.Objects);
-                                    
-                                    _logger.LogInformation("RequestMapItems called, waiting for response...");
                                     
                                     // Wait for agent count or timeout
                                     await Task.WhenAny(agentItemsReceived.Task, Task.Delay(10000)); // 10 second timeout
@@ -314,12 +265,11 @@ namespace RadegastWeb.Services
                                     if (agentItemsReceived.Task.IsCompleted)
                                     {
                                         status.AgentCount = agentItemsReceived.Task.Result;
-                                        _logger.LogInformation("Region {RegionName} has {AgentCount} agents (SUCCESS)", trackedRegion.RegionName, status.AgentCount);
                                     }
                                     else
                                     {
                                         status.AgentCount = 0; // Timeout, assume 0 agents
-                                        _logger.LogWarning("Timeout getting agent count for {RegionName} after 10 seconds, assuming 0", trackedRegion.RegionName);
+                                        _logger.LogWarning("Timeout getting agent count for {RegionName}", trackedRegion.RegionName);
                                     }
                                 }
                                 catch (Exception ex)
