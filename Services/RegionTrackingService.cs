@@ -254,13 +254,52 @@ namespace RadegastWeb.Services
                                 {
                                     var currentRegionHandle = regionHandle.Value;
                                     var agentItemsReceived = new TaskCompletionSource<int>();
+                                    bool requestSent = false;
                                     int agentCount = 0;
 
                                     EventHandler<GridItemsEventArgs> itemHandler = (s, e) =>
                                     {
-                                        if (e.Type == GridItemType.AgentLocations)
+                                        // Only process events that arrive AFTER we sent our request
+                                        // This prevents stray responses from previous requests
+                                        if (requestSent && e.Type == GridItemType.AgentLocations)
                                         {
                                             agentCount = e.Items.Count;
+                                            
+                                            // Debug logging to understand what we're receiving
+                                            _logger.LogInformation("GridItems event for {RegionName}: Type={Type}, ItemCount={Count}", 
+                                                trackedRegion.RegionName, e.Type, e.Items.Count);
+                                            
+                                            // Log details about each item to understand the response
+                                            foreach (var item in e.Items)
+                                            {
+                                                var itemType = item.GetType();
+                                                try
+                                                {
+                                                    var itemProps = itemType.GetProperties();
+                                                    var itemFields = itemType.GetFields();
+                                                    
+                                                    var debugInfo = new System.Text.StringBuilder();
+                                                    debugInfo.Append($"  Agent item type: {itemType.Name}");
+                                                    
+                                                    // Try to get common properties
+                                                    foreach (var prop in itemProps.Take(10))
+                                                    {
+                                                        try
+                                                        {
+                                                            var value = prop.GetValue(item);
+                                                            debugInfo.Append($", {prop.Name}={value}");
+                                                        }
+                                                        catch { }
+                                                    }
+                                                    
+                                                    _logger.LogInformation(debugInfo.ToString());
+                                                }
+                                                catch (Exception ex)
+                                                {
+                                                    _logger.LogWarning("Could not inspect agent item: {Error}", ex.Message);
+                                                }
+                                            }
+                                            
                                             agentItemsReceived.TrySetResult(agentCount);
                                         }
                                     };
@@ -269,12 +308,18 @@ namespace RadegastWeb.Services
                                     {
                                         client.Grid.GridItems += itemHandler;
                                         
+                                        // Mark that we're about to send our request
+                                        requestSent = true;
+                                        
+                                        _logger.LogDebug("Requesting agent count for {RegionName} (handle: {Handle})", 
+                                            trackedRegion.RegionName, currentRegionHandle);
+                                        
                                         client.Grid.RequestMapItems(
                                             currentRegionHandle,
                                             GridItemType.AgentLocations,
                                             GridLayerType.Objects);
                                         
-                                        // Optimized timeout: 3s is enough for most responses
+                                        // Wait for response or timeout (3s for the actual response)
                                         await Task.WhenAny(agentItemsReceived.Task, Task.Delay(3000));
                                         
                                         if (agentItemsReceived.Task.IsCompleted)
