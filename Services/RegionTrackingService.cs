@@ -350,46 +350,60 @@ namespace RadegastWeb.Services
                                                     {
                                                         itemsForOurRegion++;
                                                         
-                                                        // DEBUG: Log all properties and fields of this item type (only once)
-                                                        if (itemsForOurRegion == 1)
-                                                        {
-                                                            _logger.LogInformation("DEBUG: GridItem type: {TypeName}", itemType.FullName);
-                                                            var allProps = itemType.GetProperties();
-                                                            var allFields = itemType.GetFields();
-                                                            _logger.LogInformation("DEBUG: Available properties: {Props}", string.Join(", ", allProps.Select(p => $"{p.Name}:{p.PropertyType.Name}")));
-                                                            _logger.LogInformation("DEBUG: Available fields: {Fields}", string.Join(", ", allFields.Select(f => $"{f.Name}:{f.FieldType.Name}")));
-                                                        }
-                                                        
                                                         // Get the agent count from the item
-                                                        // In LibreMetaverse, the agent count may be stored in "Extra" field (from MapItemReply)
-                                                        // OR each GridItem might represent a single agent location (count=1 per item)
-                                                        // Try to find a count field, but default to 1 if not found
+                                                        // In LibreMetaverse, the type is MapAgentLocation with an AvatarCount field
                                                         int agentCount = 1; // Default: one agent per item
                                                         bool foundCount = false;
                                                         
-                                                        // Try Extra field/property first (from MapItemReply message's Extra parameter)
-                                                        var extraProp = itemType.GetProperty("Extra");
-                                                        if (extraProp != null)
+                                                        // Try AvatarCount field/property first (this is what LibreMetaverse uses)
+                                                        var avatarCountField = itemType.GetField("AvatarCount");
+                                                        if (avatarCountField != null)
                                                         {
-                                                            var extraValue = extraProp.GetValue(item);
-                                                            if (extraValue != null)
+                                                            var avatarCountValue = avatarCountField.GetValue(item);
+                                                            if (avatarCountValue != null)
                                                             {
-                                                                agentCount = Convert.ToInt32(extraValue);
+                                                                agentCount = Convert.ToInt32(avatarCountValue);
                                                                 foundCount = true;
-                                                                _logger.LogTrace("Region {Region}: Using Extra property, count={Count}", trackedRegion.RegionName, agentCount);
                                                             }
                                                         }
                                                         else
                                                         {
-                                                            var extraField = itemType.GetField("Extra");
-                                                            if (extraField != null)
+                                                            var avatarCountProp = itemType.GetProperty("AvatarCount");
+                                                            if (avatarCountProp != null)
                                                             {
-                                                                var extraValue = extraField.GetValue(item);
+                                                                var avatarCountValue = avatarCountProp.GetValue(item);
+                                                                if (avatarCountValue != null)
+                                                                {
+                                                                    agentCount = Convert.ToInt32(avatarCountValue);
+                                                                    foundCount = true;
+                                                                }
+                                                            }
+                                                        }
+                                                        
+                                                        // Fallback: try Extra field/property (might be used in older versions)
+                                                        if (!foundCount)
+                                                        {
+                                                            var extraProp = itemType.GetProperty("Extra");
+                                                            if (extraProp != null)
+                                                            {
+                                                                var extraValue = extraProp.GetValue(item);
                                                                 if (extraValue != null)
                                                                 {
                                                                     agentCount = Convert.ToInt32(extraValue);
                                                                     foundCount = true;
-                                                                    _logger.LogTrace("Region {Region}: Using Extra field, count={Count}", trackedRegion.RegionName, agentCount);
+                                                                }
+                                                            }
+                                                            else
+                                                            {
+                                                                var extraField = itemType.GetField("Extra");
+                                                                if (extraField != null)
+                                                                {
+                                                                    var extraValue = extraField.GetValue(item);
+                                                                    if (extraValue != null)
+                                                                    {
+                                                                        agentCount = Convert.ToInt32(extraValue);
+                                                                        foundCount = true;
+                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -405,7 +419,6 @@ namespace RadegastWeb.Services
                                                                 {
                                                                     agentCount = Convert.ToInt32(countValue);
                                                                     foundCount = true;
-                                                                    _logger.LogTrace("Region {Region}: Using Count property, count={Count}", trackedRegion.RegionName, agentCount);
                                                                 }
                                                             }
                                                             else
@@ -418,16 +431,9 @@ namespace RadegastWeb.Services
                                                                     {
                                                                         agentCount = Convert.ToInt32(countValue);
                                                                         foundCount = true;
-                                                                        _logger.LogTrace("Region {Region}: Using Count field, count={Count}", trackedRegion.RegionName, agentCount);
                                                                     }
                                                                 }
                                                             }
-                                                        }
-                                                        
-                                                        if (!foundCount)
-                                                        {
-                                                            // This is OK - each item represents one agent location
-                                                            _logger.LogTrace("Region {Region}: No count field found, using default count=1 per item", trackedRegion.RegionName);
                                                         }
                                                         
                                                         // Sum the count from each item
