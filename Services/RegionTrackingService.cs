@@ -24,7 +24,7 @@ namespace RadegastWeb.Services
         private readonly IServiceProvider _serviceProvider;
         private readonly string _configPath;
         private readonly SemaphoreSlim _parallelCheckLimiter = new SemaphoreSlim(10, 10); // Max 10 concurrent region checks
-        private readonly SemaphoreSlim _agentCountSerializer = new SemaphoreSlim(1, 1); // MUST be serialized - GridItemsEventArgs has no region identifier
+        private readonly SemaphoreSlim _agentCountLimiter = new SemaphoreSlim(5, 5); // Max 5 concurrent agent count queries
         private bool _disposed = false;
 
         public RegionTrackingService(
@@ -246,70 +246,66 @@ namespace RadegastWeb.Services
                             
                             if (regionHandle.HasValue)
                             {
-                                // CRITICAL: Agent count queries MUST be serialized (1 at a time)
-                                // GridItemsEventArgs doesn't expose RegionHandle, so concurrent requests
-                                // cause event handler cross-contamination with wrong agent counts
-                                await _agentCountSerializer.WaitAsync();
+                                // Limit concurrent agent count queries to 5 at a time for performance
+                                // Now safe to parallelize because we filter items by RegionHandle
+                                await _agentCountLimiter.WaitAsync();
                                 try
                                 {
                                     var currentRegionHandle = regionHandle.Value;
                                     var agentItemsReceived = new TaskCompletionSource<int>();
-                                    bool requestSent = false;
-                                    int agentCount = 0;
 
                                     EventHandler<GridItemsEventArgs> itemHandler = (s, e) =>
                                     {
-                                        // Only process events that arrive AFTER we sent our request
-                                        // This prevents stray responses from previous requests
-                                        if (requestSent && e.Type == GridItemType.AgentLocations)
+                                        if (e.Type == GridItemType.AgentLocations)
                                         {
-                                            agentCount = e.Items.Count;
+                                            // Filter items by RegionHandle to prevent cross-contamination
+                                            var matchingAgents = new List<object>();
                                             
-                                            // Debug logging to understand what we're receiving
-                                            _logger.LogInformation("GridItems event for {RegionName}: Type={Type}, ItemCount={Count}", 
-                                                trackedRegion.RegionName, e.Type, e.Items.Count);
-                                            
-                                            // Log details about each item to understand the response
                                             foreach (var item in e.Items)
                                             {
-                                                var itemType = item.GetType();
                                                 try
                                                 {
-                                                    var itemProps = itemType.GetProperties();
-                                                    var itemFields = itemType.GetFields();
+                                                    var itemType = item.GetType();
                                                     
-                                                    var debugInfo = new System.Text.StringBuilder();
-                                                    debugInfo.Append($"  Agent item type: {itemType.Name}");
+                                                    // Get RegionHandle from the item
+                                                    var handleProp = itemType.GetProperty("RegionHandle");
+                                                    var handleField = itemType.GetField("RegionHandle");
                                                     
-                                                    // Try to get common properties
-                                                    foreach (var prop in itemProps.Take(10))
+                                                    ulong? itemRegionHandle = null;
+                                                    if (handleProp != null)
                                                     {
-                                                        try
-                                                        {
-                                                            var value = prop.GetValue(item);
-                                                            debugInfo.Append($", {prop.Name}={value}");
-                                                        }
-                                                        catch { }
+                                                        itemRegionHandle = (ulong?)handleProp.GetValue(item);
+                                                    }
+                                                    else if (handleField != null)
+                                                    {
+                                                        itemRegionHandle = (ulong?)handleField.GetValue(item);
                                                     }
                                                     
-                                                    _logger.LogInformation(debugInfo.ToString());
+                                                    // Only count agents in the region we're querying
+                                                    if (itemRegionHandle.HasValue && itemRegionHandle.Value == currentRegionHandle)
+                                                    {
+                                                        matchingAgents.Add(item);
+                                                    }
                                                 }
                                                 catch (Exception ex)
                                                 {
-                                                    _logger.LogWarning("Could not inspect agent item: {Error}", ex.Message);
+                                                    _logger.LogWarning("Error filtering agent item: {Error}", ex.Message);
                                                 }
                                             }
                                             
-                                            agentItemsReceived.TrySetResult(agentCount);
+                                            // Only complete if we found matching agents for our region
+                                            if (matchingAgents.Count > 0 || e.Items.Count == 0)
+                                            {
+                                                _logger.LogDebug("Region {RegionName}: Filtered {Matching} agents from {Total} total items (handle: {Handle})", 
+                                                    trackedRegion.RegionName, matchingAgents.Count, e.Items.Count, currentRegionHandle);
+                                                agentItemsReceived.TrySetResult(matchingAgents.Count);
+                                            }
                                         }
                                     };
 
                                     try
                                     {
                                         client.Grid.GridItems += itemHandler;
-                                        
-                                        // Mark that we're about to send our request
-                                        requestSent = true;
                                         
                                         _logger.LogDebug("Requesting agent count for {RegionName} (handle: {Handle})", 
                                             trackedRegion.RegionName, currentRegionHandle);
@@ -319,7 +315,7 @@ namespace RadegastWeb.Services
                                             GridItemType.AgentLocations,
                                             GridLayerType.Objects);
                                         
-                                        // Wait for response or timeout (3s for the actual response)
+                                        // Wait for response or timeout (3s should be enough)
                                         await Task.WhenAny(agentItemsReceived.Task, Task.Delay(3000));
                                         
                                         if (agentItemsReceived.Task.IsCompleted)
@@ -344,7 +340,7 @@ namespace RadegastWeb.Services
                                 }
                                 finally
                                 {
-                                    _agentCountSerializer.Release();
+                                    _agentCountLimiter.Release();
                                 }
                             }
                             else
@@ -522,7 +518,7 @@ namespace RadegastWeb.Services
             if (!_disposed)
             {
                 _parallelCheckLimiter?.Dispose();
-                _agentCountSerializer?.Dispose();
+                _agentCountLimiter?.Dispose();
                 _disposed = true;
             }
         }
