@@ -69,9 +69,15 @@ namespace RadegastWeb.Services
                 
                 // Check if tracking is enabled BEFORE doing any work (memory preservation)
                 var config = await trackingService.GetConfigAsync();
-                if (config == null || !config.Enabled)
+                if (config == null)
                 {
-                    _logger.LogDebug("Region tracking is disabled - skipping check to preserve memory");
+                    _logger.LogWarning("Region tracking config not found at data/tracking.json - skipping all checks");
+                    return;
+                }
+                
+                if (!config.Enabled)
+                {
+                    _logger.LogDebug("Region tracking service is DISABLED (enabled: false in tracking.json) - skipping all checks to preserve memory");
                     return;
                 }
                 

@@ -88,21 +88,44 @@ namespace RadegastWeb.Services
         public async Task CheckRegionsAsync()
         {
             var config = await GetConfigAsync();
-            if (config == null || !config.Enabled)
+            if (config == null)
             {
-                _logger.LogDebug("Region tracking is disabled or config not found - no work performed");
+                _logger.LogWarning("Region tracking config not found - cannot perform checks");
+                return;
+            }
+            
+            if (!config.Enabled)
+            {
+                _logger.LogDebug("Region tracking is DISABLED (enabled: false) - skipping all region checks");
                 return;
             }
 
-            // Filter to only enabled regions
+            // Filter to only enabled regions (skip regions with enabled: false)
             var enabledRegions = config.Regions.Where(r => r.Enabled).ToList();
+            var disabledRegions = config.Regions.Where(r => !r.Enabled).ToList();
+            
             if (!enabledRegions.Any())
             {
-                _logger.LogDebug("No enabled regions configured for tracking");
+                if (disabledRegions.Any())
+                {
+                    _logger.LogInformation("All {Count} configured regions are DISABLED (enabled: false) - no regions to check", disabledRegions.Count);
+                }
+                else
+                {
+                    _logger.LogDebug("No regions configured in tracking.json - nothing to track");
+                }
                 return;
             }
 
-            _logger.LogInformation("Starting region tracking check for {Count} regions", enabledRegions.Count);
+            if (disabledRegions.Any())
+            {
+                _logger.LogInformation("Starting region tracking for {Enabled} enabled regions (skipping {Disabled} disabled regions)", 
+                    enabledRegions.Count, disabledRegions.Count);
+            }
+            else
+            {
+                _logger.LogInformation("Starting region tracking check for {Count} regions", enabledRegions.Count);
+            }
 
             // Verify we have at least one connected account before starting the checks
             var accountService = _serviceProvider.GetService<IAccountService>();
@@ -327,47 +350,30 @@ namespace RadegastWeb.Services
                                                     {
                                                         itemsForOurRegion++;
                                                         
-                                                        // Get position to detect placeholder items
-                                                        byte? localX = null;
-                                                        byte? localY = null;
+                                                        // Get the Count property - this tells us how many agents are at this location
+                                                        // Each map item can represent multiple agents at the same approximate position
+                                                        // A count of 0 means the position is empty (used to clear old data)
+                                                        int agentCount = 0;
                                                         
-                                                        var xProp = itemType.GetProperty("LocalX");
-                                                        if (xProp != null)
+                                                        var countProp = itemType.GetProperty("Count");
+                                                        if (countProp != null)
                                                         {
-                                                            var xValue = xProp.GetValue(item);
-                                                            localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
+                                                            var countValue = countProp.GetValue(item);
+                                                            agentCount = countValue != null ? Convert.ToInt32(countValue) : 0;
                                                         }
                                                         else
                                                         {
-                                                            var xField = itemType.GetField("LocalX");
-                                                            if (xField != null)
+                                                            var countField = itemType.GetField("Count");
+                                                            if (countField != null)
                                                             {
-                                                                var xValue = xField.GetValue(item);
-                                                                localX = xValue != null ? Convert.ToByte(xValue) : (byte?)null;
+                                                                var countValue = countField.GetValue(item);
+                                                                agentCount = countValue != null ? Convert.ToInt32(countValue) : 0;
                                                             }
                                                         }
                                                         
-                                                        var yProp = itemType.GetProperty("LocalY");
-                                                        if (yProp != null)
-                                                        {
-                                                            var yValue = yProp.GetValue(item);
-                                                            localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
-                                                        }
-                                                        else
-                                                        {
-                                                            var yField = itemType.GetField("LocalY");
-                                                            if (yField != null)
-                                                            {
-                                                                var yValue = yField.GetValue(item);
-                                                                localY = yValue != null ? Convert.ToByte(yValue) : (byte?)null;
-                                                            }
-                                                        }
-                                                        
-                                                        // Filter out 0,0 placeholders - these indicate region online but empty
-                                                        if (localX.HasValue && localY.HasValue && (localX.Value != 0 || localY.Value != 0))
-                                                        {
-                                                            matchingAgentCount++;
-                                                        }
+                                                        // Sum the count from each item (don't just count items)
+                                                        // Items at (0,0) are valid - they can contain actual agents or have Count=0 for empty regions
+                                                        matchingAgentCount += agentCount;
                                                     }
                                                 }
                                                 catch (Exception ex)
@@ -379,8 +385,8 @@ namespace RadegastWeb.Services
                                             // Only complete if this event contains items for OUR region, or if the response is empty
                                             if (itemsForOurRegion > 0 || e.Items.Count == 0)
                                             {
-                                                _logger.LogDebug("Region {RegionName}: Filtered {Matching} real agents from {RegionItems} items for our region, {Total} total (handle: {Handle})", 
-                                                    trackedRegion.RegionName, matchingAgentCount, itemsForOurRegion, e.Items.Count, currentRegionHandle);
+                                                _logger.LogDebug("Region {RegionName}: Counted {AgentCount} agents from {RegionItems} map items (handle: {Handle})", 
+                                                    trackedRegion.RegionName, matchingAgentCount, itemsForOurRegion, currentRegionHandle);
                                                 agentItemsReceived.TrySetResult(matchingAgentCount);
                                             }
                                             else
