@@ -210,7 +210,9 @@ namespace RadegastWeb.Controllers
                         isOnline = r.IsOnline,
                         agentCount = r.AgentCount ?? 0,
                         lastChecked = r.CheckedAt,
-                        accessLevel = r.AccessLevel
+                        accessLevel = r.AccessLevel,
+                        locationX = r.LocationX,
+                        locationY = r.LocationY
                     })
                     .ToList();
 

@@ -29,8 +29,13 @@
         .status-badge { padding: 5px 12px; border-radius: 20px; font-size: 0.8em; font-weight: bold; }
         .status-online { background: #10b981; color: white; }
         .status-offline { background: #ef4444; color: white; }
-        .agent-count { font-size: 3em; font-weight: bold; color: #6ba3d4; text-align: center; margin: 2px 0; }
-        .agent-label { text-align: center; color: #adb5bd; font-size: 0.9em; }
+        .agent-section { display: flex; align-items: center; gap: 15px; justify-content: center; margin: 10px 0; }
+        .minimap { width: 80px; height: 80px; border-radius: 8px; border: 2px solid #495057; flex-shrink: 0; background: #1a1a1a; }
+        .minimap img { width: 100%; height: 100%; border-radius: 6px; display: block; }
+        .minimap-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #666; font-size: 0.7em; text-align: center; }
+        .agent-count-col { flex: 1; text-align: center; }
+        .agent-count { font-size: 3em; font-weight: bold; color: #6ba3d4; line-height: 1; }
+        .agent-label { color: #adb5bd; font-size: 0.9em; margin-top: 5px; }
         .region-info { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; padding-top: 15px; border-top: 1px solid #495057; font-size: 0.85em; }
         .info-item { color: #adb5bd; }
         .info-label { font-weight: bold; color: #e1e1e1; }
@@ -189,6 +194,17 @@
                    <div class="region-description">${region.regionName}</div>`
                 : `<div class="region-name">${region.regionName}</div>
                    <div class="region-description">&nbsp;</div>`;
+            
+            // Calculate map tile coordinates (divide by 256 to get tile position)
+            let minimapHtml = '';
+            if (region.locationX && region.locationY) {
+                const tileX = Math.floor(region.locationX / 256);
+                const tileY = Math.floor(region.locationY / 256);
+                const mapUrl = `http://map.secondlife.com/map-1-${tileX}-${tileY}-objects.jpg`;
+                minimapHtml = `<div class="minimap"><img src="${mapUrl}" alt="${region.regionName} map" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\'minimap-placeholder\'>Map<br>N/A</div>'"></div>`;
+            } else {
+                minimapHtml = `<div class="minimap"><div class="minimap-placeholder">Map<br>N/A</div></div>`;
+            }
 
             return `
                 <div class="region-card">
@@ -199,8 +215,13 @@
                         <div class="status-badge ${statusClass}">${statusText}</div>
                     </div>
                     
-                    <div class="agent-count">${agentCount}</div>
-                    <div class="agent-label">Avatars Online</div>
+                    <div class="agent-section">
+                        ${minimapHtml}
+                        <div class="agent-count-col">
+                            <div class="agent-count">${agentCount}</div>
+                            <div class="agent-label">Avatars Online</div>
+                        </div>
+                    </div>
 
                     <div class="region-info">
                         <div class="info-item">
