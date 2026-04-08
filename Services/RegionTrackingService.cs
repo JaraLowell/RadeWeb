@@ -252,19 +252,24 @@ namespace RadegastWeb.Services
                         {
                             var region = regionReceived.Task.Result;
                             
-                            // Get region handle using reflection (property name may vary)
-                            ulong? regionHandle = null;
-                            try
+                            // Get region handle - we already stored it in status, or get from field
+                            ulong? regionHandle = status.RegionHandle;
+                            
+                            if (!regionHandle.HasValue)
                             {
-                                var handleProp = region.GetType().GetProperty("RegionHandle");
-                                if (handleProp != null)
+                                try
                                 {
-                                    regionHandle = (ulong?)handleProp.GetValue(region);
+                                    var regionType = region.GetType();
+                                    var handleField = regionType.GetField("RegionHandle");
+                                    if (handleField != null)
+                                    {
+                                        regionHandle = (ulong?)handleField.GetValue(region);
+                                    }
                                 }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogWarning("Could not get RegionHandle for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning("Could not get RegionHandle for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
+                                }
                             }
                             
                             if (regionHandle.HasValue)
