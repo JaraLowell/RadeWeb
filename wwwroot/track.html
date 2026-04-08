@@ -22,17 +22,17 @@
         .stat-label { color: #666; font-size: 0.9em; margin-top: 5px; }
         .regions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 10px; margin-bottom: 10px; }
         .region-card { background: white; border-radius: 10px; padding: 10px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); transition: transform 0.2s; }
-        .region-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .region-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1px; }
         .region-name { font-size: 1.3em; font-weight: bold; color: #333; }
         .status-badge { padding: 5px 12px; border-radius: 20px; font-size: 0.8em; font-weight: bold; }
         .status-online { background: #10b981; color: white; }
         .status-offline { background: #ef4444; color: white; }
-        .agent-count { font-size: 3em; font-weight: bold; color: #4a73a9; text-align: center; margin: 20px 0; }
+        .agent-count { font-size: 3em; font-weight: bold; color: #4a73a9; text-align: center; margin: 2px 0; }
         .agent-label { text-align: center; color: #666; font-size: 0.9em; }
         .region-info { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; padding-top: 15px; border-top: 1px solid #eee; font-size: 0.85em; }
         .info-item { color: #666; }
         .info-label { font-weight: bold; color: #333; }
-        .chart-container { margin-top: 20px; height: 150px; }
+        .chart-container { margin-top: 5px; height: 110px; }
         .last-update { text-align: center; color: rgba(255, 255, 255, 0.9); font-size: 0.9em; margin-top: 20px; }
         .disabled-message { background: white; border-radius: 10px; padding: 40px; text-align: center; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); }
         .disabled-message h2 { color: #ef4444; margin-bottom: 10px; }
@@ -194,7 +194,7 @@
                         <div class="info-item">
                             <span class="info-label">Access:</span> ${region.accessLevel || 'Unknown'}
                         </div>
-                        <div class="info-item">
+                        <div class="info-item" style="text-align: right;">
                             <span class="info-label">Last Check:</span> ${lastChecked}
                         </div>
                     </div>
@@ -245,7 +245,7 @@
                     data: {
                         labels: labels,
                         datasets: [{
-                            label: 'Agents',
+                            label: 'Avatars',
                             data: agentData,
                             borderColor: '#4a73a9',
                             backgroundColor: 'rgba(74, 115, 169, 0.1)',
@@ -265,7 +265,7 @@
                             tooltip: {
                                 callbacks: {
                                     label: function(context) {
-                                        return `Agents: ${context.parsed.y}`;
+                                        return `Avatars: ${context.parsed.y}`;
                                     }
                                 }
                             }
