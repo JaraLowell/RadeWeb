@@ -13,6 +13,7 @@
             padding: 20px;
             min-height: 100vh;
         }
+        a { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #adb5bd; text-decoration: none; }
         .container { max-width: 1400px; margin: 0 auto; }
         header { background: #2d2d2d; border-radius: 10px; padding: 5px 10px; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3); border: 1px solid #495057; }
         h1 { color: #6ba3d4; font-size: 2em; margin-bottom: 5px; }
@@ -61,7 +62,7 @@
     <div class="container">
         <header>
             <h1>🗺️ Region Tracking Dashboard</h1>
-            <p class="subtitle">Live Second Life region monitoring - Updates every 5 minutes</p>
+            <p class="subtitle">Live Second Life region monitoring - Updates every 5 minutes | All times in Pacific Time (PT)</p>
         </header>
 
         <div id="content">
@@ -70,8 +71,8 @@
                 Loading region data...
             </div>
         </div>
-
         <div class="last-update">
+            Created by <a target="_blank" rel="noopener noreferrer" href="https://github.com/JaraLowell/RadeWeb">Jara Lowell</a> and <a target="_blank" rel="noopener noreferrer" href="https://github.com/cinderblocks/radegast">Radegast Metaverse Client</a>&nbsp;&nbsp;
             Last updated: <span id="lastUpdate">Never</span>
         </div>
     </div>
@@ -81,15 +82,24 @@
         let charts = {};
         let updateInterval;
 
-        // Format date as "April 8th at 16:59"
+        // Convert date to Pacific Time and format as "April 8th at 16:59 PDT"
         function formatDate(date) {
             const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                           'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
             
-            const day = date.getDate();
-            const month = months[date.getMonth()];
-            const hours = date.getHours().toString().padStart(2, '0');
-            const minutes = date.getMinutes().toString().padStart(2, '0');
+            // Convert to Pacific Time
+            const pacificTime = new Date(date.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+            
+            const day = pacificTime.getDate();
+            const month = months[pacificTime.getMonth()];
+            const hours = pacificTime.getHours().toString().padStart(2, '0');
+            const minutes = pacificTime.getMinutes().toString().padStart(2, '0');
+            
+            // Get timezone abbreviation (PST/PDT)
+            const timeZone = date.toLocaleString('en-US', { 
+                timeZone: 'America/Los_Angeles', 
+                timeZoneName: 'short' 
+            }).split(' ').pop();
             
             // Add ordinal suffix (st, nd, rd, th)
             const suffix = (day) => {
@@ -102,7 +112,17 @@
                 }
             };
             
-            return `${month} ${day}${suffix(day)} at ${hours}:${minutes}`;
+            return `${month} ${day}${suffix(day)} at ${hours}:${minutes} ${timeZone}`;
+        }
+        
+        // Format time for chart labels in Pacific Time
+        function formatChartTime(date) {
+            return date.toLocaleTimeString('en-US', { 
+                timeZone: 'America/Los_Angeles',
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: false
+            });
         }
 
         // Load data on page load
@@ -255,7 +275,7 @@
                 
                 const labels = sortedHistory.map(h => {
                     const date = new Date(h.checkedAt);
-                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    return formatChartTime(date);
                 });
 
                 const agentData = sortedHistory.map(h => h.agentCount || 0);
@@ -282,7 +302,7 @@
                             backgroundColor: 'rgba(74, 115, 169, 0.1)',
                             tension: 0.4,
                             fill: true,
-                            pointRadius: 2,
+                            pointRadius: 1,
                             pointHoverRadius: 4
                         }]
                     },
@@ -308,7 +328,8 @@
                                     maxTicksLimit: 6,
                                     font: {
                                         size: 10
-                                    }
+                                    },
+                                    color: '#adb5bd'
                                 },
                                 grid: {
                                     display: false
@@ -321,10 +342,11 @@
                                     precision: 0,
                                     font: {
                                         size: 10
-                                    }
+                                    },
+                                    color: '#adb5bd'
                                 },
                                 grid: {
-                                    color: 'rgba(0, 0, 0, 0.05)'
+                                    color: 'rgba(255, 255, 255, 0.1)'
                                 }
                             }
                         }
