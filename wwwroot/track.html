@@ -215,11 +215,21 @@
             content.innerHTML = html;
         }
 
+        // Parse date string as UTC
+        function parseUTCDate(dateString) {
+            // Ensure the date string is treated as UTC
+            // If it doesn't end with 'Z', append it
+            if (typeof dateString === 'string' && !dateString.endsWith('Z') && !dateString.includes('+')) {
+                dateString = dateString + 'Z';
+            }
+            return new Date(dateString);
+        }
+
         function createRegionCard(region) {
             const statusClass = region.isOnline ? 'status-online' : 'status-offline';
             const statusText = region.isOnline ? 'Online' : 'Offline';
             const agentCount = region.isOnline ? region.agentCount : 'N/A';
-            const lastChecked = formatDate(new Date(region.lastChecked));
+            const lastChecked = formatDate(parseUTCDate(region.lastChecked));
             
             // If description exists, show it in bold with region name below in small text
             // Otherwise, show region name in bold
@@ -285,10 +295,10 @@
                 }
 
                 // Prepare chart data
-                const sortedHistory = history.sort((a, b) => new Date(a.checkedAt) - new Date(b.checkedAt));
+                const sortedHistory = history.sort((a, b) => parseUTCDate(a.checkedAt) - parseUTCDate(b.checkedAt));
                 
                 const labels = sortedHistory.map(h => {
-                    const date = new Date(h.checkedAt);
+                    const date = parseUTCDate(h.checkedAt);
                     return formatChartTime(date);
                 });
 
