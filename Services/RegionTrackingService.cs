@@ -186,127 +186,224 @@ namespace RadegastWeb.Services
                     return;
                 }
 
-                // Get first connected instance from any account
-                var connectedInstance = GetFirstConnectedInstance(accountService);
-                if (connectedInstance?.Client?.Network.Connected != true)
+                // PRIORITY 1: Check if any account is currently IN this region
+                // If so, we can get EVERYTHING from the simulator data (most accurate)
+                var accountInRegion = GetAccountInRegion(accountService, trackedRegion.RegionName);
+                
+                GridClient client;
+                bool useSimulatorData = false;
+                
+                if (accountInRegion?.Client?.Network?.Connected == true && 
+                    accountInRegion.Client.Network.CurrentSim != null)
                 {
-                    status.IsOnline = false;
-                    status.AgentCount = null;
-                    status.ErrorMessage = "No connected accounts available";
-                    _logger.LogWarning("No connected accounts available to check region {RegionName}. Ensure at least one account is logged in.", trackedRegion.RegionName);
+                    // Use the account that's IN the region - best accuracy
+                    client = accountInRegion.Client;
+                    useSimulatorData = true;
+                    _logger.LogDebug("Using account IN region {RegionName} for tracking (will use accurate simulator data)", 
+                        trackedRegion.RegionName);
                 }
                 else
                 {
-                    // Query the region using GridClient
-                    var client = connectedInstance.Client;
-                    var regionReceived = new TaskCompletionSource<GridRegion?>();
-                    
-                    EventHandler<GridRegionEventArgs> handler = (s, e) =>
+                    // PRIORITY 2: No account in region, get any connected account for remote monitoring
+                    var connectedInstance = GetFirstConnectedInstance(accountService);
+                    if (connectedInstance?.Client?.Network.Connected != true)
                     {
-                        if (e.Region.Name.Equals(trackedRegion.RegionName, StringComparison.OrdinalIgnoreCase))
-                        {
-                            status.IsOnline = true;
-                            
-                            try
-                            {
-                                var regionType = e.Region.GetType();
-                                
-                                // Get RegionHandle from field
-                                var handleField = regionType.GetField("RegionHandle");
-                                if (handleField != null)
-                                {
-                                    status.RegionHandle = (ulong?)handleField.GetValue(e.Region);
-                                }
-                                
-                                // Get location coordinates (fields return int, convert to uint)
-                                var xField = regionType.GetField("X");
-                                var yField = regionType.GetField("Y");
-                                if (xField != null)
-                                {
-                                    var xValue = xField.GetValue(e.Region);
-                                    status.LocationX = xValue != null ? Convert.ToUInt32(xValue) : (uint?)null;
-                                }
-                                if (yField != null)
-                                {
-                                    var yValue = yField.GetValue(e.Region);
-                                    status.LocationY = yValue != null ? Convert.ToUInt32(yValue) : (uint?)null;
-                                }
-                                
-                                // Get access level (maturity rating)
-                                var accessField = regionType.GetField("Access");
-                                var accessProp = regionType.GetProperty("Access");
-                                
-                                if (accessProp != null)
-                                {
-                                    var accessValue = accessProp.GetValue(e.Region);
-                                    if (accessValue != null)
-                                    {
-                                        // Access is typically a SimAccess enum: PG=13, Mature=21, Adult=42
-                                        status.AccessLevel = ConvertAccessLevel(accessValue);
-                                    }
-                                }
-                                else if (accessField != null)
-                                {
-                                    var accessValue = accessField.GetValue(e.Region);
-                                    if (accessValue != null)
-                                    {
-                                        status.AccessLevel = ConvertAccessLevel(accessValue);
-                                    }
-                                }
-                                
-                                status.SizeX = 256; // Standard region size
-                                status.SizeY = 256;
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogWarning("Could not get region properties for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
-                            }
-                            
-                            regionReceived.TrySetResult(e.Region);
-                        }
-                    };
+                        status.IsOnline = false;
+                        status.AgentCount = null;
+                        status.ErrorMessage = "No connected accounts available";
+                        _logger.LogWarning("No connected accounts available to check region {RegionName}. Ensure at least one account is logged in.", trackedRegion.RegionName);
+                        await SaveRegionStatusAsync(status);
+                        return;
+                    }
+                    client = connectedInstance.Client;
+                    _logger.LogDebug("Using remote account for region {RegionName} tracking (will use map API)", 
+                        trackedRegion.RegionName);
+                }
+                
+                // If we have simulator data available, use it directly (skip map API query)
+                if (useSimulatorData)
+                {
+                    await CheckRegionUsingSimulatorDataAsync(trackedRegion, status, client);
+                }
+                else
+                {
+                    // Query the region using GridClient map API
+                    await CheckRegionUsingMapApiAsync(trackedRegion, status, client, accountService);
+                }
+            }
+            catch (Exception ex)
+            {
+                status.IsOnline = false;
+                status.AgentCount = null;
+                status.ErrorMessage = ex.Message;
+                
+                _logger.LogError(ex, "Error checking region {RegionName}", trackedRegion.RegionName);
+            }
 
+            await SaveRegionStatusAsync(status);
+        }
+
+        /// <summary>
+        /// Check region using direct simulator data (when we have an account IN the region)
+        /// </summary>
+        private async Task CheckRegionUsingSimulatorDataAsync(TrackedRegion trackedRegion, RegionStatus status, GridClient client)
+        {
+            try
+            {
+                var sim = client.Network.CurrentSim;
+                if (sim == null)
+                {
+                    _logger.LogWarning("CurrentSim is null for region {RegionName}", trackedRegion.RegionName);
+                    status.IsOnline = false;
+                    status.ErrorMessage = "CurrentSim is null";
+                    return;
+                }
+                
+                status.IsOnline = true;
+                status.RegionHandle = sim.Handle;
+                
+                // Get accurate avatar count from simulator
+                status.AgentCount = sim.AvatarPositions?.Count ?? 0;
+                
+                // Extract grid coordinates from handle
+                status.LocationX = (uint)(sim.Handle >> 32);
+                status.LocationY = (uint)(sim.Handle & 0xFFFFFFFF);
+                
+                // Get region properties
+                status.SizeX = 256; // Default, could be var region
+                status.SizeY = 256;
+                
+                // Get access level
+                var accessValue = sim.Access;
+                status.AccessLevel = ConvertAccessLevel(accessValue);
+                
+                _logger.LogInformation("Region {RegionName}: Online with {AgentCount} avatars [SIMULATOR DATA - highly accurate]", 
+                    trackedRegion.RegionName, status.AgentCount);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting simulator data for region {RegionName}", trackedRegion.RegionName);
+                status.IsOnline = false;
+                status.ErrorMessage = ex.Message;
+            }
+            
+            await Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Check region using map API (remote monitoring when no account is in region)
+        /// </summary>
+        private async Task CheckRegionUsingMapApiAsync(TrackedRegion trackedRegion, RegionStatus status, GridClient client, IAccountService accountService)
+        {
+            var regionReceived = new TaskCompletionSource<GridRegion?>();
+            
+            EventHandler<GridRegionEventArgs> handler = (s, e) =>
+            {
+                if (e.Region.Name.Equals(trackedRegion.RegionName, StringComparison.OrdinalIgnoreCase))
+                {
+                    status.IsOnline = true;
+                    
                     try
                     {
-                        client.Grid.GridRegion += handler;
-                        client.Grid.RequestMapRegion(trackedRegion.RegionName, GridLayerType.Objects);
+                        var regionType = e.Region.GetType();
                         
-                        // Wait for response or timeout
-                        var completedTask = await Task.WhenAny(regionReceived.Task, Task.Delay(10000)); // 10 second timeout
-                        
-                        // If timeout occurred, cancel the TaskCompletionSource to prevent memory leaks
-                        if (completedTask != regionReceived.Task)
+                        // Get RegionHandle from field
+                        var handleField = regionType.GetField("RegionHandle");
+                        if (handleField != null)
                         {
-                            regionReceived.TrySetCanceled();
+                            status.RegionHandle = (ulong?)handleField.GetValue(e.Region);
                         }
                         
-                        // Get agent count if region was found
-                        if (regionReceived.Task.IsCompleted && regionReceived.Task.Result != null)
+                        // Get location coordinates (fields return int, convert to uint)
+                        var xField = regionType.GetField("X");
+                        var yField = regionType.GetField("Y");
+                        if (xField != null)
                         {
-                            var region = regionReceived.Task.Result;
-                            
-                            // Get region handle - we already stored it in status, or get from field
-                            ulong? regionHandle = status.RegionHandle;
-                            
-                            if (!regionHandle.HasValue)
+                            var xValue = xField.GetValue(e.Region);
+                            status.LocationX = xValue != null ? Convert.ToUInt32(xValue) : (uint?)null;
+                        }
+                        if (yField != null)
+                        {
+                            var yValue = yField.GetValue(e.Region);
+                            status.LocationY = yValue != null ? Convert.ToUInt32(yValue) : (uint?)null;
+                        }
+                        
+                        // Get access level (maturity rating)
+                        var accessField = regionType.GetField("Access");
+                        var accessProp = regionType.GetProperty("Access");
+                        
+                        if (accessProp != null)
+                        {
+                            var accessValue = accessProp.GetValue(e.Region);
+                            if (accessValue != null)
                             {
-                                try
-                                {
-                                    var regionType = region.GetType();
-                                    var handleField = regionType.GetField("RegionHandle");
-                                    if (handleField != null)
-                                    {
-                                        regionHandle = (ulong?)handleField.GetValue(region);
-                                    }
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.LogWarning("Could not get RegionHandle for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
-                                }
+                                // Access is typically a SimAccess enum: PG=13, Mature=21, Adult=42
+                                status.AccessLevel = ConvertAccessLevel(accessValue);
                             }
-                            
-                            if (regionHandle.HasValue)
+                        }
+                        else if (accessField != null)
+                        {
+                            var accessValue = accessField.GetValue(e.Region);
+                            if (accessValue != null)
                             {
+                                status.AccessLevel = ConvertAccessLevel(accessValue);
+                            }
+                        }
+                        
+                        status.SizeX = 256; // Standard region size
+                        status.SizeY = 256;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("Could not get region properties for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
+                    }
+                    
+                    regionReceived.TrySetResult(e.Region);
+                }
+            };
+
+            try
+            {
+                client.Grid.GridRegion += handler;
+                client.Grid.RequestMapRegion(trackedRegion.RegionName, GridLayerType.Objects);
+                
+                // Wait for response or timeout
+                var completedTask = await Task.WhenAny(regionReceived.Task, Task.Delay(10000)); // 10 second timeout
+                
+                // If timeout occurred, cancel the TaskCompletionSource to prevent memory leaks
+                if (completedTask != regionReceived.Task)
+                {
+                    regionReceived.TrySetCanceled();
+                }
+                
+                // Get agent count if region was found
+                if (regionReceived.Task.IsCompleted && regionReceived.Task.Result != null)
+                {
+                    var region = regionReceived.Task.Result;
+                    
+                    // Get region handle - we already stored it in status, or get from field
+                    ulong? regionHandle = status.RegionHandle;
+                    
+                    if (!regionHandle.HasValue)
+                    {
+                        try
+                        {
+                            var regionType = region.GetType();
+                            var handleField = regionType.GetField("RegionHandle");
+                            if (handleField != null)
+                            {
+                                regionHandle = (ulong?)handleField.GetValue(region);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("Could not get RegionHandle for {RegionName}: {Error}", trackedRegion.RegionName, ex.Message);
+                        }
+                    }
+                    
+                    // Use map API to get agent count (less accurate than simulator data)
+                    if (regionHandle.HasValue)
+                    {
                                 // Limit concurrent agent count queries to 5 at a time for performance
                                 // Now safe to parallelize because we filter items by RegionHandle
                                 await _agentCountLimiter.WaitAsync();
@@ -450,7 +547,7 @@ namespace RadegastWeb.Services
                                             // Only complete if this event contains items for OUR region, or if the response is empty
                                             if (itemsForOurRegion > 0 || e.Items.Count == 0)
                                             {
-                                                _logger.LogDebug("Region {RegionName}: Counted {AgentCount} agents from {RegionItems} map items (handle: {Handle})", 
+                                                _logger.LogDebug("Region {RegionName}: Counted {AgentCount} agents from {RegionItems} map items (handle: {Handle}) [REMOTE MONITORING - less accurate than being IN region]", 
                                                     trackedRegion.RegionName, matchingAgentCount, itemsForOurRegion, currentRegionHandle);
                                                 agentItemsReceived.TrySetResult(matchingAgentCount);
                                             }
@@ -511,45 +608,47 @@ namespace RadegastWeb.Services
                                 {
                                     _agentCountLimiter.Release();
                                 }
-                            }
-                            else
+                            
+                            // If still no agent count, set to 0
+                            if (status.AgentCount == null)
                             {
                                 status.AgentCount = 0;
-                                _logger.LogDebug("Could not get RegionHandle for {RegionName}, cannot query agent count", trackedRegion.RegionName);
+                                _logger.LogWarning("Failed to get agent count for {RegionName} via map API", trackedRegion.RegionName);
                             }
                         }
                         else
                         {
-                            status.IsOnline = false;
-                            status.AgentCount = null;
-                            status.ErrorMessage = "Region not found or timeout";
-                            _logger.LogDebug("Region {RegionName} not found or request timed out", trackedRegion.RegionName);
+                            status.AgentCount = 0;
+                            _logger.LogDebug("Could not get RegionHandle for {RegionName}, cannot query agent count via map API", trackedRegion.RegionName);
                         }
-                    }
-                    finally
-                    {
-                        // Ensure event handler is removed to prevent memory leaks
-                        try
-                        {
-                            client.Grid.GridRegion -= handler;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning("Error removing GridRegion event handler: {Error}", ex.Message);
-                        }
-                    }
+                }
+                else
+                {
+                    status.IsOnline = false;
+                    status.AgentCount = null;
+                    status.ErrorMessage = "Region not found or timeout";
+                    _logger.LogDebug("Region {RegionName} not found or request timed out", trackedRegion.RegionName);
                 }
             }
-            catch (Exception ex)
+            finally
             {
-                status.IsOnline = false;
-                status.AgentCount = null;
-                status.ErrorMessage = ex.Message;
-                
-                _logger.LogError(ex, "Error checking region {RegionName}", trackedRegion.RegionName);
+                // Ensure event handler is removed to prevent memory leaks
+                try
+                {
+                    client.Grid.GridRegion -= handler;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Error removing GridRegion event handler: {Error}", ex.Message);
+                }
             }
+        }
 
-            // Save to database
+        /// <summary>
+        /// Save region status to database
+        /// </summary>
+        private async Task SaveRegionStatusAsync(RegionStatus status)
+        {
             try
             {
                 await using var context = await _contextFactory.CreateDbContextAsync();
@@ -558,7 +657,7 @@ namespace RadegastWeb.Services
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error saving region status for {RegionName}", trackedRegion.RegionName);
+                _logger.LogError(ex, "Error saving region status for {RegionName}", status.RegionName);
             }
         }
 
@@ -604,6 +703,52 @@ namespace RadegastWeb.Services
                 _logger.LogWarning("Error converting access level: {Error}", ex.Message);
                 return "Unknown";
             }
+        }
+
+        /// <summary>
+        /// Get an account that is currently IN the specified region.
+        /// This allows us to use the accurate CurrentSim.AvatarPositions.Count
+        /// instead of the less accurate map items API.
+        /// </summary>
+        private Core.WebRadegastInstance? GetAccountInRegion(IAccountService accountService, string regionName)
+        {
+            var instancesField = accountService.GetType().GetField("_instances",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            
+            if (instancesField == null)
+            {
+                return null;
+            }
+            
+            var instances = instancesField.GetValue(accountService) as System.Collections.Concurrent.ConcurrentDictionary<Guid, Core.WebRadegastInstance>;
+            if (instances == null || instances.Count == 0)
+            {
+                return null;
+            }
+            
+            // Find an account that is in this specific region
+            foreach (var kvp in instances)
+            {
+                var instance = kvp.Value;
+                try
+                {
+                    if (instance?.Client?.Network?.Connected == true &&
+                        instance.Client.Network.CurrentSim != null &&
+                        instance.Client.Network.CurrentSim.Name.Equals(regionName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string accountName = instance.AccountInfo != null ? $"{instance.AccountInfo.FirstName} {instance.AccountInfo.LastName}" : "unknown";
+                        _logger.LogDebug("Found account {AccountId} ({Name}) currently IN region {RegionName}", 
+                            kvp.Key, accountName, regionName);
+                        return instance;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("Error checking if account {AccountId} is in region: {Error}", kvp.Key, ex.Message);
+                }
+            }
+            
+            return null;
         }
 
         /// <summary>
