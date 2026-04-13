@@ -265,9 +265,9 @@ namespace RadegastWeb.Services
                 // Get accurate avatar count from simulator
                 status.AgentCount = sim.AvatarPositions?.Count ?? 0;
                 
-                // Extract grid coordinates from handle
-                status.LocationX = (uint)(sim.Handle >> 32);
-                status.LocationY = (uint)(sim.Handle & 0xFFFFFFFF);
+                // Extract grid coordinates from handle (divide by 256 to convert meters to grid units)
+                status.LocationX = (uint)((sim.Handle >> 32) / 256);
+                status.LocationY = (uint)((sim.Handle & 0xFFFFFFFF) / 256);
                 
                 // Get region properties
                 status.SizeX = 256; // Default, could be var region
@@ -277,8 +277,8 @@ namespace RadegastWeb.Services
                 var accessValue = sim.Access;
                 status.AccessLevel = ConvertAccessLevel(accessValue);
                 
-                _logger.LogInformation("Region {RegionName}: Online with {AgentCount} avatars [SIMULATOR DATA - highly accurate]", 
-                    trackedRegion.RegionName, status.AgentCount);
+                _logger.LogInformation("Region {RegionName}: Online with {AgentCount} avatars at ({GridX}, {GridY}) [SIMULATOR DATA - highly accurate]", 
+                    trackedRegion.RegionName, status.AgentCount, status.LocationX, status.LocationY);
             }
             catch (Exception ex)
             {
