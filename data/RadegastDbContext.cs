@@ -208,7 +208,8 @@ namespace RadegastWeb.Data
                 }
                 
                 var dbPath = Path.Combine(dataDirectory, "radegast.db");
-                optionsBuilder.UseSqlite($"Data Source={dbPath}");
+                // Add Pooling=false to prevent SQLite connection pooling issues
+                optionsBuilder.UseSqlite($"Data Source={dbPath};Pooling=false");
             }
         }
     }

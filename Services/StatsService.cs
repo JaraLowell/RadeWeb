@@ -276,6 +276,23 @@ namespace RadegastWeb.Services
                         // Success - break out of retry loop
                         break;
                     }
+                    catch (Microsoft.Data.Sqlite.SqliteException sqliteEx) when (sqliteEx.SqliteErrorCode == 5)
+                    {
+                        // SQLite Error 5: 'unable to delete/modify user-function due to active statements'
+                        // This is a concurrency issue - retry with exponential backoff
+                        if (attempt < maxRetries - 1)
+                        {
+                            var delay = (int)Math.Pow(2, attempt) * 50; // 50ms, 100ms, 200ms
+                            _logger.LogDebug("SQLite concurrency error for visitor {AvatarId} in {RegionName}, retrying in {Delay}ms (attempt {Attempt}/{MaxRetries})", 
+                                avatarId, regionName, delay, attempt + 1, maxRetries);
+                            await Task.Delay(delay);
+                            continue;
+                        }
+                        
+                        _logger.LogError(sqliteEx, "Error recording visitor {AvatarId} in {RegionName} after {Retries} retries", 
+                            avatarId, regionName, maxRetries);
+                        return;
+                    }
                     catch (DbUpdateException dbEx) when (dbEx.InnerException?.Message?.Contains("UNIQUE constraint failed: VisitorStats.AvatarId, VisitorStats.RegionName, VisitorStats.VisitDate") == true)
                     {
                         // Handle race condition where another thread created the record between our check and insert
@@ -812,9 +829,13 @@ namespace RadegastWeb.Services
             var today = sltNow.Date;
             var now = DateTime.UtcNow;
 
-            try
+            // Retry mechanism for SQLite concurrency issues
+            const int maxRetries = 3;
+            for (int attempt = 0; attempt < maxRetries; attempt++)
             {
-                using var context = _dbContextFactory.CreateDbContext();
+                try
+                {
+                    using var context = _dbContextFactory.CreateDbContext();
                 
                 // Group visitors by unique key to handle duplicates
                 var groupedVisitors = visitorList
@@ -895,10 +916,32 @@ namespace RadegastWeb.Services
                     context.VisitorStats.AddRange(recordsToAdd);
                 }
 
-                await context.SaveChangesAsync();
+                    
+                // Success - break out of retry loop
+                return;
+            }
+            catch (Microsoft.Data.Sqlite.SqliteException sqliteEx) when (sqliteEx.SqliteErrorCode == 5)
+            {
+                // SQLite Error 5: 'unable to delete/modify user-function due to active statements'
+                // This is a concurrency issue - retry with exponential backoff
+                if (attempt < maxRetries - 1)
+                {
+                    var delay = (int)Math.Pow(2, attempt) * 50; // 50ms, 100ms, 200ms
+                    _logger.LogDebug("SQLite concurrency error during batch recording of {Count} visitors, retrying in {Delay}ms (attempt {Attempt}/{MaxRetries})", 
+                        visitorList.Count, delay, attempt + 1, maxRetries);
+                    await Task.Delay(delay);
+                    continue;
+                }
                 
-                _logger.LogDebug("Batch processed {TotalCount} visitors: {AddedCount} new, {UpdatedCount} updated", 
-                    groupedVisitors.Count, recordsToAdd.Count, recordsToUpdate.Count);
+                _logger.LogError(sqliteEx, "Error in batch visitor recording for {Count} visitors after {Retries} retries", 
+                    visitorList.Count, maxRetries);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error in batch visitor recording for {Count} visitors", visitorList.Count);
+                return;
+            }
             }
             catch (Exception ex)
             {

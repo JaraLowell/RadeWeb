@@ -44,7 +44,8 @@ if (!Directory.Exists(dataDirectory))
 }
 
 var dbPath = Path.Combine(dataDirectory, "radegast.db");
-var connectionString = $"Data Source={dbPath}";
+// Add Pooling=false to prevent SQLite connection pooling issues with concurrent access
+var connectionString = $"Data Source={dbPath};Pooling=false";
 
 // Register DbContext factory for both scoped and singleton services
 builder.Services.AddDbContextFactory<RadegastDbContext>(options =>

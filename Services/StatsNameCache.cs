@@ -68,12 +68,16 @@ namespace RadegastWeb.Services
             if (string.IsNullOrEmpty(avatarId))
                 return;
 
-            try
+            // Retry mechanism for SQLite concurrency issues
+            const int maxRetries = 3;
+            for (int attempt = 0; attempt < maxRetries; attempt++)
             {
-                using var context = _dbContextFactory.CreateDbContext();
-                
-                var existing = await context.StatsDisplayNames
-                    .FirstOrDefaultAsync(sdn => sdn.AvatarId == avatarId);
+                try
+                {
+                    using var context = _dbContextFactory.CreateDbContext();
+                    
+                    var existing = await context.StatsDisplayNames
+                        .FirstOrDefaultAsync(sdn => sdn.AvatarId == avatarId);
 
                 if (existing != null)
                 {
@@ -114,6 +118,9 @@ namespace RadegastWeb.Services
                     await context.SaveChangesAsync();
                     _logger.LogDebug("Stored new stats name for {AvatarId}", avatarId);
                 }
+                
+                // Success - break out of retry loop
+                return;
             }
             catch (DbUpdateException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException sqliteEx && 
                                                sqliteEx.SqliteErrorCode == 19)
@@ -155,10 +162,28 @@ namespace RadegastWeb.Services
                     }
                 }
                 catch (Exception retryEx)
-                {
-                    _logger.LogError(retryEx, "Error updating stats name for {AvatarId} after race condition", avatarId);
                 }
-            }
+                catch (Microsoft.Data.Sqlite.SqliteException sqliteEx) when (sqliteEx.SqliteErrorCode == 5)
+                {
+                    // SQLite Error 5: 'unable to delete/modify user-function due to active statements'
+                    // This is a concurrency issue - retry with exponential backoff
+                    if (attempt < maxRetries - 1)
+                    {
+                        var delay = (int)Math.Pow(2, attempt) * 50; // 50ms, 100ms, 200ms
+                        _logger.LogDebug("SQLite concurrency error for {AvatarId}, retrying in {Delay}ms (attempt {Attempt}/{MaxRetries})", 
+                            avatarId, delay, attempt + 1, maxRetries);
+                        await Task.Delay(delay);
+                        continue;
+                    }
+                    
+                    _logger.LogError(sqliteEx, "Error storing stats name for {AvatarId} after {Retries} retries", avatarId, maxRetries);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error storing stats name for {AvatarId}", avatarId);
+                    return;
+                }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error storing stats name for {AvatarId}", avatarId);
