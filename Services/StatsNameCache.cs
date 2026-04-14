@@ -162,8 +162,11 @@ namespace RadegastWeb.Services
                     }
                 }
                 catch (Exception retryEx)
+                {
+                    _logger.LogError(retryEx, "Error handling UNIQUE constraint for {AvatarId}", avatarId);
                 }
-                catch (Microsoft.Data.Sqlite.SqliteException sqliteEx) when (sqliteEx.SqliteErrorCode == 5)
+            }
+            catch (Microsoft.Data.Sqlite.SqliteException sqliteEx) when (sqliteEx.SqliteErrorCode == 5)
                 {
                     // SQLite Error 5: 'unable to delete/modify user-function due to active statements'
                     // This is a concurrency issue - retry with exponential backoff
@@ -184,9 +187,6 @@ namespace RadegastWeb.Services
                     _logger.LogError(ex, "Error storing stats name for {AvatarId}", avatarId);
                     return;
                 }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error storing stats name for {AvatarId}", avatarId);
             }
         }
 

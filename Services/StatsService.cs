@@ -916,6 +916,7 @@ namespace RadegastWeb.Services
                     context.VisitorStats.AddRange(recordsToAdd);
                 }
 
+                await context.SaveChangesAsync();
                     
                 // Success - break out of retry loop
                 return;
@@ -942,10 +943,6 @@ namespace RadegastWeb.Services
                 _logger.LogError(ex, "Error in batch visitor recording for {Count} visitors", visitorList.Count);
                 return;
             }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error in batch visitor recording for {Count} visitors", visitorList.Count);
             }
         }
         
