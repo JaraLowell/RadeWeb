@@ -377,7 +377,8 @@ namespace RadegastWeb.Services
                 }
                 
                 // Get agent count if region was found
-                if (regionReceived.Task.IsCompleted && regionReceived.Task.Result != null)
+                // Check IsCompletedSuccessfully to avoid TaskCanceledException when accessing Result
+                if (regionReceived.Task.Status == TaskStatus.RanToCompletion && regionReceived.Task.Result != null)
                 {
                     var region = regionReceived.Task.Result;
                     
@@ -574,7 +575,8 @@ namespace RadegastWeb.Services
                                         // Wait for response or timeout (3s should be enough)
                                         var agentCompletedTask = await Task.WhenAny(agentItemsReceived.Task, Task.Delay(3000));
                                         
-                                        if (agentItemsReceived.Task.IsCompleted)
+                                        // Check task completed successfully to avoid TaskCanceledException when accessing Result
+                                        if (agentItemsReceived.Task.Status == TaskStatus.RanToCompletion)
                                         {
                                             status.AgentCount = agentItemsReceived.Task.Result;
                                         }
