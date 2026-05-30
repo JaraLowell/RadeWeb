@@ -745,15 +745,33 @@ namespace RadegastWeb.Services
                     using var scope = _serviceProvider.CreateScope();
                     var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
 
-                    // Find accounts with matching first name
-                    var matchingAccounts = await accountService.GetAccountsByFirstNameAsync(requestedName);
+                    // Get all accounts and filter by both first name and display name
+                    var allAccounts = await accountService.GetAccountsAsync();
+                    var matchingAccounts = allAccounts.Where(a =>
+                    {
+                        // Check if first name matches
+                        if (a.FirstName.Equals(requestedName, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                        
+                        // Check if first word of display name matches
+                        if (!string.IsNullOrWhiteSpace(a.DisplayName))
+                        {
+                            var displayNameFirstWord = a.DisplayName.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                            if (displayNameFirstWord != null && 
+                                displayNameFirstWord.Equals(requestedName, StringComparison.OrdinalIgnoreCase))
+                                return true;
+                        }
+                        
+                        return false;
+                    });
+                    
                     var connectedAccounts = matchingAccounts
                         .Where(a => accountService.GetInstance(a.Id)?.IsConnected == true)
                         .ToList();
 
                     if (!connectedAccounts.Any())
                     {
-                        _logger.LogDebug("No connected accounts found with first name '{RequestedName}'", requestedName);
+                        _logger.LogDebug("No connected accounts found with first name or display name matching '{RequestedName}'", requestedName);
                         return ChatProcessingResult.CreateSuccess();
                     }
 
@@ -775,15 +793,19 @@ namespace RadegastWeb.Services
 
                     if (success)
                     {
+                        var matchedName = accountToUse.FirstName.Equals(requestedName, StringComparison.OrdinalIgnoreCase)
+                            ? $"FirstName: {accountToUse.FirstName}"
+                            : $"DisplayName: {accountToUse.DisplayName}";
+                        
                         _logger.LogInformation(
-                            "Sent teleport lure from {AccountName} ({AccountId}) to {RequesterName} ({RequesterId}) in response to {ChatType} request",
-                            accountToUse.FirstName, accountToUse.Id, message.SenderName, message.SenderId, message.ChatType);
+                            "Sent teleport lure from {AccountName} (matched {MatchedName}, AccountId: {AccountId}) to {RequesterName} ({RequesterId}) in response to {ChatType} request",
+                            accountToUse.DisplayName ?? accountToUse.FirstName, matchedName, accountToUse.Id, message.SenderName, message.SenderId, message.ChatType);
                     }
                     else
                     {
                         _logger.LogWarning(
                             "Failed to send teleport lure from {AccountName} ({AccountId}) to {RequesterName} ({RequesterId}) via {ChatType}",
-                            accountToUse.FirstName, accountToUse.Id, message.SenderName, message.SenderId, message.ChatType);
+                            accountToUse.DisplayName ?? accountToUse.FirstName, accountToUse.Id, message.SenderName, message.SenderId, message.ChatType);
                     }
                 }
 
