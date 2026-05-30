@@ -39,6 +39,7 @@ namespace RadegastWeb.Services
             // Register processors in priority order (lower numbers first)
             RegisterProcessor(new GroupIgnoreFilterProcessor(_serviceProvider, _logger), 5); // First to filter out ignored groups
             RegisterProcessor(new UrlProcessingProcessor(_serviceProvider, _logger), 10);
+            RegisterProcessor(new GroupTeleportCommandProcessor(_serviceProvider, _logger), 12); // Process teleport commands early
             RegisterProcessor(new AvatarCommandRelayProcessor(_serviceProvider, _logger), 15); // Process avatar command relays
             RegisterProcessor(new IMRelayProcessor(_serviceProvider, _logger), 16); // Process IM relays before database save
             RegisterProcessor(new NameResolutionProcessor(_serviceProvider, _logger), 18); // Improve sender names before save
@@ -692,6 +693,107 @@ namespace RadegastWeb.Services
                 
                 // On error, continue processing to avoid breaking the pipeline
                 return ChatProcessingResult.CreateSuccess();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Processor for handling group chat and IM teleport commands (e.g., "azza tp")
+    /// Detects when someone requests a teleport from a specific account by name
+    /// </summary>
+    internal class GroupTeleportCommandProcessor : IChatMessageProcessor
+    {
+        private readonly IServiceProvider _serviceProvider;
+        private readonly ILogger _logger;
+
+        public GroupTeleportCommandProcessor(IServiceProvider serviceProvider, ILogger logger)
+        {
+            _serviceProvider = serviceProvider;
+            _logger = logger;
+        }
+
+        public string Name => "Group/IM Teleport Command";
+        public int Priority => 12; // Run after ignore filter but before most other processors
+
+        public async Task<ChatProcessingResult> ProcessAsync(ChatMessageDto message, ChatProcessingContext context)
+        {
+            // Only process group messages and IMs (ignore open chat as person would already be near)
+            var chatTypeLower = message.ChatType?.ToLower() ?? "";
+            if (chatTypeLower != "group" && chatTypeLower != "im")
+                return ChatProcessingResult.CreateSuccess();
+
+            // Ignore messages from the account itself
+            if (context.AccountInstance != null && 
+                message.SenderId == context.AccountInstance.Client.Self.AgentID.ToString())
+                return ChatProcessingResult.CreateSuccess();
+
+            try
+            {
+                // Check if message matches the pattern "[name] tp" (case-insensitive)
+                var messageLower = message.Message?.ToLower().Trim() ?? "";
+                
+                // Match patterns like "azza tp", "john tp", etc.
+                var words = messageLower.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                
+                if (words.Length == 2 && words[1] == "tp")
+                {
+                    var requestedName = words[0];
+                    
+                    _logger.LogDebug("Detected teleport request for '{RequestedName}' in {ChatType} from {SenderName}", 
+                        requestedName, message.ChatType, message.SenderName);
+
+                    using var scope = _serviceProvider.CreateScope();
+                    var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
+
+                    // Find accounts with matching first name
+                    var matchingAccounts = await accountService.GetAccountsByFirstNameAsync(requestedName);
+                    var connectedAccounts = matchingAccounts
+                        .Where(a => accountService.GetInstance(a.Id)?.IsConnected == true)
+                        .ToList();
+
+                    if (!connectedAccounts.Any())
+                    {
+                        _logger.LogDebug("No connected accounts found with first name '{RequestedName}'", requestedName);
+                        return ChatProcessingResult.CreateSuccess();
+                    }
+
+                    // Use the first matching connected account
+                    var accountToUse = connectedAccounts.First();
+                    
+                    // Get the requester's agent ID from the sender ID
+                    if (string.IsNullOrEmpty(message.SenderId))
+                    {
+                        _logger.LogWarning("Cannot send teleport lure - sender ID is missing");
+                        return ChatProcessingResult.CreateSuccess();
+                    }
+
+                    // Send the teleport lure
+                    var success = await accountService.SendTeleportLureAsync(
+                        accountToUse.Id, 
+                        message.SenderId, 
+                        "Join me!");
+
+                    if (success)
+                    {
+                        _logger.LogInformation(
+                            "Sent teleport lure from {AccountName} ({AccountId}) to {RequesterName} ({RequesterId}) in response to {ChatType} request",
+                            accountToUse.FirstName, accountToUse.Id, message.SenderName, message.SenderId, message.ChatType);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "Failed to send teleport lure from {AccountName} ({AccountId}) to {RequesterName} ({RequesterId}) via {ChatType}",
+                            accountToUse.FirstName, accountToUse.Id, message.SenderName, message.SenderId, message.ChatType);
+                    }
+                }
+
+                return ChatProcessingResult.CreateSuccess();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing group teleport command for message from {SenderName}", 
+                    message.SenderName);
+                return ChatProcessingResult.CreateSuccess(); // Continue processing on error
             }
         }
     }

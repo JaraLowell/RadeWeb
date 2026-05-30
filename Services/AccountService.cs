@@ -22,6 +22,8 @@ namespace RadegastWeb.Services
         Task<bool> SendChatAsync(Guid accountId, string message, string chatType = "Normal", int channel = 0);
         Task<bool> SendIMAsync(Guid accountId, string targetId, string message);
         Task<bool> SendGroupIMAsync(Guid accountId, string groupId, string message);
+        Task<bool> SendTeleportLureAsync(Guid accountId, string targetAgentId, string message = "Join me!");
+        Task<IEnumerable<Account>> GetAccountsByFirstNameAsync(string firstName);
         Task<IEnumerable<AvatarDto>> GetNearbyAvatarsAsync(Guid accountId);
         Task<IEnumerable<ChatSessionDto>> GetChatSessionsAsync(Guid accountId);
         Task LoadAccountsAsync();
@@ -888,6 +890,48 @@ namespace RadegastWeb.Services
             {
                 _logger.LogError(ex, "Error sending group IM for account {AccountId}", accountId);
                 return Task.FromResult(false);
+            }
+        }
+
+        public Task<bool> SendTeleportLureAsync(Guid accountId, string targetAgentId, string message = "Join me!")
+        {
+            if (!_instances.TryGetValue(accountId, out var instance))
+            {
+                _logger.LogWarning("Attempted to send teleport lure for non-connected account {AccountId}", accountId);
+                return Task.FromResult(false);
+            }
+
+            try
+            {
+                bool success = instance.SendTeleportLure(targetAgentId, message);
+                return Task.FromResult(success);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending teleport lure for account {AccountId}", accountId);
+                return Task.FromResult(false);
+            }
+        }
+
+        public Task<IEnumerable<Account>> GetAccountsByFirstNameAsync(string firstName)
+        {
+            if (string.IsNullOrWhiteSpace(firstName))
+            {
+                return Task.FromResult(Enumerable.Empty<Account>());
+            }
+
+            try
+            {
+                var matchingAccounts = _accounts.Values
+                    .Where(a => a.FirstName.Equals(firstName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                return Task.FromResult<IEnumerable<Account>>(matchingAccounts);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting accounts by first name {FirstName}", firstName);
+                return Task.FromResult(Enumerable.Empty<Account>());
             }
         }
 

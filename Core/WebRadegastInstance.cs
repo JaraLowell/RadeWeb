@@ -913,6 +913,41 @@ namespace RadegastWeb.Core
         }
 
         /// <summary>
+        /// Send a teleport offer (lure) to an avatar
+        /// </summary>
+        /// <param name="agentId">The avatar UUID to offer a teleport to</param>
+        /// <param name="message">Optional message to include with the teleport offer</param>
+        /// <returns>True if the teleport offer was sent successfully</returns>
+        public bool SendTeleportLure(string agentId, string message = "Join me!")
+        {
+            if (!_client.Network.Connected)
+            {
+                _logger.LogWarning("Attempted to send teleport lure while not connected");
+                return false;
+            }
+
+            try
+            {
+                if (!UUID.TryParse(agentId, out UUID agentUUID))
+                {
+                    _logger.LogError("Invalid agent UUID format: {AgentId}", agentId);
+                    return false;
+                }
+
+                // Send the teleport lure using LibreMetaverse
+                _client.Self.SendTeleportLure(agentUUID, message);
+
+                _logger.LogInformation("Sent teleport lure to {AgentId} with message: {Message}", agentId, message);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending teleport lure to {AgentId}", agentId);
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Gets the raw avatar data (IDs and basic info) for nearby avatars without triggering display name lookups.
         /// Used by PeriodicDisplayNameService to avoid circular dependencies.
         /// </summary>
