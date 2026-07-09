@@ -86,10 +86,21 @@ namespace RadegastWeb.Controllers
                         return BadRequest(new { message = "This image item has no asset UUID." });
                     }
 
+                    var imageUrls = new[]
+                    {
+                        $"https://secondlife.com/app/image/{item.AssetUUID}/3",
+                        $"https://secondlife.com/app/image/{item.AssetUUID}/2",
+                        $"https://secondlife.com/app/image/{item.AssetUUID}/1",
+                        $"https://picture-service.secondlife.com/{item.AssetUUID}/1024x1024.jpg",
+                        $"https://picture-service.secondlife.com/{item.AssetUUID}/512x512.jpg",
+                        $"https://picture-service.secondlife.com/{item.AssetUUID}/256x192.jpg"
+                    };
+
                     return Ok(new
                     {
                         kind = "image",
                         name = item.Name,
+                        imageUrls,
                         imageUrl = $"https://secondlife.com/app/image/{item.AssetUUID}/1",
                         fallbackImageUrl = $"https://asset-cdn.glb.agni.lindenlab.com/?texture_id={item.AssetUUID}"
                     });
@@ -102,7 +113,8 @@ namespace RadegastWeb.Controllers
                         return BadRequest(new { message = "This item has no asset UUID." });
                     }
 
-                    var asset = await RequestAssetAsync(instance, item.AssetUUID, item.AssetType, TimeSpan.FromSeconds(20));
+                    var asset = await RequestInventoryItemAssetAsync(instance, item, TimeSpan.FromSeconds(25))
+                               ?? await RequestAssetAsync(instance, item.AssetUUID, item.AssetType, TimeSpan.FromSeconds(20));
                     if (asset == null)
                     {
                         return NotFound(new { message = "Unable to download asset content for this item." });
@@ -200,6 +212,20 @@ namespace RadegastWeb.Controllers
             try
             {
                 return await instance.Client.Assets.RequestAssetAsync(assetUuid, assetType, true, cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+        }
+
+        private static async Task<Asset?> RequestInventoryItemAssetAsync(WebRadegastInstance instance, InventoryItem item, TimeSpan timeout)
+        {
+            using var cts = new CancellationTokenSource(timeout);
+
+            try
+            {
+                return await instance.Client.Assets.RequestInventoryAssetAsync(item, true, UUID.Random(), cts.Token);
             }
             catch (OperationCanceledException)
             {

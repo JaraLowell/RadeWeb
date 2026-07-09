@@ -3088,7 +3088,10 @@ class RadegastWebClient {
 
             const preview = await response.json();
             if (preview.kind === 'image') {
-                this.openImagePreviewWindow(itemName, preview.imageUrl, preview.fallbackImageUrl);
+                const imageSources = Array.isArray(preview.imageUrls)
+                    ? preview.imageUrls
+                    : [preview.imageUrl, preview.fallbackImageUrl].filter(Boolean);
+                this.openImagePreviewWindow(itemName, imageSources, preview.fallbackImageUrl);
                 return;
             }
 
@@ -3104,12 +3107,16 @@ class RadegastWebClient {
         }
     }
 
-    openImagePreviewWindow(itemName, imageUrl, fallbackImageUrl) {
+    openImagePreviewWindow(itemName, imageSources, fallbackImageUrl) {
         const previewWindow = window.open('', '_blank', 'popup=yes,width=512,height=512,resizable=yes,scrollbars=yes');
         if (!previewWindow) {
             this.showAlert('Popup blocked. Allow popups to view image previews.', 'warning');
             return;
         }
+
+        const sources = Array.isArray(imageSources)
+            ? imageSources.filter(Boolean)
+            : [imageSources, fallbackImageUrl].filter(Boolean);
 
         const title = this.escapeHtml(itemName || 'Image Preview');
         previewWindow.document.write(`
@@ -3122,7 +3129,7 @@ class RadegastWebClient {
                     body { margin: 0; background: #111; color: #eee; font-family: Segoe UI, sans-serif; display: flex; flex-direction: column; height: 100vh; }
                     .header { padding: 8px 12px; font-size: 13px; border-bottom: 1px solid #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                     .frame { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; }
-                    img { max-width: 100%; max-height: 100%; object-fit: contain; }
+                    img { width: 100%; height: 100%; object-fit: contain; }
                     .error { color: #f7b3b3; padding: 12px; font-size: 13px; }
                 </style>
             </head>
@@ -3139,9 +3146,11 @@ class RadegastWebClient {
             return;
         }
 
+        let sourceIndex = 0;
         imageElement.onerror = () => {
-            if (fallbackImageUrl && imageElement.src !== fallbackImageUrl) {
-                imageElement.src = fallbackImageUrl;
+            sourceIndex += 1;
+            if (sourceIndex < sources.length) {
+                imageElement.src = sources[sourceIndex];
                 return;
             }
 
@@ -3151,7 +3160,15 @@ class RadegastWebClient {
             }
         };
 
-        imageElement.src = imageUrl;
+        if (sources.length === 0) {
+            const frame = imageElement.parentElement;
+            if (frame) {
+                frame.innerHTML = '<div class="error">No image URL available for this asset.</div>';
+            }
+            return;
+        }
+
+        imageElement.src = sources[sourceIndex];
     }
 
     openTextPreviewWindow(itemName, content, textType) {
