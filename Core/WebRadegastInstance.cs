@@ -5445,22 +5445,59 @@ namespace RadegastWeb.Core
 
         public async Task<bool> DetachAttachmentAsync(UUID itemUuid)
         {
+            var detached = false;
+            var removedFromOutfit = false;
+            var inventoryItem = _client.Inventory.Store?[itemUuid] as InventoryItem;
+
             if (_client.Appearance != null)
             {
                 try
                 {
-                    _client.Appearance.Detach(itemUuid);
+                    if (inventoryItem != null)
+                    {
+                        _client.Appearance.Detach(inventoryItem);
+                    }
+                    else
+                    {
+                        _client.Appearance.Detach(itemUuid);
+                    }
+
                     _logger.LogInformation("Detached attachment via AppearanceManager.Detach for account {AccountId} item {ItemUuid}",
                         _accountId, itemUuid);
-                    return true;
+                    detached = true;
                 }
                 catch (Exception ex)
                 {
                     _logger.LogDebug(ex, "AppearanceManager.Detach failed for item {ItemUuid}; falling back to reflective appearance action", itemUuid);
                 }
+
+                if (inventoryItem != null)
+                {
+                    try
+                    {
+                        _client.Appearance.RemoveFromOutfit(inventoryItem);
+                        _logger.LogInformation("Removed item from outfit via AppearanceManager.RemoveFromOutfit for account {AccountId} item {ItemUuid}",
+                            _accountId, itemUuid);
+                        removedFromOutfit = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "AppearanceManager.RemoveFromOutfit failed for item {ItemUuid}", itemUuid);
+                    }
+                }
             }
 
-            return await InvokeAppearanceActionAsync(itemUuid, null, "Detach", "TakeOff", "RemoveFromOutfit");
+            if (!detached)
+            {
+                detached = await InvokeAppearanceActionAsync(itemUuid, null, "Detach", "TakeOff");
+            }
+
+            if (!removedFromOutfit)
+            {
+                removedFromOutfit = await InvokeAppearanceActionAsync(itemUuid, null, "RemoveFromOutfit");
+            }
+
+            return detached || removedFromOutfit;
         }
 
         public async Task<bool> WearAttachmentAsync(UUID itemUuid, AttachmentPoint? attachmentPoint = null)
