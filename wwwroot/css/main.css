@@ -606,6 +606,20 @@ a {
     flex-shrink: 0;
 }
 
+.attachment-actions {
+    display: flex;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.attachment-actions .btn {
+    min-width: 6.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .inventory-entry .inv-icon {
     width: 16px;
     text-align: center;
