@@ -2947,7 +2947,7 @@ class RadegastWebClient {
         }
 
         const fragment = document.createDocumentFragment();
-        rootNodes.forEach(node => fragment.appendChild(this.createInventoryNodeElement(node, true)));
+        rootNodes.forEach(node => fragment.appendChild(this.createInventoryNodeElement(node)));
         treeContainer.appendChild(fragment);
     }
 
