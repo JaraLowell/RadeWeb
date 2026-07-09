@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Core;
 using RadegastWeb.Data;
 using RadegastWeb.Models;

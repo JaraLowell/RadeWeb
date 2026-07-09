@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using RadegastWeb.Models;
 using RadegastWeb.Core;
-using OpenMetaverse;
+using LibreMetaverse;
 
 namespace RadegastWeb.Services
 {

@@ -163,7 +163,7 @@ namespace RadegastWeb.Models
         public uint LocalId { get; set; }
         public string Name { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
-        public OpenMetaverse.Vector3 Position { get; set; }
+        public LibreMetaverse.Vector3 Position { get; set; }
         public string OwnerId { get; set; } = string.Empty; // UUID as string
         public bool CanSit { get; set; }
     }

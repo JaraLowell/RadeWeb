@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Data;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
@@ -183,25 +183,25 @@ namespace RadegastWeb.Core
 
         private void InitializeClient()
         {
-            _client.Settings.MULTIPLE_SIMS = false;
-            _client.Settings.USE_INTERPOLATION_TIMER = false;
-            _client.Settings.ALWAYS_REQUEST_OBJECTS = true;
-            _client.Settings.ALWAYS_DECODE_OBJECTS = true;
-            _client.Settings.OBJECT_TRACKING = true;
-            _client.Settings.ENABLE_SIMSTATS = true;
-            _client.Settings.SEND_AGENT_THROTTLE = true;
-            _client.Settings.SEND_AGENT_UPDATES = true;
-            _client.Settings.STORE_LAND_PATCHES = true;
+            _client.Settings.Agent.MultipleSims = false;
+            _client.Settings.World.UseInterpolationTimer = false;
+            _client.Settings.World.AlwaysRequestObjects = true;
+            _client.Settings.World.AlwaysDecodeObjects = true;
+            _client.Settings.World.TrackObjects = true;
+            _client.Settings.Packets.EnableSimStats = true;
+            _client.Settings.Agent.SendThrottle = true;
+            _client.Settings.Agent.SendUpdates = true;
+            _client.Settings.World.StoreLandPatches = true;
 
-            _client.Settings.USE_ASSET_CACHE = true;
-            _client.Settings.ASSET_CACHE_DIR = _cacheDir;
+            _client.Settings.AssetCache.Enabled = true;
+            _client.Settings.AssetCache.Dir = _cacheDir;
             _client.Assets.Cache.AutoPruneEnabled = false;
 
             _client.Throttle.Total = 5000000f;
-            _client.Settings.THROTTLE_OUTGOING_PACKETS = false;
-            _client.Settings.LOGIN_TIMEOUT = 120 * 1000;
-            _client.Settings.SIMULATOR_TIMEOUT = 180 * 1000;
-            _client.Settings.MAX_CONCURRENT_TEXTURE_DOWNLOADS = 20;
+            _client.Settings.Packets.ThrottleOutgoing = false;
+            _client.Settings.Timing.LoginTimeout = 120 * 1000;
+            _client.Settings.Timing.SimulatorTimeout = 180 * 1000;
+            _client.Settings.TexturePipeline.MaxConcurrentDownloads = 20;
 
             _client.Self.Movement.AutoResetControls = false;
             _client.Self.Movement.UpdateInterval = 250;
@@ -1514,23 +1514,6 @@ namespace RadegastWeb.Core
                             totalCleaned++;
                     }
 
-                    // Clean up AvatarPositions (coarse location data) for distant avatars
-                    // This dictionary can grow large in busy sims
-                    if (currentSim.AvatarPositions?.Count > 100)
-                    {
-                        var positionsToRemove = currentSim.AvatarPositions
-                            .Where(kvp => kvp.Key != _client.Self.AgentID)
-                            .Where(kvp => Calculate3DDistance(ourPosition, kvp.Value) > 1024.0f) // Very distant
-                            .Select(kvp => kvp.Key)
-                            .Take(25)
-                            .ToList();
-
-                        foreach (var avatarId in positionsToRemove)
-                        {
-                            if (currentSim.AvatarPositions.TryRemove(avatarId, out _))
-                                totalCleaned++;
-                        }
-                    }
                 }
 
                 // Clean up asset cache if it's getting large
@@ -1540,7 +1523,6 @@ namespace RadegastWeb.Core
                     try
                     {
                         // Force a cache cleanup by temporarily enabling auto-prune
-                        var oldAutoPrune = _client.Settings.ASSET_CACHE_DIR;
                         _client.Assets.Cache.AutoPruneEnabled = true;
                         
                         // Trigger cache maintenance
@@ -1708,7 +1690,7 @@ namespace RadegastWeb.Core
                 CoarseLocationAvatarCount = _coarseLocationAvatars.Count,
                 TotalUniqueAvatars = GetUniqueAvatarCount(),
                 MaxDetectionRange = MAX_DISTANCE,
-                SimAvatarCount = _client.Network.CurrentSim?.AvatarPositions.Count ?? 0
+                SimAvatarCount = _client.Network.CurrentSim?.ObjectsAvatars.Count ?? 0
             };
         }
 
@@ -1778,27 +1760,23 @@ namespace RadegastWeb.Core
             // Perform the actual request
             _client.Avatars.RequestAvatarNames(new List<UUID> { avatarId });
             
-            // Request display names with callback to update global cache
-            _client.Avatars.GetDisplayNames(new List<UUID> { avatarId }, (success, names, badIDs) =>
+            // Request display names and update global cache
+            _ = Task.Run(async () =>
             {
-                if (success && names != null && names.Any())
+                try
                 {
-                    _ = Task.Run(async () =>
+                    var (success, names, _) = await _client.Avatars.GetDisplayNamesAsync(new List<UUID> { avatarId }, CancellationToken.None);
+                    if (!success || names == null || names.Length == 0)
                     {
-                        try
-                        {
-                            var nameDict = new Dictionary<UUID, AgentDisplayName>();
-                            foreach (var name in names)
-                            {
-                                nameDict[name.ID] = name;
-                            }
-                            await _globalDisplayNameCache.UpdateDisplayNamesAsync(nameDict);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug(ex, "Error updating display names from deduplicated request");
-                        }
-                    });
+                        return;
+                    }
+
+                    var nameDict = names.ToDictionary(name => name.ID, name => name);
+                    await _globalDisplayNameCache.UpdateDisplayNamesAsync(nameDict);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Error updating display names from deduplicated request");
                 }
             });
         }
@@ -2148,7 +2126,7 @@ namespace RadegastWeb.Core
                 
                 // Use the total avatar count from the sim, which includes all avatars
                 // regardless of draw distance, similar to how Radegast's radar works
-                var totalAvatarCount = _client.Network.CurrentSim.AvatarPositions.Count;
+                var totalAvatarCount = _client.Network.CurrentSim.ObjectsAvatars.Count;
                 
                 var regionInfo = new RegionInfoDto
                 {
@@ -2438,9 +2416,7 @@ namespace RadegastWeb.Core
             {
                 // Get our current position for distance calculations (accounting for sitting)
                 var ourPosition = GetOurActualPosition();
-                var agentPosition = e.Simulator.AvatarPositions.TryGetValue(_client.Self.AgentID, out var ourPos)
-                    ? ToVector3D(e.Simulator.Handle, ourPosition) // Use our corrected position
-                    : _client.Self.GlobalPosition;
+                var agentPosition = ToVector3D(e.Simulator.Handle, ourPosition);
 
                 // Handle removed avatars
                 var removedAvatars = new List<UUID>();
@@ -2457,7 +2433,7 @@ namespace RadegastWeb.Core
 
                 // Process all avatar positions
                 var existingAvatars = new HashSet<UUID>();
-                foreach (var avatarPos in e.Simulator.AvatarPositions)
+                foreach (var avatarPos in e.Positions)
                 {
                     existingAvatars.Add(avatarPos.Key);
                     
@@ -2479,7 +2455,7 @@ namespace RadegastWeb.Core
                     else
                     {
                         // Handle altitude issues for coarse-only avatars (SecondLife uses 1020f, OpenSim uses 0f for high altitudes)
-                        bool unknownAltitude = _client.Settings.LOGIN_SERVER.Contains("secondlife") ? pos.Z == 1020f : pos.Z == 0f;
+                        bool unknownAltitude = _client.Settings.Connection.LoginServer.Contains("secondlife") ? pos.Z == 1020f : pos.Z == 0f;
                         if (unknownAltitude)
                         {
                             // For coarse-only avatars with unknown altitude, we can't do much more
@@ -4192,14 +4168,14 @@ namespace RadegastWeb.Core
                 var stop = new Dictionary<UUID, bool>();
 
                 // Get all currently signaled animations
-                _client.Self.SignaledAnimations.ForEach(anim =>
+                foreach (var anim in _client.Self.SignaledAnimations.Keys)
                 {
                     // Only stop animations that are not known system animations
                     if (!IsKnownSystemAnimation(anim))
                     {
-                        stop.Add(anim, false); // false = stop animation
+                        stop[anim] = false; // false = stop animation
                     }
-                });
+                }
 
                 if (stop.Count > 0)
                 {
@@ -4367,7 +4343,7 @@ namespace RadegastWeb.Core
         /// <returns>True if this is a known system animation</returns>
         private bool IsKnownSystemAnimation(UUID animationId)
         {
-            // Known system animations from OpenMetaverse.Animations
+            // Known system animations from LibreMetaverse.Animations
             // These are basic avatar animations that should not be stopped
             var knownAnimations = new HashSet<UUID>
             {
@@ -5121,7 +5097,7 @@ namespace RadegastWeb.Core
 
         #region Script Dialog Event Handlers
 
-        private void Self_ScriptDialog(object? sender, OpenMetaverse.ScriptDialogEventArgs e)
+        private void Self_ScriptDialog(object? sender, LibreMetaverse.ScriptDialogEventArgs e)
         {
             try
             {
@@ -5157,7 +5133,7 @@ namespace RadegastWeb.Core
             }
         }
 
-        private void Self_ScriptQuestion(object? sender, OpenMetaverse.ScriptQuestionEventArgs e)
+        private void Self_ScriptQuestion(object? sender, LibreMetaverse.ScriptQuestionEventArgs e)
         {
             try
             {
@@ -5833,12 +5809,13 @@ namespace RadegastWeb.Core
 
                 try
                 {
-                    await _client.Inventory.RequestFolderContents(
+                    await _client.Inventory.RequestFolderContentsAsync(
                         folderId,
                         _client.Self.AgentID,
                         true,
                         true,
-                        InventorySortOrder.ByName);
+                        InventorySortOrder.ByName,
+                        CancellationToken.None);
                 }
                 catch (Exception ex)
                 {

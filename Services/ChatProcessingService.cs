@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Core;
 using RadegastWeb.Hubs;
 using RadegastWeb.Models;

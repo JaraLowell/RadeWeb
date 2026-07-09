@@ -1,6 +1,6 @@
 using RadegastWeb.Models;
 using RadegastWeb.Core;
-using OpenMetaverse;
+using LibreMetaverse;
 using System.Collections.Concurrent;
 
 namespace RadegastWeb.Services

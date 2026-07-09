@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Caching.Memory;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Core;
 using RadegastWeb.Models;
 

@@ -1,7 +1,7 @@
 using RadegastWeb.Core;
 using RadegastWeb.Models;
 using Microsoft.Extensions.DependencyInjection;
-using OpenMetaverse;
+using LibreMetaverse;
 using System.Text.RegularExpressions;
 
 namespace RadegastWeb.Services
@@ -235,7 +235,7 @@ namespace RadegastWeb.Services
                 var messageText = sayMatch.Groups[1].Value;
                 if (!string.IsNullOrWhiteSpace(messageText))
                 {
-                    accountInstance.SendChat(messageText, OpenMetaverse.ChatType.Normal, 0);
+                    accountInstance.SendChat(messageText, LibreMetaverse.ChatType.Normal, 0);
                     return Task.FromResult(RelayCommandResult.CreateSuccess($"Said in local chat: {messageText}"));
                 }
                 else

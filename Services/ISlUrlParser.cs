@@ -1,4 +1,4 @@
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Models;
 
 namespace RadegastWeb.Services

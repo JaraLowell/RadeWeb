@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Data;
 using RadegastWeb.Models;
 
@@ -486,31 +486,20 @@ namespace RadegastWeb.Services
                 if (client.Avatars.DisplayNamesAvailable())
                 {
                     // Use display names API
-                    await client.Avatars.GetDisplayNames(uuidList, 
-                        (success, names, badIDs) =>
-                        {
-                            _ = Task.Run(async () =>
-                            {
-                                try
-                                {
-                                    if (success && names?.Length > 0)
-                                    {
-                                        var displayNameDict = names.ToDictionary(n => n.ID, n => n);
-                                        await UpdateDisplayNamesAsync(displayNameDict);
-                                    }
-                                    
-                                    // Handle failed IDs with legacy names
-                                    if (badIDs?.Length > 0)
-                                    {
-                                        RequestLegacyNames(client, badIDs.ToList());
-                                    }
-                                }
-                                finally
-                                {
-                                    tcs.TrySetResult(success);
-                                }
-                            });
-                        });
+                    var (success, names, badIDs) = await client.Avatars.GetDisplayNamesAsync(uuidList, CancellationToken.None);
+                    if (success && names?.Length > 0)
+                    {
+                        var displayNameDict = names.ToDictionary(n => n.ID, n => n);
+                        await UpdateDisplayNamesAsync(displayNameDict);
+                    }
+
+                    // Handle failed IDs with legacy names
+                    if (badIDs?.Length > 0)
+                    {
+                        RequestLegacyNames(client, badIDs.ToList());
+                    }
+
+                    tcs.TrySetResult(success);
                 }
                 else
                 {

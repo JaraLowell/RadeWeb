@@ -1,5 +1,5 @@
 using System.Xml.Serialization;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Models;
 
 namespace RadegastWeb.Services

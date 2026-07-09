@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Data;
 using RadegastWeb.Models;
 using System.Diagnostics;
@@ -263,7 +263,7 @@ namespace RadegastWeb.Services
                 status.RegionHandle = sim.Handle;
                 
                 // Get accurate avatar count from simulator
-                status.AgentCount = sim.AvatarPositions?.Count ?? 0;
+                status.AgentCount = sim.ObjectsAvatars?.Count ?? 0;
                 
                 // Extract grid coordinates from handle (divide by 256 to convert meters to grid units)
                 status.LocationX = (uint)((sim.Handle >> 32) / 256);

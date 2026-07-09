@@ -148,7 +148,7 @@ namespace RadegastWeb.Controllers
                 var proximityField = instanceType.GetField("_proximityAlertedAvatars", 
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 
-                if (proximityField?.GetValue(instance) is System.Collections.Concurrent.ConcurrentDictionary<OpenMetaverse.UUID, DateTime> proximityDict)
+                if (proximityField?.GetValue(instance) is System.Collections.Concurrent.ConcurrentDictionary<LibreMetaverse.UUID, DateTime> proximityDict)
                 {
                     var trackedAvatars = proximityDict.Select(kvp => new
                     {
@@ -199,14 +199,14 @@ namespace RadegastWeb.Controllers
                 var proximityField = instanceType.GetField("_proximityAlertedAvatars", 
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
                 
-                if (proximityField?.GetValue(instance) is System.Collections.Concurrent.ConcurrentDictionary<OpenMetaverse.UUID, DateTime> proximityDict)
+                if (proximityField?.GetValue(instance) is System.Collections.Concurrent.ConcurrentDictionary<LibreMetaverse.UUID, DateTime> proximityDict)
                 {
                     var clearedCount = 0;
 
                     if (request != null && !string.IsNullOrEmpty(request.AvatarId))
                     {
                         // Clear specific avatar
-                        if (OpenMetaverse.UUID.TryParse(request.AvatarId, out var avatarUuid))
+                        if (LibreMetaverse.UUID.TryParse(request.AvatarId, out var avatarUuid))
                         {
                             if (proximityDict.TryRemove(avatarUuid, out _))
                             {

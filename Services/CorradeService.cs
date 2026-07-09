@@ -3,7 +3,7 @@ using RadegastWeb.Core;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Web;
-using OpenMetaverse;
+using LibreMetaverse;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;

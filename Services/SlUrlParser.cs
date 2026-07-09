@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 using System.Web;
-using OpenMetaverse;
+using LibreMetaverse;
 
 namespace RadegastWeb.Services
 {

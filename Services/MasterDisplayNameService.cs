@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Models;
 
 namespace RadegastWeb.Services
@@ -741,74 +741,69 @@ namespace RadegastWeb.Services
                 if (client.Avatars.DisplayNamesAvailable())
                 {
                     // Use display names API
-                    await client.Avatars.GetDisplayNames(uuidList, 
-                        (success, names, badIDs) =>
+                    var (success, names, badIDs) = await client.Avatars.GetDisplayNamesAsync(uuidList, CancellationToken.None);
+
+                    if (success && names?.Length > 0)
+                    {
+                        var displayNameDict = names.ToDictionary(n => n.ID, n => n);
+                        await UpdateDisplayNamesAsync(displayNameDict);
+
+                        // Mark as successful and clean up tracking
+                        foreach (var name in names)
                         {
+                            var avatarId = name.ID.ToString();
+                            successful.Add(avatarId);
+                            failed.Remove(avatarId);
+                            MarkRequestCompleted(avatarId);
+                        }
+                    }
+
+                    // Handle failed IDs - try legacy names first, then queue for retry
+                    if (badIDs?.Length > 0)
+                    {
+                        var legacyUuids = badIDs.ToList();
+                        EventHandler<UUIDNameReplyEventArgs> legacyHandler = null!;
+                        legacyHandler = (sender, e) =>
+                        {
+                            client.Avatars.UUIDNameReply -= legacyHandler;
                             _ = Task.Run(async () =>
                             {
-                                if (success && names?.Length > 0)
+                                // Update successful legacy names
+                                await UpdateLegacyNamesAsync(e.Names);
+                                foreach (var kvp in e.Names)
                                 {
-                                    var displayNameDict = names.ToDictionary(n => n.ID, n => n);
-                                    await UpdateDisplayNamesAsync(displayNameDict);
-                                    
-                                    // Mark as successful and clean up tracking
-                                    foreach (var name in names)
-                                    {
-                                        var avatarId = name.ID.ToString();
-                                        successful.Add(avatarId);
-                                        failed.Remove(avatarId);
-                                        MarkRequestCompleted(avatarId);
-                                    }
+                                    var avatarId = kvp.Key.ToString();
+                                    successful.Add(avatarId);
+                                    failed.Remove(avatarId);
+                                    MarkRequestCompleted(avatarId);
                                 }
-                                
-                                // Handle failed IDs - try legacy names first, then queue for retry
-                                if (badIDs?.Length > 0)
-                                {
-                                    var legacyUuids = badIDs.ToList();
-                                    EventHandler<UUIDNameReplyEventArgs> legacyHandler = null!;
-                                    legacyHandler = (sender, e) =>
-                                    {
-                                        client.Avatars.UUIDNameReply -= legacyHandler;
-                                        _ = Task.Run(async () =>
-                                        {
-                                            // Update successful legacy names
-                                            await UpdateLegacyNamesAsync(e.Names);
-                                            foreach (var kvp in e.Names)
-                                            {
-                                                var avatarId = kvp.Key.ToString();
-                                                successful.Add(avatarId);
-                                                failed.Remove(avatarId);
-                                                MarkRequestCompleted(avatarId);
-                                            }
-                                            
-                                            // Queue remaining failed avatars for retry
-                                            foreach (var uuid in legacyUuids)
-                                            {
-                                                var avatarId = uuid.ToString();
-                                                if (failed.Contains(avatarId))
-                                                {
-                                                    QueueForRetry(avatarId, "Display name and legacy name requests failed", FailureType.NetworkError);
-                                                }
-                                            }
-                                        });
-                                    };
 
-                                    client.Avatars.UUIDNameReply += legacyHandler;
-                                    client.Avatars.RequestAvatarNames(legacyUuids);
-                                }
-                                else
+                                // Queue remaining failed avatars for retry
+                                foreach (var uuid in legacyUuids)
                                 {
-                                    // No badIDs, but check if we got everything we expected
-                                    foreach (var avatarId in failed.ToList())
+                                    var avatarId = uuid.ToString();
+                                    if (failed.Contains(avatarId))
                                     {
-                                        if (!successful.Contains(avatarId))
-                                        {
-                                            QueueForRetry(avatarId, "Avatar not included in display name response", FailureType.MissingDisplayName);
-                                        }
+                                        QueueForRetry(avatarId, "Display name and legacy name requests failed", FailureType.NetworkError);
                                     }
                                 }
                             });
-                        });
+                        };
+
+                        client.Avatars.UUIDNameReply += legacyHandler;
+                        client.Avatars.RequestAvatarNames(legacyUuids);
+                    }
+                    else
+                    {
+                        // No badIDs, but check if we got everything we expected
+                        foreach (var avatarId in failed.ToList())
+                        {
+                            if (!successful.Contains(avatarId))
+                            {
+                                QueueForRetry(avatarId, "Avatar not included in display name response", FailureType.MissingDisplayName);
+                            }
+                        }
+                    }
                 }
                 else
                 {
@@ -993,30 +988,24 @@ namespace RadegastWeb.Services
                 if (client.Avatars.DisplayNamesAvailable())
                 {
                     // Use display names API
-                    await client.Avatars.GetDisplayNames(uuidList, 
-                        (success, names, badIDs) =>
+                    var (success, names, _) = await client.Avatars.GetDisplayNamesAsync(uuidList, CancellationToken.None);
+                    if (success && names?.Length > 0)
+                    {
+                        var displayNameDict = names.ToDictionary(n => n.ID, n => n);
+                        await UpdateDisplayNamesAsync(displayNameDict);
+
+                        // Mark as successful
+                        foreach (var name in names)
                         {
-                            _ = Task.Run(async () =>
-                            {
-                                if (success && names?.Length > 0)
-                                {
-                                    var displayNameDict = names.ToDictionary(n => n.ID, n => n);
-                                    await UpdateDisplayNamesAsync(displayNameDict);
-                                    
-                                    // Mark as successful
-                                    foreach (var name in names)
-                                    {
-                                        successful.Add(name.ID.ToString());
-                                    }
-                                }
-                                
-                                receivedCount++;
-                                if (receivedCount >= expectedCount)
-                                {
-                                    completionSource.TrySetResult(true);
-                                }
-                            });
-                        });
+                            successful.Add(name.ID.ToString());
+                        }
+                    }
+
+                    receivedCount = expectedCount;
+                    if (receivedCount >= expectedCount)
+                    {
+                        completionSource.TrySetResult(true);
+                    }
                 }
                 else
                 {

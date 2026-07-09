@@ -1,4 +1,4 @@
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Models;
 using System.Collections.Concurrent;
 using System.Text.Json;

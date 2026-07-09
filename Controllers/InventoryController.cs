@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
-using OpenMetaverse;
-using OpenMetaverse.Assets;
+using LibreMetaverse;
+using LibreMetaverse.Assets;
 using RadegastWeb.Core;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
@@ -195,29 +195,16 @@ namespace RadegastWeb.Controllers
 
         private static async Task<Asset?> RequestAssetAsync(WebRadegastInstance instance, UUID assetUuid, AssetType assetType, TimeSpan timeout)
         {
-            var completion = new TaskCompletionSource<Asset?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var cts = new CancellationTokenSource(timeout);
 
-            instance.Client.Assets.RequestAsset(assetUuid, assetType, true, (download, asset) =>
+            try
             {
-                if (asset != null)
-                {
-                    completion.TrySetResult(asset);
-                    return;
-                }
-
-                if (download != null && download.Success == false)
-                {
-                    completion.TrySetResult(null);
-                }
-            });
-
-            var completedTask = await Task.WhenAny(completion.Task, Task.Delay(timeout));
-            if (completedTask != completion.Task)
+                return await instance.Client.Assets.RequestAssetAsync(assetUuid, assetType, true, cts.Token);
+            }
+            catch (OperationCanceledException)
             {
                 return null;
             }
-
-            return await completion.Task;
         }
     }
 }

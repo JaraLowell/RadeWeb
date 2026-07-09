@@ -817,10 +817,10 @@ namespace RadegastWeb.Services
             {
                 var openMetaverseChatType = chatType.ToLower() switch
                 {
-                    "whisper" => OpenMetaverse.ChatType.Whisper,
-                    "shout" => OpenMetaverse.ChatType.Shout,
-                    "normal" => OpenMetaverse.ChatType.Normal,
-                    _ => OpenMetaverse.ChatType.Normal
+                    "whisper" => LibreMetaverse.ChatType.Whisper,
+                    "shout" => LibreMetaverse.ChatType.Shout,
+                    "normal" => LibreMetaverse.ChatType.Normal,
+                    _ => LibreMetaverse.ChatType.Normal
                 };
 
                 instance.SendChat(message, openMetaverseChatType, channel);

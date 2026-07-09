@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
 

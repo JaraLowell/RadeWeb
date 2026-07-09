@@ -1,6 +1,6 @@
 #if DEBUG
 using Microsoft.AspNetCore.Mvc;
-using OpenMetaverse;
+using LibreMetaverse;
 
 namespace RadegastWeb.Controllers
 {

@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
-using OpenMetaverse;
+using LibreMetaverse;
 using RadegastWeb.Models;
 using RadegastWeb.Services;
 
@@ -1249,7 +1249,7 @@ namespace RadegastWeb.Hubs
                     var clientConnected = instance.Client.Network.Connected;
                     var currentSim = instance.Client.Network.CurrentSim;
                     _logger.LogInformation("SL Client Status for {AccountId}: NetworkConnected={NetworkConnected}, CurrentSim={SimName}, SimAvatars={SimAvatarCount}",
-                        accountId, clientConnected, currentSim?.Name ?? "null", currentSim?.AvatarPositions?.Count ?? 0);
+                        accountId, clientConnected, currentSim?.Name ?? "null", currentSim?.ObjectsAvatars?.Count ?? 0);
 
                     // Check region info from current sim
                     if (currentSim != null)
@@ -1288,7 +1288,7 @@ namespace RadegastWeb.Hubs
                                     rawAvatar.Name ?? "Unknown", rawAvatar.ID, rawAvatar.Position);
                             }
                             
-                            var coarseAvatars = currentSim.AvatarPositions;
+                            var coarseAvatars = currentSim.ObjectsAvatars;
                             _logger.LogInformation("Raw SL Client AvatarPositions (coarse) count: {Count}", coarseAvatars?.Count ?? 0);
                         }
                     }

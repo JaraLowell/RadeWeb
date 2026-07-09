@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using RadegastWeb.Services;
-using OpenMetaverse;
+using LibreMetaverse;
 
 namespace RadegastWeb.Controllers
 {
