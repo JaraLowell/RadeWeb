@@ -42,6 +42,7 @@ namespace RadegastWeb.Core
         private readonly string _cacheDir;
         private readonly string _logDir;
         private bool _disposed;
+        private int _disconnectStarted;
         
         // Constants for radar functionality (matching Radegast behavior)
         private const double MAX_DISTANCE = 362.0; // One sim corner-to-corner distance
@@ -418,6 +419,17 @@ namespace RadegastWeb.Core
 
         public async Task DisconnectAsync()
         {
+            if (_disposed)
+            {
+                return;
+            }
+
+            if (Interlocked.Exchange(ref _disconnectStarted, 1) == 1)
+            {
+                _logger.LogDebug("Disconnect already in progress/completed for account {AccountId}", _accountId);
+                return;
+            }
+
             try
             {
                 UpdateStatus("Disconnecting...");
@@ -432,7 +444,15 @@ namespace RadegastWeb.Core
                     await Task.Delay(500);
                 }
                 
-                await Task.Run(() => _client.Network.Logout());
+                try
+                {
+                    await Task.Run(() => _client.Network.Logout());
+                }
+                catch (AggregateException aex) when (aex.InnerExceptions.All(ex => ex is ObjectDisposedException))
+                {
+                    // LibreMetaverse can race EventQueue cancellation during shutdown; treat as benign logout completion.
+                    _logger.LogDebug(aex, "Ignoring disposed token race during logout for account {AccountId}", _accountId);
+                }
                 
                 AccountInfo.IsConnected = false;
                 AccountInfo.CurrentRegion = null; // Clear region info
@@ -6087,7 +6107,18 @@ namespace RadegastWeb.Core
                 
                 if (_client.Network.Connected)
                 {
-                    _ = Task.Run(async () => await DisconnectAsync());
+                    try
+                    {
+                        _client.Network.Logout();
+                    }
+                    catch (AggregateException aex) when (aex.InnerExceptions.All(ex => ex is ObjectDisposedException))
+                    {
+                        _logger.LogDebug(aex, "Ignoring disposed token race during dispose logout for account {AccountId}", _accountId);
+                    }
+                    catch (ObjectDisposedException odex)
+                    {
+                        _logger.LogDebug(odex, "Network already disposed during instance dispose for account {AccountId}", _accountId);
+                    }
                 }
                 // GridClient doesn't implement IDisposable in this version
             }
