@@ -446,12 +446,16 @@ namespace RadegastWeb.Core
                 
                 try
                 {
-                    await Task.Run(() => _client.Network.Logout());
+                    await _client.Network.LogoutAsync(CancellationToken.None);
                 }
                 catch (AggregateException aex) when (aex.InnerExceptions.All(ex => ex is ObjectDisposedException))
                 {
                     // LibreMetaverse can race EventQueue cancellation during shutdown; treat as benign logout completion.
                     _logger.LogDebug(aex, "Ignoring disposed token race during logout for account {AccountId}", _accountId);
+                }
+                catch (ObjectDisposedException odex)
+                {
+                    _logger.LogDebug(odex, "Network disposed during logout for account {AccountId}", _accountId);
                 }
                 
                 AccountInfo.IsConnected = false;
@@ -6109,11 +6113,8 @@ namespace RadegastWeb.Core
                 {
                     try
                     {
-                        _client.Network.Logout();
-                    }
-                    catch (AggregateException aex) when (aex.InnerExceptions.All(ex => ex is ObjectDisposedException))
-                    {
-                        _logger.LogDebug(aex, "Ignoring disposed token race during dispose logout for account {AccountId}", _accountId);
+                        // Non-blocking request to avoid sync-wait disposal races in library shutdown paths.
+                        _client.Network.RequestLogout();
                     }
                     catch (ObjectDisposedException odex)
                     {

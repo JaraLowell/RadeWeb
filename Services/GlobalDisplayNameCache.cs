@@ -467,7 +467,7 @@ namespace RadegastWeb.Services
                 client = _activeClients.Values.FirstOrDefault(c => c?.Network?.Connected == true);
                 if (client == null)
                 {
-                    _logger.LogWarning("No active grid clients available for display name requests");
+                    _logger.LogDebug("No active grid clients available for display name requests");
                     return false;
                 }
             }
