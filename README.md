@@ -97,6 +97,36 @@ RadegastWeb is a modern, web-based Second Life client inspired by the original R
    - Login page: `http://localhost:15269/login.html`
    - Statistics dashboard: `http://localhost:15269/stats.html`
 
+### Linux Server Update Flow
+
+Most Linux machines can continue using the standard update flow:
+
+```bash
+git pull
+dotnet build RadeWeb.sln
+```
+
+If a one-time dependency metadata change is introduced (for example package lock updates or major package migration), run this once after `git pull`:
+
+```bash
+dotnet restore RadeWeb.sln --use-lock-file
+dotnet build RadeWeb.sln
+```
+
+After that, normal updates usually go back to:
+
+```bash
+git pull
+dotnet build RadeWeb.sln
+```
+
+If restore/build reports lock mismatch errors, use:
+
+```bash
+dotnet restore RadeWeb.sln --use-lock-file
+dotnet build RadeWeb.sln
+```
+
 ### Using VS Code
 
 1. Open the project in VS Code

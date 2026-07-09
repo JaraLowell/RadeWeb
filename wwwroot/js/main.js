@@ -2964,7 +2964,7 @@ class RadegastWebClient {
             }
 
             const summary = document.createElement('summary');
-            summary.appendChild(this.createInventoryEntry(node));
+            summary.appendChild(this.createInventoryEntry(node, parentFolderType));
             details.appendChild(summary);
 
             const childrenContainer = document.createElement('div');
@@ -3016,9 +3016,11 @@ class RadegastWebClient {
             row.appendChild(worn);
         }
 
+        const actions = document.createElement('div');
+        actions.className = 'inventory-entry-actions ms-auto d-flex gap-1';
+        let hasActions = false;
+
         if (node.isFolder && node.uuid && parentFolderType === 'CurrentOutfit') {
-            const actions = document.createElement('div');
-            actions.className = 'inventory-entry-actions ms-auto d-flex gap-1';
 
             const wearFolderBtn = document.createElement('button');
             wearFolderBtn.className = 'btn btn-sm btn-outline-success';
@@ -3029,11 +3031,163 @@ class RadegastWebClient {
                 await this.wearInventoryFolder(node.uuid, node.name);
             });
             actions.appendChild(wearFolderBtn);
+            hasActions = true;
+        }
 
+        if (!node.isFolder && node.uuid && this.isInventoryPreviewable(node)) {
+            const openPreviewBtn = document.createElement('button');
+            openPreviewBtn.className = 'btn btn-sm btn-outline-primary';
+            openPreviewBtn.innerHTML = '<i class="fas fa-external-link-alt me-1"></i>Open';
+            openPreviewBtn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                await this.openInventoryItemPreview(node.uuid, node.name);
+            });
+            actions.appendChild(openPreviewBtn);
+            hasActions = true;
+        }
+
+        if (hasActions) {
             row.appendChild(actions);
         }
 
         return row;
+    }
+
+    isInventoryPreviewable(node) {
+        if (!node || node.isFolder) {
+            return false;
+        }
+
+        const assetType = (node.assetType || '').toLowerCase();
+        const typeName = (node.typeName || '').toLowerCase();
+
+        return assetType === 'texture'
+            || assetType === 'snapshot'
+            || assetType === 'notecard'
+            || assetType === 'lsltext'
+            || typeName === 'script';
+    }
+
+    async openInventoryItemPreview(itemUuid, itemName) {
+        if (!this.currentAccountId) {
+            this.showAlert('No account selected', 'warning');
+            return;
+        }
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/inventory/${this.currentAccountId}/preview/${itemUuid}`
+            );
+
+            if (!response.ok) {
+                const error = await response.json();
+                this.showAlert('Failed to open preview: ' + (error.message || 'Unknown error'), 'danger');
+                return;
+            }
+
+            const preview = await response.json();
+            if (preview.kind === 'image') {
+                this.openImagePreviewWindow(itemName, preview.imageUrl, preview.fallbackImageUrl);
+                return;
+            }
+
+            if (preview.kind === 'text') {
+                this.openTextPreviewWindow(itemName, preview.content || '', preview.textType || 'text');
+                return;
+            }
+
+            this.showAlert('Preview type is not supported for this item yet.', 'warning');
+        } catch (error) {
+            console.error('Error opening inventory preview:', error);
+            this.showAlert('Failed to open preview: ' + error.message, 'danger');
+        }
+    }
+
+    openImagePreviewWindow(itemName, imageUrl, fallbackImageUrl) {
+        const previewWindow = window.open('', '_blank', 'popup=yes,width=512,height=512,resizable=yes,scrollbars=yes');
+        if (!previewWindow) {
+            this.showAlert('Popup blocked. Allow popups to view image previews.', 'warning');
+            return;
+        }
+
+        const title = this.escapeHtml(itemName || 'Image Preview');
+        previewWindow.document.write(`
+            <!doctype html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <title>${title}</title>
+                <style>
+                    body { margin: 0; background: #111; color: #eee; font-family: Segoe UI, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+                    .header { padding: 8px 12px; font-size: 13px; border-bottom: 1px solid #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                    .frame { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; }
+                    img { max-width: 100%; max-height: 100%; object-fit: contain; }
+                    .error { color: #f7b3b3; padding: 12px; font-size: 13px; }
+                </style>
+            </head>
+            <body>
+                <div class="header">${title}</div>
+                <div class="frame"><img id="inventoryPreviewImage" alt="${title}"></div>
+            </body>
+            </html>
+        `);
+        previewWindow.document.close();
+
+        const imageElement = previewWindow.document.getElementById('inventoryPreviewImage');
+        if (!imageElement) {
+            return;
+        }
+
+        imageElement.onerror = () => {
+            if (fallbackImageUrl && imageElement.src !== fallbackImageUrl) {
+                imageElement.src = fallbackImageUrl;
+                return;
+            }
+
+            const frame = imageElement.parentElement;
+            if (frame) {
+                frame.innerHTML = '<div class="error">Unable to load image preview for this asset.</div>';
+            }
+        };
+
+        imageElement.src = imageUrl;
+    }
+
+    openTextPreviewWindow(itemName, content, textType) {
+        const previewWindow = window.open('', '_blank', 'popup=yes,width=700,height=700,resizable=yes,scrollbars=yes');
+        if (!previewWindow) {
+            this.showAlert('Popup blocked. Allow popups to view text previews.', 'warning');
+            return;
+        }
+
+        const title = this.escapeHtml(itemName || 'Text Preview');
+        const safeType = this.escapeHtml((textType || 'text').toUpperCase());
+        const safeContent = this.escapeHtml(content || '');
+
+        previewWindow.document.write(`
+            <!doctype html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <title>${title}</title>
+                <style>
+                    body { margin: 0; background: #f7f8fb; color: #222; font-family: Consolas, Monaco, monospace; display: flex; flex-direction: column; height: 100vh; }
+                    .header { padding: 10px 12px; border-bottom: 1px solid #d9dee8; background: #fff; font-family: Segoe UI, sans-serif; }
+                    .type { font-size: 11px; color: #576070; letter-spacing: 0.04em; }
+                    pre { margin: 0; padding: 12px; white-space: pre-wrap; word-break: break-word; overflow: auto; flex: 1; line-height: 1.45; font-size: 13px; }
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <div>${title}</div>
+                    <div class="type">${safeType}</div>
+                </div>
+                <pre>${safeContent}</pre>
+            </body>
+            </html>
+        `);
+        previewWindow.document.close();
     }
 
     countInventoryNodes(nodes) {
