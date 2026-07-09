@@ -251,6 +251,7 @@ namespace RadegastWeb.Services
                 var notice = new NoticeDto
                 {
                     Id = Guid.NewGuid().ToString(),
+                    SessionId = im.IMSessionID.ToString(),
                     Title = title.Trim(),
                     Message = message.Trim(),
                     FromName = im.FromAgentName,
@@ -322,6 +323,7 @@ namespace RadegastWeb.Services
                 var notice = new NoticeDto
                 {
                     Id = im.IMSessionID.ToString(), // Use session ID for acknowledgment
+                    SessionId = im.IMSessionID.ToString(),
                     Title = title.Trim(),
                     Message = message.Trim(),
                     FromName = im.FromAgentName,
@@ -556,6 +558,7 @@ namespace RadegastWeb.Services
                 var notice = new Notice
                 {
                     Id = Guid.Parse(noticeDto.Id),
+                    SessionId = noticeDto.SessionId,
                     AccountId = noticeDto.AccountId,
                     Title = noticeDto.Title,
                     Message = noticeDto.Message,
@@ -603,6 +606,7 @@ namespace RadegastWeb.Services
                 RequiresAcknowledgment = notice.RequiresAcknowledgment,
                 IsAcknowledged = notice.IsAcknowledged,
                 IsRead = notice.IsRead,
+                SessionId = notice.SessionId,
                 // Interactive notice fields
                 IsInteractive = notice.IsInteractive,
                 HasResponse = notice.HasResponse,
@@ -646,6 +650,7 @@ namespace RadegastWeb.Services
                 RequiresAcknowledgment = notice.RequiresAcknowledgment,
                 IsAcknowledged = notice.IsAcknowledged,
                 IsRead = notice.IsRead,
+                SessionId = notice.SessionId,
                 // Interactive notice fields
                 IsInteractive = notice.IsInteractive,
                 HasResponse = notice.HasResponse,

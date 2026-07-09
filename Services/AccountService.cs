@@ -4,6 +4,7 @@ using RadegastWeb.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using LibreMetaverse;
 using System.Collections.Concurrent;
 
 namespace RadegastWeb.Services
@@ -1034,6 +1035,52 @@ namespace RadegastWeb.Services
         {
             try
             {
+                if (_instances.TryGetValue(accountId, out var instance) && instance.IsConnected)
+                {
+                    try
+                    {
+                        using var context = CreateDbContext();
+                        var notice = await context.Notices
+                            .Where(n => n.AccountId == accountId && n.Id == Guid.Parse(noticeId))
+                            .FirstOrDefaultAsync();
+
+                        if (notice != null && notice.RequiresAcknowledgment)
+                        {
+                            var hasAttachment = notice.HasAttachment;
+
+                            if (UUID.TryParse(notice.FromId, out var fromAgentId))
+                            {
+                                UUID imSessionId = UUID.Zero;
+
+                                if (!string.IsNullOrWhiteSpace(notice.SessionId) && UUID.TryParse(notice.SessionId, out var parsedSessionId))
+                                {
+                                    imSessionId = parsedSessionId;
+                                }
+                                else if (UUID.TryParse(noticeId, out var parsedNoticeIdAsSession))
+                                {
+                                    imSessionId = parsedNoticeIdAsSession;
+                                }
+
+                                if (imSessionId != UUID.Zero)
+                                {
+                                    AssetType? attachmentType = null;
+                                    if (hasAttachment && !string.IsNullOrWhiteSpace(notice.AttachmentType)
+                                        && Enum.TryParse<AssetType>(notice.AttachmentType, out var parsedType))
+                                    {
+                                        attachmentType = parsedType;
+                                    }
+
+                                    await instance.SendGroupNoticeAcknowledgmentAsync(fromAgentId, imSessionId, hasAttachment, attachmentType);
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ackEx)
+                    {
+                        _logger.LogWarning(ackEx, "Unable to send SL notice acknowledgment for notice {NoticeId} account {AccountId}", noticeId, accountId);
+                    }
+                }
+
                 using var scope = _serviceProvider.CreateScope();
                 var noticeService = scope.ServiceProvider.GetRequiredService<INoticeService>();
                 await noticeService.AcknowledgeNoticeAsync(accountId, noticeId);

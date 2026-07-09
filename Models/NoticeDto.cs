@@ -20,6 +20,7 @@ namespace RadegastWeb.Models
         public bool RequiresAcknowledgment { get; set; }
         public bool IsAcknowledged { get; set; }
         public bool IsRead { get; set; } = false;
+        public string? SessionId { get; set; }
         
         // Interactive notice fields for friend requests and group invitations
         public bool IsInteractive { get; set; } = false;

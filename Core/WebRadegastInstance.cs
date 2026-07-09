@@ -2794,36 +2794,15 @@ namespace RadegastWeb.Core
                 {
                     try
                     {
-                        // Send acknowledgment back to Second Life
-                        // Based on Radegast implementation, we need to send an IM response
                         var hasAttachment = processedNotice.HasAttachment;
-                        var dialog = InstantMessageDialog.MessageFromAgent; // Default dialog
-                        
-                        // Prepare the binary bucket for attachment acceptance (if needed)
-                        byte[] binaryBucket = new byte[0];
-                        if (hasAttachment && !string.IsNullOrEmpty(processedNotice.AttachmentType))
+                        AssetType? attachmentType = null;
+                        if (hasAttachment && !string.IsNullOrEmpty(processedNotice.AttachmentType)
+                            && Enum.TryParse<AssetType>(processedNotice.AttachmentType, out var parsedType))
                         {
-                            // Try to find appropriate inventory folder for the attachment type
-                            if (Enum.TryParse<AssetType>(processedNotice.AttachmentType, out var assetType))
-                            {
-                                var destinationFolderID = _client.Inventory.FindFolderForType(assetType);
-                                binaryBucket = destinationFolderID.GetBytes();
-                                dialog = InstantMessageDialog.GroupNoticeInventoryAccepted;
-                            }
+                            attachmentType = parsedType;
                         }
-                        
-                        // Send the acknowledgment IM to Second Life
-                        _client.Self.InstantMessage(
-                            _client.Self.Name,
-                            e.IM.FromAgentID,
-                            string.Empty,
-                            e.IM.IMSessionID,
-                            dialog,
-                            InstantMessageOnline.Offline,
-                            _client.Self.SimPosition,
-                            _client.Network.CurrentSim?.RegionID ?? UUID.Zero,
-                            binaryBucket
-                        );
+
+                        await SendGroupNoticeAcknowledgmentAsync(e.IM.FromAgentID, e.IM.IMSessionID, hasAttachment, attachmentType);
                         
                         _logger.LogInformation("Auto-acknowledged group notice ({Dialog}) from {FromAgent} for account {AccountId}, hasAttachment: {HasAttachment}", 
                             e.IM.Dialog, e.IM.FromAgentName, _accountId, hasAttachment);
@@ -5532,6 +5511,52 @@ namespace RadegastWeb.Core
             }
 
             return await InvokeAppearanceActionAsync(itemUuid, null, "Wear", "Attach", "AddToOutfit");
+        }
+
+        public Task<bool> SendGroupNoticeAcknowledgmentAsync(UUID fromAgentId, UUID imSessionId, bool hasAttachment, AssetType? attachmentType)
+        {
+            if (!_client.Network.Connected)
+            {
+                _logger.LogWarning("Cannot acknowledge notice - not connected for account {AccountId}", _accountId);
+                return Task.FromResult(false);
+            }
+
+            try
+            {
+                var dialog = InstantMessageDialog.MessageFromAgent;
+                var binaryBucket = Array.Empty<byte>();
+
+                if (hasAttachment)
+                {
+                    dialog = InstantMessageDialog.GroupNoticeInventoryAccepted;
+                    if (attachmentType.HasValue)
+                    {
+                        var destinationFolderID = _client.Inventory.FindFolderForType(attachmentType.Value);
+                        binaryBucket = destinationFolderID.GetBytes();
+                    }
+                }
+
+                _client.Self.InstantMessage(
+                    _client.Self.Name,
+                    fromAgentId,
+                    string.Empty,
+                    imSessionId,
+                    dialog,
+                    InstantMessageOnline.Offline,
+                    _client.Self.SimPosition,
+                    _client.Network.CurrentSim?.RegionID ?? UUID.Zero,
+                    binaryBucket
+                );
+
+                _logger.LogInformation("Sent group notice acknowledgment to SL for account {AccountId}, IMSessionID: {IMSessionID}, hasAttachment: {HasAttachment}",
+                    _accountId, imSessionId, hasAttachment);
+                return Task.FromResult(true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending group notice acknowledgment to SL for account {AccountId}", _accountId);
+                return Task.FromResult(false);
+            }
         }
 
         private async Task<bool> InvokeAppearanceActionAsync(UUID itemUuid, AttachmentPoint? attachmentPoint, params string[] methodNames)
