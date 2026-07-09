@@ -5573,7 +5573,7 @@ namespace RadegastWeb.Core
                 return result;
             }
 
-            foreach (var child in children)
+            foreach (var child in SortInventoryChildren(children))
             {
                 if (child.Data == null)
                 {
@@ -5602,10 +5602,14 @@ namespace RadegastWeb.Core
                 result.Add(node);
             }
 
-            return result
-                .OrderByDescending(n => n.IsFolder)
-                .ThenBy(n => n.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            return result;
+        }
+
+        private static IEnumerable<InventoryNode> SortInventoryChildren(IEnumerable<InventoryNode> children)
+        {
+            return children.OrderByDescending(child => child.Data is InventoryFolder)
+                .ThenByDescending(child => child.Data is InventoryFolder folder && folder.PreferredType != FolderType.None)
+                .ThenBy(child => child.Data?.Name ?? string.Empty, StringComparer.OrdinalIgnoreCase);
         }
 
         private static string GetInventoryTypeName(InventoryBase item)
