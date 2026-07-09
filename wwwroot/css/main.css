@@ -596,7 +596,14 @@ a {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    flex-wrap: wrap;
     font-size: 0.9rem;
+}
+
+.inventory-entry-actions,
+.attachment-actions {
+    margin-left: auto;
+    flex-shrink: 0;
 }
 
 .inventory-entry .inv-icon {

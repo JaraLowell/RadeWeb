@@ -2951,7 +2951,7 @@ class RadegastWebClient {
         treeContainer.appendChild(fragment);
     }
 
-    createInventoryNodeElement(node, expanded = false) {
+    createInventoryNodeElement(node, expanded = false, parentFolderType = '') {
         const wrapper = document.createElement('div');
         wrapper.className = 'inventory-node';
 
@@ -2971,20 +2971,20 @@ class RadegastWebClient {
             childrenContainer.className = 'inventory-children';
 
             node.children.forEach(child => {
-                childrenContainer.appendChild(this.createInventoryNodeElement(child));
+                childrenContainer.appendChild(this.createInventoryNodeElement(child, false, node.folderType || parentFolderType));
             });
 
             details.appendChild(childrenContainer);
 
             wrapper.appendChild(details);
         } else {
-            wrapper.appendChild(this.createInventoryEntry(node));
+            wrapper.appendChild(this.createInventoryEntry(node, parentFolderType));
         }
 
         return wrapper;
     }
 
-    createInventoryEntry(node) {
+    createInventoryEntry(node, parentFolderType = '') {
         const row = document.createElement('div');
         row.className = 'inventory-entry';
 
@@ -3009,6 +3009,28 @@ class RadegastWebClient {
                 ? `Worn: ${node.wornAttachmentPoint}`
                 : 'Worn';
             row.appendChild(worn);
+        } else if (node.wornAttachmentPoint) {
+            const worn = document.createElement('span');
+            worn.className = 'badge bg-secondary ms-2';
+            worn.textContent = `Last worn: ${node.wornAttachmentPoint}`;
+            row.appendChild(worn);
+        }
+
+        if (node.isFolder && node.uuid && parentFolderType === 'CurrentOutfit') {
+            const actions = document.createElement('div');
+            actions.className = 'inventory-entry-actions ms-auto d-flex gap-1';
+
+            const wearFolderBtn = document.createElement('button');
+            wearFolderBtn.className = 'btn btn-sm btn-outline-success';
+            wearFolderBtn.innerHTML = '<i class="fas fa-tshirt me-1"></i>Wear Folder';
+            wearFolderBtn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                await this.wearInventoryFolder(node.uuid, node.name);
+            });
+            actions.appendChild(wearFolderBtn);
+
+            row.appendChild(actions);
         }
 
         return row;
@@ -3090,6 +3112,17 @@ class RadegastWebClient {
             infoDiv.appendChild(detailsPara);
             
             item.appendChild(infoDiv);
+
+            const actions = document.createElement('div');
+            actions.className = 'attachment-actions ms-2 d-flex gap-1';
+
+            const detachBtn = document.createElement('button');
+            detachBtn.className = 'btn btn-sm btn-outline-danger';
+            detachBtn.innerHTML = '<i class="fas fa-unlink me-1"></i>Detach';
+            detachBtn.addEventListener('click', async () => {
+                await this.detachAttachment(attachment.uuid, attachment.name);
+            });
+            actions.appendChild(detachBtn);
             
             // Add touch button if the attachment is touchable
             if (attachment.isTouchable && attachment.primUuid) {
@@ -3099,13 +3132,15 @@ class RadegastWebClient {
                 touchBtn.addEventListener('click', () => {
                     this.touchAttachment(attachment.primUuid, attachment.name);
                 });
-                item.appendChild(touchBtn);
+                actions.appendChild(touchBtn);
             } else {
                 const notTouchableSpan = document.createElement('span');
                 notTouchableSpan.className = 'badge bg-secondary';
                 notTouchableSpan.textContent = 'Not Touchable';
-                item.appendChild(notTouchableSpan);
+                actions.appendChild(notTouchableSpan);
             }
+
+            item.appendChild(actions);
             
             listContainer.appendChild(item);
         });
@@ -3138,6 +3173,105 @@ class RadegastWebClient {
         } catch (error) {
             console.error("Error touching attachment:", error);
             this.showAlert("Failed to touch attachment: " + error.message, "danger");
+        }
+    }
+
+    async detachInventoryItem(itemUuid, name) {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/attachments/${this.currentAccountId}/detach/${itemUuid}`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                }
+            );
+
+            if (response.ok) {
+                this.showAlert(`Detached "${name}"`, "success");
+                await Promise.all([this.loadInventory(), this.loadAttachments()]);
+            } else {
+                const error = await response.json();
+                this.showAlert("Failed to detach attachment: " + (error.message || "Unknown error"), "danger");
+            }
+        } catch (error) {
+            console.error("Error detaching attachment:", error);
+            this.showAlert("Failed to detach attachment: " + error.message, "danger");
+        }
+    }
+
+    async wearInventoryItem(itemUuid, name, attachmentPoint) {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const query = attachmentPoint ? `?attachmentPoint=${encodeURIComponent(attachmentPoint)}` : '';
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/attachments/${this.currentAccountId}/wear/${itemUuid}${query}`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                }
+            );
+
+            if (response.ok) {
+                this.showAlert(`Wore "${name}"`, "success");
+                await Promise.all([this.loadInventory(), this.loadAttachments()]);
+            } else {
+                const error = await response.json();
+                this.showAlert("Failed to wear attachment: " + (error.message || "Unknown error"), "danger");
+            }
+        } catch (error) {
+            console.error("Error wearing attachment:", error);
+            this.showAlert("Failed to wear attachment: " + error.message, "danger");
+        }
+    }
+
+    async detachAttachment(itemUuid, name) {
+        await this.detachInventoryItem(itemUuid, name);
+    }
+
+    async wearAttachment(itemUuid, name, attachmentPoint) {
+        await this.wearInventoryItem(itemUuid, name, attachmentPoint);
+    }
+
+    async wearInventoryFolder(folderUuid, name) {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/attachments/${this.currentAccountId}/wear-folder/${folderUuid}?replaceOutfit=true`,
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                }
+            );
+
+            if (response.ok) {
+                this.showAlert(`Wore folder "${name}"`, "success");
+                await Promise.all([this.loadInventory(), this.loadAttachments()]);
+            } else {
+                const error = await response.json();
+                this.showAlert("Failed to wear folder: " + (error.message || "Unknown error"), "danger");
+            }
+        } catch (error) {
+            console.error("Error wearing folder:", error);
+            this.showAlert("Failed to wear folder: " + error.message, "danger");
         }
     }
 

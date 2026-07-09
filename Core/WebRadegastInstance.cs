@@ -5,6 +5,7 @@ using RadegastWeb.Models;
 using RadegastWeb.Services;
 using System.Collections.Concurrent;
 using System.Linq;
+using System.Reflection;
 
 namespace RadegastWeb.Core
 {
@@ -5372,6 +5373,296 @@ namespace RadegastWeb.Core
         public async Task UpdateAttachmentCacheAsync()
         {
             await CacheWornAttachmentsAsync();
+        }
+
+        public async Task<bool> WearInventoryFolderAsync(UUID folderUuid, bool replaceOutfit = true)
+        {
+            if (!_client.Network.Connected)
+            {
+                _logger.LogWarning("Cannot wear inventory folder - not connected");
+                return false;
+            }
+
+            var inventory = await GetCachedInventoryAsync();
+            var folderNode = FindInventoryNodeByUuid(inventory.RootNodes, folderUuid);
+            if (folderNode == null || !folderNode.IsFolder)
+            {
+                _logger.LogWarning("Inventory folder {FolderUuid} not found for account {AccountId}", folderUuid, _accountId);
+                return false;
+            }
+
+            if (!IsDirectChildOfFolderType(inventory.RootNodes, folderUuid, FolderType.CurrentOutfit))
+            {
+                _logger.LogWarning("Inventory folder {FolderUuid} is not a direct child of My Outfits for account {AccountId}", folderUuid, _accountId);
+                return false;
+            }
+
+            var targetItems = new List<InventoryCacheNode>();
+            CollectWearableInventoryItems(folderNode, targetItems);
+
+            if (targetItems.Count == 0)
+            {
+                _logger.LogInformation("Inventory folder {FolderUuid} has no wearable items for account {AccountId}", folderUuid, _accountId);
+                return false;
+            }
+
+            var targetItemIds = targetItems
+                .Select(item => item.Uuid)
+                .Where(uuid => !string.IsNullOrWhiteSpace(uuid))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            if (replaceOutfit)
+            {
+                var wornAttachments = await GetCachedAttachmentsAsync();
+                foreach (var attachment in wornAttachments)
+                {
+                    if (string.IsNullOrWhiteSpace(attachment.Uuid) || targetItemIds.Contains(attachment.Uuid))
+                    {
+                        continue;
+                    }
+
+                    if (UUID.TryParse(attachment.Uuid, out var attachmentUuid))
+                    {
+                        await DetachAttachmentAsync(attachmentUuid);
+                    }
+                }
+            }
+
+            foreach (var item in targetItems)
+            {
+                if (!UUID.TryParse(item.Uuid, out var itemUuid))
+                {
+                    continue;
+                }
+
+                var wornAttachmentPoint = TryParseAttachmentPoint(item.WornAttachmentPoint);
+                await WearAttachmentAsync(itemUuid, wornAttachmentPoint);
+            }
+
+            await UpdateAttachmentCacheAsync();
+            return true;
+        }
+
+        public async Task<bool> DetachAttachmentAsync(UUID itemUuid)
+        {
+            return await InvokeAppearanceActionAsync(itemUuid, null, "Detach", "TakeOff", "RemoveFromOutfit");
+        }
+
+        public async Task<bool> WearAttachmentAsync(UUID itemUuid, AttachmentPoint? attachmentPoint = null)
+        {
+            if (attachmentPoint.HasValue)
+            {
+                var wornWithPoint = await InvokeAppearanceActionAsync(itemUuid, attachmentPoint, "Wear", "Attach", "AddToOutfit");
+                if (wornWithPoint)
+                {
+                    return true;
+                }
+            }
+
+            return await InvokeAppearanceActionAsync(itemUuid, null, "Wear", "Attach", "AddToOutfit");
+        }
+
+        private async Task<bool> InvokeAppearanceActionAsync(UUID itemUuid, AttachmentPoint? attachmentPoint, params string[] methodNames)
+        {
+            if (!_client.Network.Connected)
+            {
+                _logger.LogWarning("Cannot update appearance - not connected");
+                return false;
+            }
+
+            var appearanceProperty = _client.GetType().GetProperty("Appearance", BindingFlags.Public | BindingFlags.Instance);
+            var appearance = appearanceProperty?.GetValue(_client);
+            if (appearance == null)
+            {
+                _logger.LogWarning("Cannot update appearance - appearance manager unavailable");
+                return false;
+            }
+
+            var argumentCandidates = attachmentPoint.HasValue
+                ? new List<object?[]>
+                {
+                    new object?[] { itemUuid, attachmentPoint.Value },
+                    new object?[] { itemUuid }
+                }
+                : new List<object?[]>
+                {
+                    new object?[] { itemUuid }
+                };
+
+            foreach (var methodName in methodNames)
+            {
+                var methods = appearance.GetType()
+                    .GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                    .Where(method => string.Equals(method.Name, methodName, StringComparison.OrdinalIgnoreCase));
+
+                foreach (var method in methods)
+                {
+                    var parameters = method.GetParameters();
+
+                    foreach (var candidateArguments in argumentCandidates)
+                    {
+                        if (parameters.Length != candidateArguments.Length)
+                        {
+                            continue;
+                        }
+
+                        if (!TryConvertArguments(candidateArguments, parameters, out var convertedArguments))
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            var result = method.Invoke(appearance, convertedArguments);
+                            if (result is Task task)
+                            {
+                                await task.ConfigureAwait(false);
+                            }
+
+                            _logger.LogInformation("Invoked appearance action {MethodName} for account {AccountId} item {ItemUuid}",
+                                method.Name, _accountId, itemUuid);
+                            return true;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogDebug(ex, "Appearance action {MethodName} failed for item {ItemUuid}", method.Name, itemUuid);
+                        }
+                    }
+                }
+            }
+
+            _logger.LogWarning("No matching appearance action found for item {ItemUuid} on account {AccountId}", itemUuid, _accountId);
+            return false;
+        }
+
+        private static bool TryConvertArguments(object?[] candidateArguments, ParameterInfo[] parameters, out object?[] convertedArguments)
+        {
+            convertedArguments = new object?[candidateArguments.Length];
+
+            for (var index = 0; index < candidateArguments.Length; index++)
+            {
+                var argument = candidateArguments[index];
+                var parameterType = parameters[index].ParameterType;
+
+                if (argument == null)
+                {
+                    if (parameterType.IsValueType && Nullable.GetUnderlyingType(parameterType) == null)
+                    {
+                        return false;
+                    }
+
+                    convertedArguments[index] = null;
+                    continue;
+                }
+
+                if (parameterType.IsInstanceOfType(argument))
+                {
+                    convertedArguments[index] = argument;
+                    continue;
+                }
+
+                try
+                {
+                    if (parameterType.IsEnum)
+                    {
+                        convertedArguments[index] = Enum.Parse(parameterType, argument.ToString() ?? string.Empty, true);
+                        continue;
+                    }
+
+                    if (parameterType == typeof(UUID))
+                    {
+                        convertedArguments[index] = argument is UUID uuid ? uuid : UUID.Parse(argument.ToString() ?? string.Empty);
+                        continue;
+                    }
+
+                    if (parameterType == typeof(Guid))
+                    {
+                        convertedArguments[index] = argument is Guid guid ? guid : Guid.Parse(argument.ToString() ?? string.Empty);
+                        continue;
+                    }
+
+                    if (parameterType == typeof(string))
+                    {
+                        convertedArguments[index] = argument.ToString();
+                        continue;
+                    }
+
+                    convertedArguments[index] = Convert.ChangeType(argument, Nullable.GetUnderlyingType(parameterType) ?? parameterType);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static AttachmentPoint? TryParseAttachmentPoint(string? attachmentPoint)
+        {
+            if (string.IsNullOrWhiteSpace(attachmentPoint))
+            {
+                return null;
+            }
+
+            return Enum.TryParse<AttachmentPoint>(attachmentPoint, true, out var parsedAttachmentPoint)
+                ? parsedAttachmentPoint
+                : null;
+        }
+
+        private static void CollectWearableInventoryItems(InventoryCacheNode node, List<InventoryCacheNode> items)
+        {
+            if (!node.IsFolder)
+            {
+                items.Add(node);
+                return;
+            }
+
+            foreach (var child in node.Children)
+            {
+                CollectWearableInventoryItems(child, items);
+            }
+        }
+
+        private static InventoryCacheNode? FindInventoryNodeByUuid(IEnumerable<InventoryCacheNode> nodes, UUID targetUuid)
+        {
+            foreach (var node in nodes)
+            {
+                if (UUID.TryParse(node.Uuid, out var nodeUuid) && nodeUuid == targetUuid)
+                {
+                    return node;
+                }
+
+                var childMatch = FindInventoryNodeByUuid(node.Children, targetUuid);
+                if (childMatch != null)
+                {
+                    return childMatch;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsDirectChildOfFolderType(IEnumerable<InventoryCacheNode> nodes, UUID targetUuid, FolderType requiredParentType)
+        {
+            var node = FindInventoryNodeByUuid(nodes, targetUuid);
+            if (node == null || string.IsNullOrWhiteSpace(node.ParentUuid))
+            {
+                return false;
+            }
+
+            if (!UUID.TryParse(node.ParentUuid, out var parentUuid))
+            {
+                return false;
+            }
+
+            var parentNode = FindInventoryNodeByUuid(nodes, parentUuid);
+            if (parentNode == null || !parentNode.IsFolder)
+            {
+                return false;
+            }
+
+            return string.Equals(parentNode.FolderType, requiredParentType.ToString(), StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

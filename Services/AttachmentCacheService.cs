@@ -276,7 +276,6 @@ namespace RadegastWeb.Services
                     else
                     {
                         node.IsWorn = false;
-                        node.WornAttachmentPoint = string.Empty;
                     }
                 }
 

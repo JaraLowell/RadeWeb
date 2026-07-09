@@ -152,5 +152,195 @@ namespace RadegastWeb.Controllers
                 return StatusCode(500, new { message = "Error refreshing attachments", error = ex.Message });
             }
         }
+
+        /// <summary>
+        /// Detach an item currently worn by the avatar.
+        /// </summary>
+        [HttpPost("{accountId}/detach/{itemUuid}")]
+        public async Task<ActionResult> DetachAttachment(Guid accountId, string itemUuid)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null)
+                {
+                    _logger.LogWarning("Detach attachment requested for non-existent account {AccountId}", accountId);
+                    return NotFound(new { message = "Account not found or not running" });
+                }
+
+                if (!instance.IsConnected)
+                {
+                    return BadRequest(new { message = "Account is not connected" });
+                }
+
+                if (!UUID.TryParse(itemUuid, out var inventoryItemUuid))
+                {
+                    return BadRequest(new { message = "Invalid UUID format" });
+                }
+
+                var success = await instance.DetachAttachmentAsync(inventoryItemUuid);
+                if (!success)
+                {
+                    return BadRequest(new { message = "Failed to detach attachment" });
+                }
+
+                await instance.UpdateAttachmentCacheAsync();
+
+                _logger.LogInformation("Detached attachment {ItemUuid} for account {AccountId}", itemUuid, accountId);
+                return Ok(new { message = "Attachment detached successfully", itemUuid });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error detaching attachment {ItemUuid} for account {AccountId}", itemUuid, accountId);
+                return StatusCode(500, new { message = "Error detaching attachment", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Wear an inventory item back at its last known attachment point.
+        /// </summary>
+        [HttpPost("{accountId}/wear/{itemUuid}")]
+        public async Task<ActionResult> WearAttachment(Guid accountId, string itemUuid, [FromQuery] string? attachmentPoint = null)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null)
+                {
+                    _logger.LogWarning("Wear attachment requested for non-existent account {AccountId}", accountId);
+                    return NotFound(new { message = "Account not found or not running" });
+                }
+
+                if (!instance.IsConnected)
+                {
+                    return BadRequest(new { message = "Account is not connected" });
+                }
+
+                if (!UUID.TryParse(itemUuid, out var inventoryItemUuid))
+                {
+                    return BadRequest(new { message = "Invalid UUID format" });
+                }
+
+                AttachmentPoint? parsedAttachmentPoint = null;
+                if (!string.IsNullOrWhiteSpace(attachmentPoint))
+                {
+                    if (Enum.TryParse<AttachmentPoint>(attachmentPoint, true, out var attachmentPointValue))
+                    {
+                        parsedAttachmentPoint = attachmentPointValue;
+                    }
+                    else
+                    {
+                        return BadRequest(new { message = "Invalid attachment point" });
+                    }
+                }
+
+                var success = await instance.WearAttachmentAsync(inventoryItemUuid, parsedAttachmentPoint);
+                if (!success)
+                {
+                    return BadRequest(new { message = "Failed to wear attachment" });
+                }
+
+                await instance.UpdateAttachmentCacheAsync();
+
+                _logger.LogInformation("Wore attachment {ItemUuid} for account {AccountId} at point {AttachmentPoint}",
+                    itemUuid, accountId, attachmentPoint ?? "default");
+                return Ok(new { message = "Attachment worn successfully", itemUuid, attachmentPoint });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error wearing attachment {ItemUuid} for account {AccountId}", itemUuid, accountId);
+                return StatusCode(500, new { message = "Error wearing attachment", error = ex.Message });
+            }
+        }
+
+        /// <summary>
+        /// Wear an inventory folder, replacing the current outfit with its contents.
+        /// </summary>
+        [HttpPost("{accountId}/wear-folder/{folderUuid}")]
+        public async Task<ActionResult> WearFolder(Guid accountId, string folderUuid, [FromQuery] bool replaceOutfit = true)
+        {
+            try
+            {
+                var instance = _accountService.GetInstance(accountId);
+                if (instance == null)
+                {
+                    _logger.LogWarning("Wear folder requested for non-existent account {AccountId}", accountId);
+                    return NotFound(new { message = "Account not found or not running" });
+                }
+
+                if (!instance.IsConnected)
+                {
+                    return BadRequest(new { message = "Account is not connected" });
+                }
+
+                if (!UUID.TryParse(folderUuid, out var parsedFolderUuid))
+                {
+                    return BadRequest(new { message = "Invalid UUID format" });
+                }
+
+                var inventory = await instance.GetCachedInventoryAsync();
+                var folderNode = FindInventoryNodeByUuid(inventory.RootNodes, parsedFolderUuid);
+                if (folderNode == null || !folderNode.IsFolder)
+                {
+                    return BadRequest(new { message = "Folder not found" });
+                }
+
+                if (!IsDirectChildOfCurrentOutfit(inventory.RootNodes, parsedFolderUuid))
+                {
+                    return BadRequest(new { message = "Only subfolders directly under My Outfits can be worn" });
+                }
+
+                var success = await instance.WearInventoryFolderAsync(parsedFolderUuid, replaceOutfit);
+                if (!success)
+                {
+                    return BadRequest(new { message = "Failed to wear inventory folder" });
+                }
+
+                _logger.LogInformation("Wore folder {FolderUuid} for account {AccountId} with replace={ReplaceOutfit}",
+                    folderUuid, accountId, replaceOutfit);
+                return Ok(new { message = "Folder worn successfully", folderUuid, replaceOutfit });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error wearing inventory folder {FolderUuid} for account {AccountId}", folderUuid, accountId);
+                return StatusCode(500, new { message = "Error wearing inventory folder", error = ex.Message });
+            }
+        }
+
+        private static InventoryCacheNode? FindInventoryNodeByUuid(IEnumerable<InventoryCacheNode> nodes, UUID targetUuid)
+        {
+            foreach (var node in nodes)
+            {
+                if (UUID.TryParse(node.Uuid, out var nodeUuid) && nodeUuid == targetUuid)
+                {
+                    return node;
+                }
+
+                var childMatch = FindInventoryNodeByUuid(node.Children, targetUuid);
+                if (childMatch != null)
+                {
+                    return childMatch;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsDirectChildOfCurrentOutfit(IEnumerable<InventoryCacheNode> nodes, UUID targetUuid)
+        {
+            var node = FindInventoryNodeByUuid(nodes, targetUuid);
+            if (node == null || string.IsNullOrWhiteSpace(node.ParentUuid))
+            {
+                return false;
+            }
+
+            if (!UUID.TryParse(node.ParentUuid, out var parentUuid))
+            {
+                return false;
+            }
+
+            var parentNode = FindInventoryNodeByUuid(nodes, parentUuid);
+            return parentNode != null && parentNode.IsFolder && string.Equals(parentNode.FolderType, FolderType.CurrentOutfit.ToString(), StringComparison.OrdinalIgnoreCase);
+        }
     }
 }
