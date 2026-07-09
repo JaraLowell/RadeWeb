@@ -1630,6 +1630,16 @@ class RadegastWebClient {
         document.getElementById('attachmentsBtn').addEventListener('click', () => {
             this.showAttachments();
         });
+
+        // Inventory button
+        document.getElementById('inventoryBtn').addEventListener('click', () => {
+            this.showInventory();
+        });
+
+        // Friends button
+        document.getElementById('friendsBtn').addEventListener('click', () => {
+            this.showFriends();
+        });
         
         // Refresh attachments button
         document.getElementById('refreshAttachmentsBtn').addEventListener('click', () => {
@@ -1820,17 +1830,23 @@ class RadegastWebClient {
         const logoutBtn = document.getElementById('logoutBtn');
         const regionInfoBtn = document.getElementById('regionInfoBtn');
         const attachmentsBtn = document.getElementById('attachmentsBtn');
+        const inventoryBtn = document.getElementById('inventoryBtn');
+        const friendsBtn = document.getElementById('friendsBtn');
         
         if (account.isConnected) {
             loginBtn.classList.add('d-none');
             logoutBtn.classList.remove('d-none');
             regionInfoBtn.classList.remove('d-none');
             attachmentsBtn.classList.remove('d-none');
+            inventoryBtn.classList.remove('d-none');
+            friendsBtn.classList.remove('d-none');
         } else {
             loginBtn.classList.remove('d-none');
             logoutBtn.classList.add('d-none');
             regionInfoBtn.classList.add('d-none');
             attachmentsBtn.classList.add('d-none');
+            inventoryBtn.classList.add('d-none');
+            friendsBtn.classList.add('d-none');
         }
         
         // Update movement controls visibility
@@ -2054,12 +2070,16 @@ class RadegastWebClient {
         const logoutBtn = document.getElementById('logoutBtn');
         const regionInfoBtn = document.getElementById('regionInfoBtn');
         const attachmentsBtn = document.getElementById('attachmentsBtn');
+        const inventoryBtn = document.getElementById('inventoryBtn');
+        const friendsBtn = document.getElementById('friendsBtn');
         
         if (account.isConnected) {
             loginBtn.classList.add('d-none');
             logoutBtn.classList.remove('d-none');
             regionInfoBtn.classList.remove('d-none');
             attachmentsBtn.classList.remove('d-none');
+            inventoryBtn.classList.remove('d-none');
+            friendsBtn.classList.remove('d-none');
             
             // Show minimap for connected accounts
             if (window.miniMap) {
@@ -2070,6 +2090,8 @@ class RadegastWebClient {
             logoutBtn.classList.add('d-none');
             regionInfoBtn.classList.add('d-none');
             attachmentsBtn.classList.add('d-none');
+            inventoryBtn.classList.add('d-none');
+            friendsBtn.classList.add('d-none');
             
             // Hide minimap for disconnected accounts
             if (window.miniMap) {
@@ -2730,6 +2752,278 @@ class RadegastWebClient {
         }
     }
 
+    async showInventory() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('inventoryModal'));
+        modal.show();
+
+        document.getElementById('inventoryLoading').classList.remove('d-none');
+        document.getElementById('inventoryContent').classList.add('d-none');
+
+        try {
+            await this.loadInventory();
+        } catch (error) {
+            console.error("Error loading inventory:", error);
+            this.showAlert("Failed to load inventory: " + error.message, "danger");
+            modal.hide();
+        }
+    }
+
+    async showFriends() {
+        if (!this.currentAccountId) {
+            this.showAlert("No account selected", "warning");
+            return;
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('friendsModal'));
+        modal.show();
+
+        document.getElementById('friendsLoading').classList.remove('d-none');
+        document.getElementById('friendsContent').classList.add('d-none');
+
+        try {
+            await this.loadFriends();
+        } catch (error) {
+            console.error("Error loading friends:", error);
+            this.showAlert("Failed to load friends: " + error.message, "danger");
+            modal.hide();
+        }
+    }
+
+    async loadFriends() {
+        if (!this.currentAccountId) return;
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/friends/${this.currentAccountId}`
+            );
+
+            if (response.ok) {
+                const friends = await response.json();
+                this.renderFriends(friends);
+            } else {
+                const error = await response.json();
+                this.showAlert("Failed to load friends: " + (error.message || "Unknown error"), "danger");
+            }
+        } catch (error) {
+            console.error("Error loading friends:", error);
+            this.showAlert("Failed to load friends: " + error.message, "danger");
+        } finally {
+            document.getElementById('friendsLoading').classList.add('d-none');
+            document.getElementById('friendsContent').classList.remove('d-none');
+        }
+    }
+
+    renderFriends(friends) {
+        const listContainer = document.getElementById('friendsList');
+        const noFriends = document.getElementById('noFriends');
+        const friendsCount = document.getElementById('friendsCount');
+        const friendsLastUpdated = document.getElementById('friendsLastUpdated');
+
+        listContainer.innerHTML = '';
+
+        const items = Array.isArray(friends) ? friends : [];
+        if (items.length === 0) {
+            noFriends.classList.remove('d-none');
+            friendsCount.textContent = '';
+            friendsLastUpdated.textContent = '';
+            return;
+        }
+
+        noFriends.classList.add('d-none');
+
+        const onlineCount = items.filter(friend => friend.isOnline).length;
+        friendsCount.textContent = `${items.length} friend${items.length === 1 ? '' : 's'} (${onlineCount} online)`;
+        friendsLastUpdated.textContent = `Updated: ${new Date().toLocaleString()}`;
+
+        const sortedFriends = [...items].sort((a, b) => {
+            if (a.isOnline !== b.isOnline) {
+                return a.isOnline ? -1 : 1;
+            }
+
+            const nameA = a.formattedName || a.displayName || a.legacyName || '';
+            const nameB = b.formattedName || b.displayName || b.legacyName || '';
+            return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+        });
+
+        sortedFriends.forEach(friend => {
+            const item = document.createElement('div');
+            item.className = 'list-group-item d-flex justify-content-between align-items-center';
+
+            const info = document.createElement('div');
+            info.className = 'd-flex flex-column';
+
+            const name = document.createElement('span');
+            name.className = 'fw-semibold';
+            name.textContent = friend.formattedName || friend.displayName || friend.legacyName || '(unknown)';
+
+            const details = document.createElement('small');
+            details.className = friend.isOnline ? 'text-success' : 'text-muted';
+            details.textContent = friend.isOnline ? 'Online' : 'Offline';
+
+            info.appendChild(name);
+            info.appendChild(details);
+
+            const actions = document.createElement('div');
+            actions.className = 'd-flex align-items-center gap-2';
+
+            const statusDot = document.createElement('span');
+            statusDot.className = `people-status ${friend.isOnline ? 'online' : 'offline'}`;
+            statusDot.title = friend.isOnline ? 'Online' : 'Offline';
+
+            const messageButton = document.createElement('button');
+            messageButton.className = 'btn btn-sm btn-outline-primary';
+            messageButton.innerHTML = '<i class="fas fa-comment"></i>';
+            messageButton.title = 'Start IM';
+            messageButton.addEventListener('click', () => {
+                const targetName = friend.formattedName || friend.displayName || friend.legacyName || 'Unknown';
+                this.startIM(friend.avatarId, targetName);
+            });
+
+            actions.appendChild(statusDot);
+            actions.appendChild(messageButton);
+
+            item.appendChild(info);
+            item.appendChild(actions);
+            listContainer.appendChild(item);
+        });
+    }
+
+    async loadInventory() {
+        if (!this.currentAccountId) return;
+
+        try {
+            const response = await window.authManager.makeAuthenticatedRequest(
+                `/api/inventory/${this.currentAccountId}`
+            );
+
+            if (response.ok) {
+                const inventory = await response.json();
+                this.renderInventory(inventory);
+            } else {
+                const error = await response.json();
+                this.showAlert("Failed to load inventory: " + (error.message || "Unknown error"), "danger");
+            }
+        } catch (error) {
+            console.error("Error loading inventory:", error);
+            this.showAlert("Failed to load inventory: " + error.message, "danger");
+        } finally {
+            document.getElementById('inventoryLoading').classList.add('d-none');
+            document.getElementById('inventoryContent').classList.remove('d-none');
+        }
+    }
+
+    renderInventory(inventory) {
+        const treeContainer = document.getElementById('inventoryTree');
+        const noInventory = document.getElementById('noInventory');
+        const inventoryCount = document.getElementById('inventoryCount');
+        const inventoryLastUpdated = document.getElementById('inventoryLastUpdated');
+
+        treeContainer.innerHTML = '';
+
+        const rootNodes = inventory && inventory.rootNodes ? inventory.rootNodes : [];
+
+        if (!rootNodes || rootNodes.length === 0) {
+            noInventory.classList.remove('d-none');
+            inventoryCount.textContent = '';
+            inventoryLastUpdated.textContent = '';
+            return;
+        }
+
+        noInventory.classList.add('d-none');
+
+        const flatCount = this.countInventoryNodes(rootNodes);
+        inventoryCount.textContent = `${flatCount} inventor${flatCount === 1 ? 'y item' : 'y items'} cached`;
+
+        if (inventory.lastUpdated) {
+            const date = new Date(inventory.lastUpdated);
+            inventoryLastUpdated.textContent = `Updated: ${date.toLocaleString()}`;
+        } else {
+            inventoryLastUpdated.textContent = '';
+        }
+
+        const fragment = document.createDocumentFragment();
+        rootNodes.forEach(node => fragment.appendChild(this.createInventoryNodeElement(node, true)));
+        treeContainer.appendChild(fragment);
+    }
+
+    createInventoryNodeElement(node, expanded = false) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'inventory-node';
+
+        const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+
+        if (hasChildren) {
+            const details = document.createElement('details');
+            if (expanded) {
+                details.open = true;
+            }
+
+            const summary = document.createElement('summary');
+            summary.appendChild(this.createInventoryEntry(node));
+            details.appendChild(summary);
+
+            node.children.forEach(child => {
+                details.appendChild(this.createInventoryNodeElement(child));
+            });
+
+            wrapper.appendChild(details);
+        } else {
+            wrapper.appendChild(this.createInventoryEntry(node));
+        }
+
+        return wrapper;
+    }
+
+    createInventoryEntry(node) {
+        const row = document.createElement('div');
+        row.className = 'inventory-entry';
+
+        const icon = document.createElement('i');
+        icon.className = `${node.iconClass || 'fas fa-file'} inv-icon`;
+        row.appendChild(icon);
+
+        const name = document.createElement('span');
+        name.className = 'inv-name';
+        name.textContent = node.name || '(unnamed)';
+        row.appendChild(name);
+
+        const type = document.createElement('span');
+        type.className = 'inv-type ms-2';
+        type.textContent = node.typeName || (node.isFolder ? 'Folder' : 'Item');
+        row.appendChild(type);
+
+        if (node.isWorn) {
+            const worn = document.createElement('span');
+            worn.className = 'badge bg-success ms-2';
+            worn.textContent = node.wornAttachmentPoint
+                ? `Worn: ${node.wornAttachmentPoint}`
+                : 'Worn';
+            row.appendChild(worn);
+        }
+
+        return row;
+    }
+
+    countInventoryNodes(nodes) {
+        if (!Array.isArray(nodes) || nodes.length === 0) {
+            return 0;
+        }
+
+        let total = 0;
+        nodes.forEach(node => {
+            total += 1;
+            if (Array.isArray(node.children) && node.children.length > 0) {
+                total += this.countInventoryNodes(node.children);
+            }
+        });
+        return total;
+    }
+
     async loadAttachments() {
         if (!this.currentAccountId) return;
 
@@ -3171,12 +3465,16 @@ class RadegastWebClient {
                 const logoutBtn = document.getElementById('logoutBtn');
                 const regionInfoBtn = document.getElementById('regionInfoBtn');
                 const attachmentsBtn = document.getElementById('attachmentsBtn');
+                const inventoryBtn = document.getElementById('inventoryBtn');
+                const friendsBtn = document.getElementById('friendsBtn');
                 
                 if (status.isConnected) {
                     loginBtn.classList.add('d-none');
                     logoutBtn.classList.remove('d-none');
                     regionInfoBtn.classList.remove('d-none');
                     attachmentsBtn.classList.remove('d-none');
+                    inventoryBtn.classList.remove('d-none');
+                    friendsBtn.classList.remove('d-none');
                     // Start avatar refresh when account becomes connected
                     this.startAvatarRefresh();
                     
@@ -3201,6 +3499,8 @@ class RadegastWebClient {
                     logoutBtn.classList.add('d-none');
                     regionInfoBtn.classList.add('d-none');
                     attachmentsBtn.classList.add('d-none');
+                    inventoryBtn.classList.add('d-none');
+                    friendsBtn.classList.add('d-none');
                     // Stop avatar refresh when account disconnects
                     this.stopAvatarRefresh();
                     

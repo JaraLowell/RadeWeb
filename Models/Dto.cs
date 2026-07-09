@@ -108,6 +108,15 @@ namespace RadegastWeb.Models
         public string Message { get; set; } = string.Empty;
     }
 
+    public class FriendDto
+    {
+        public string AvatarId { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public string LegacyName { get; set; } = string.Empty;
+        public string FormattedName { get; set; } = string.Empty;
+        public bool IsOnline { get; set; }
+    }
+
     public class SetPresenceRequest
     {
         public bool IsEnabled { get; set; }

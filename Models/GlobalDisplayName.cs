@@ -50,6 +50,8 @@ namespace RadegastWeb.Models
         }
         
         public bool IsDefaultDisplayName { get; set; } = true;
+
+        public bool IsFriend { get; set; } = false;
         
         public DateTime NextUpdate { get; set; } = DateTime.UtcNow.AddHours(24);
         
@@ -71,6 +73,7 @@ namespace RadegastWeb.Models
                 LegacyFirstName = this.LegacyFirstName,
                 LegacyLastName = this.LegacyLastName,
                 IsDefaultDisplayName = this.IsDefaultDisplayName,
+                IsFriend = this.IsFriend,
                 NextUpdate = this.NextUpdate,
                 LastUpdated = this.LastUpdated,
                 CachedAt = this.CachedAt
@@ -91,6 +94,7 @@ namespace RadegastWeb.Models
                 LegacyFirstName = displayName.LegacyFirstName,
                 LegacyLastName = displayName.LegacyLastName,
                 IsDefaultDisplayName = displayName.IsDefaultDisplayName,
+                IsFriend = displayName.IsFriend,
                 NextUpdate = displayName.NextUpdate,
                 LastUpdated = displayName.LastUpdated,
                 CachedAt = displayName.CachedAt

@@ -35,6 +35,8 @@ namespace RadegastWeb.Services
         void CleanExpiredCache();
         void RegisterGridClient(Guid accountId, GridClient client);
         void UnregisterGridClient(Guid accountId);
+        Task MarkAsFriendAsync(string avatarId, bool isFriend = true);
+        Task MarkAsFriendsAsync(IEnumerable<string> avatarIds, bool isFriend = true);
         
         // Events for real-time updates
         event EventHandler<DisplayNameChangedEventArgs>? DisplayNameChanged;
@@ -145,7 +147,7 @@ namespace RadegastWeb.Services
                 var globalDbName = await context.GlobalDisplayNames
                     .FirstOrDefaultAsync(dn => dn.AvatarId == avatarId);
 
-                if (globalDbName != null && globalDbName.CachedAt > DateTime.UtcNow.Subtract(_databaseCacheExpiry))
+                if (globalDbName != null && (globalDbName.IsFriend || globalDbName.CachedAt > DateTime.UtcNow.Subtract(_databaseCacheExpiry)))
                 {
                     var globalName = globalDbName.ToDisplayName();
                     
@@ -304,6 +306,7 @@ namespace RadegastWeb.Services
                 LegacyFirstName = displayName.LegacyFirstName,
                 LegacyLastName = displayName.LegacyLastName,
                 IsDefaultDisplayName = displayName.IsDefaultDisplayName,
+                IsFriend = existingName?.IsFriend == true || displayName.IsFriend,
                 NextUpdate = displayName.NextUpdate,
                 LastUpdated = DateTime.UtcNow,
                 CachedAt = DateTime.UtcNow
@@ -572,6 +575,73 @@ namespace RadegastWeb.Services
             }
         }
 
+        public async Task MarkAsFriendAsync(string avatarId, bool isFriend = true)
+        {
+            await MarkAsFriendsAsync(new[] { avatarId }, isFriend);
+        }
+
+        public async Task MarkAsFriendsAsync(IEnumerable<string> avatarIds, bool isFriend = true)
+        {
+            var ids = avatarIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+            if (ids.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var avatarId in ids)
+            {
+                if (_globalNameCache.TryGetValue(avatarId, out var cached))
+                {
+                    cached.IsFriend = isFriend;
+                    cached.CachedAt = DateTime.UtcNow;
+                    var cacheKey = $"global_display_name_{avatarId}";
+                    _memoryCache.Set(cacheKey, cached, _memoryCacheExpiry);
+                }
+            }
+
+            if (_disposed)
+            {
+                return;
+            }
+
+            try
+            {
+                using var scope = _serviceProvider.CreateScope();
+                var dbContextFactory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<RadegastDbContext>>();
+                using var context = dbContextFactory.CreateDbContext();
+
+                var existing = await context.GlobalDisplayNames
+                    .Where(n => ids.Contains(n.AvatarId))
+                    .ToListAsync();
+
+                foreach (var row in existing)
+                {
+                    row.IsFriend = isFriend;
+                    row.CachedAt = DateTime.UtcNow;
+                    row.LastUpdated = DateTime.UtcNow;
+                }
+
+                foreach (var missingId in ids.Except(existing.Select(e => e.AvatarId)))
+                {
+                    if (_globalNameCache.TryGetValue(missingId, out var cached))
+                    {
+                        var newRow = GlobalDisplayName.FromDisplayName(cached);
+                        newRow.IsFriend = isFriend;
+                        newRow.CachedAt = DateTime.UtcNow;
+                        newRow.LastUpdated = DateTime.UtcNow;
+                        context.GlobalDisplayNames.Add(newRow);
+                    }
+                }
+
+                await context.SaveChangesAsync();
+                _hasUpdates = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error marking friend flags for {Count} avatars", ids.Count);
+            }
+        }
+
         public async Task LoadCachedNamesAsync()
         {
             if (_disposed)
@@ -586,14 +656,14 @@ namespace RadegastWeb.Services
                 // Load from GlobalDisplayNames table (database acts as medium-term cache)
                 var cutoffTime = DateTime.UtcNow.Subtract(_databaseCacheExpiry);
                 var globalNames = await context.GlobalDisplayNames
-                    .Where(dn => dn.CachedAt > cutoffTime)
+                    .Where(dn => dn.IsFriend || dn.CachedAt > cutoffTime)
                     .ToListAsync();
                 
                 foreach (var globalName in globalNames)
                 {
                     var displayName = globalName.ToDisplayName();
                     // Only load into memory cache if it's still fresh enough for memory
-                    if (DateTime.UtcNow - displayName.CachedAt < _memoryCacheExpiry)
+                    if (displayName.IsFriend || DateTime.UtcNow - displayName.CachedAt < _memoryCacheExpiry)
                     {
                         _globalNameCache.TryAdd(globalName.AvatarId, displayName);
                         var cacheKey = $"global_display_name_{globalName.AvatarId}";
@@ -669,6 +739,7 @@ namespace RadegastWeb.Services
                             existing.LegacyFirstName = name.LegacyFirstName;
                             existing.LegacyLastName = name.LegacyLastName;
                             existing.IsDefaultDisplayName = name.IsDefaultDisplayName;
+                            existing.IsFriend = existing.IsFriend || name.IsFriend;
                             existing.NextUpdate = name.NextUpdate;
                             existing.LastUpdated = name.LastUpdated;
                             existing.CachedAt = DateTime.UtcNow;
@@ -733,6 +804,7 @@ namespace RadegastWeb.Services
                                     existing.LegacyFirstName = name.LegacyFirstName;
                                     existing.LegacyLastName = name.LegacyLastName;
                                     existing.IsDefaultDisplayName = name.IsDefaultDisplayName;
+                                    existing.IsFriend = existing.IsFriend || name.IsFriend;
                                     existing.NextUpdate = name.NextUpdate;
                                     existing.LastUpdated = name.LastUpdated;
                                     existing.CachedAt = DateTime.UtcNow;
@@ -771,7 +843,7 @@ namespace RadegastWeb.Services
         {
             // MEMORY FIX: More aggressive cleanup to prevent unbounded growth
             // Clean expired entries from memory cache (2-hour expiry)
-            var expired = _globalNameCache.Where(kvp => DateTime.UtcNow - kvp.Value.CachedAt > _memoryCacheExpiry)
+            var expired = _globalNameCache.Where(kvp => !kvp.Value.IsFriend && DateTime.UtcNow - kvp.Value.CachedAt > _memoryCacheExpiry)
                                          .Select(kvp => kvp.Key)
                                          .ToList();
 
@@ -793,6 +865,7 @@ namespace RadegastWeb.Services
             {
                 var entriesToRemove = _globalNameCache.Count - maxCacheSize;
                 var oldestEntries = _globalNameCache
+                    .Where(kvp => !kvp.Value.IsFriend)
                     .OrderBy(kvp => kvp.Value.CachedAt)
                     .Take(entriesToRemove)
                     .Select(kvp => kvp.Key)
@@ -845,7 +918,7 @@ namespace RadegastWeb.Services
                 
                 var cutoffTime = DateTime.UtcNow.Subtract(_databaseCacheExpiry);
                 var expiredEntries = await context.GlobalDisplayNames
-                    .Where(dn => dn.CachedAt < cutoffTime)
+                    .Where(dn => !dn.IsFriend && dn.CachedAt < cutoffTime)
                     .ToListAsync();
 
                 if (expiredEntries.Any())

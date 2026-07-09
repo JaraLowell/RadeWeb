@@ -1236,7 +1236,7 @@ namespace RadegastWeb.Services
                 
                 // Use ExecuteDeleteAsync for efficient bulk deletion
                 int deletedCount = await context.GlobalDisplayNames
-                    .Where(n => n.CachedAt < cutoffDate)
+                    .Where(n => !n.IsFriend && n.CachedAt < cutoffDate)
                     .ExecuteDeleteAsync();
                 
                 if (deletedCount > 0)

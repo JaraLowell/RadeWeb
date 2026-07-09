@@ -107,6 +107,7 @@ namespace RadegastWeb.Data
                 entity.Property(e => e.LegacyFirstName).IsRequired().HasMaxLength(100);
                 entity.Property(e => e.LegacyLastName).IsRequired().HasMaxLength(100);
                 entity.Property(e => e.IsDefaultDisplayName).IsRequired();
+                entity.Property(e => e.IsFriend).IsRequired();
                 entity.Property(e => e.NextUpdate).IsRequired();
                 entity.Property(e => e.LastUpdated).IsRequired();
                 entity.Property(e => e.CachedAt).IsRequired();
@@ -119,6 +120,9 @@ namespace RadegastWeb.Data
                 // Create index for cache expiry cleanup
                 entity.HasIndex(e => e.CachedAt)
                       .HasDatabaseName("IX_GlobalDisplayName_CachedAt");
+
+                entity.HasIndex(e => e.IsFriend)
+                      .HasDatabaseName("IX_GlobalDisplayName_IsFriend");
                       
                 // Create index for last updated for efficient lookups
                 entity.HasIndex(e => e.LastUpdated)

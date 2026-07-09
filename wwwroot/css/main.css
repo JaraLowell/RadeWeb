@@ -154,7 +154,7 @@ body {
 }
 .chat-messages {
 	overflow-y: auto;
-	min-height: 200px;
+    min-height: 0;
 	flex: 1;
 }
 .chat-input-area {
@@ -386,7 +386,7 @@ a {
 }
 
 .chat-messages {
-    height: 350px;
+    height: auto;
     overflow-y: auto;
     border: none;
     padding: 1rem;
@@ -549,6 +549,68 @@ a {
     color: #fff;
 }
 
+.inventory-tree-container {
+    max-height: 70vh;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+    background-color: var(--chat-bg);
+}
+
+.friends-list-container {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.inventory-node details {
+    margin-left: 0.75rem;
+}
+
+.inventory-node summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0.125rem 0;
+}
+
+.inventory-node summary::-webkit-details-marker {
+    display: none;
+}
+
+.inventory-entry {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.inventory-entry .inv-icon {
+    width: 16px;
+    text-align: center;
+}
+
+.inventory-entry .inv-name {
+    word-break: break-word;
+}
+
+.inventory-entry .inv-type {
+    color: #6c757d;
+    font-size: 0.75rem;
+}
+
+.inventory-entry .badge {
+    font-size: 0.65rem;
+}
+
+[data-theme="dark"] .inventory-tree-container {
+    background-color: var(--card-bg);
+    border-color: var(--border-color);
+}
+
+[data-theme="dark"] .inventory-entry .inv-type {
+    color: #adb5bd;
+}
+
 /* Chat Tabs Styling */
 .nav-tabs {
     background-color: #f8f9fa;
@@ -701,6 +763,10 @@ a {
     background-color: #dc3545;
 }
 
+.people-status.offline {
+    background-color: #6c757d;
+}
+
 /* Account List */
 .account-item {
     cursor: pointer;
@@ -808,17 +874,22 @@ a {
 }
 
 .tab-pane {
-    min-height: 450px;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.tab-content > .tab-pane.active {
     display: flex;
     flex-direction: column;
 }
 
 /* Ensure all chat messages containers have consistent sizing */
 .tab-pane .chat-messages {
-    height: 350px;
+    height: auto;
     flex: 1;
-    min-height: 350px;
-    max-height: 350px;
+    min-height: 0;
+    max-height: none;
 }
 
 .tab-pane .chat-input-area {
@@ -888,7 +959,7 @@ footer {
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .chat-messages {
-        height: 250px;
+        min-height: 180px;
     }
     
     .container-fluid {

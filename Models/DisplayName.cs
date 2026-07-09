@@ -49,6 +49,8 @@ namespace RadegastWeb.Models
         }
         
         public bool IsDefaultDisplayName { get; set; } = true;
+
+        public bool IsFriend { get; set; } = false;
         
         public DateTime NextUpdate { get; set; } = DateTime.UtcNow.AddHours(24);
         

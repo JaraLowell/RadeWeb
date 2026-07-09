@@ -35,6 +35,7 @@ namespace RadegastWeb.Core
         private readonly IAutoSitService _autoSitService;
         private readonly IAutoGreeterService _autoGreeterService;
         private readonly IAttachmentCacheService _attachmentCacheService;
+        private readonly IFriendOnlineStateService _friendOnlineStateService;
         private readonly GridClient _client;
         private readonly string _accountId;
         private readonly string _cacheDir;
@@ -70,6 +71,8 @@ namespace RadegastWeb.Core
         private readonly ConcurrentDictionary<UUID, Group> _groups = new();
         private System.Threading.Timer? _displayNameRefreshTimer;
         private System.Threading.Timer? _trackingDataCleanupTimer;
+        private readonly SemaphoreSlim _inventoryCacheFetchLock = new(1, 1);
+        private Task? _inventoryCacheFetchTask;
 
         public string AccountId => _accountId;
         public GridClient Client => _client;
@@ -93,7 +96,7 @@ namespace RadegastWeb.Core
         public event EventHandler<Models.ScriptPermissionEventArgs>? ScriptPermissionReceived;
         public event EventHandler<TeleportRequestEventArgs>? TeleportRequestReceived;
 
-        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService, IRegionMapCacheService regionMapCacheService, IAutoSitService autoSitService, IAutoGreeterService autoGreeterService, IAttachmentCacheService attachmentCacheService)
+        public WebRadegastInstance(Account account, ILogger<WebRadegastInstance> logger, IDisplayNameService displayNameService, INoticeService noticeService, ISlUrlParser urlParser, INameResolutionService nameResolutionService, IGroupService groupService, IGlobalDisplayNameCache globalDisplayNameCache, IMasterDisplayNameService masterDisplayNameService, IStatsService statsService, ICorradeService corradeService, IAiChatService aiChatService, IChatHistoryService chatHistoryService, IScriptDialogService scriptDialogService, ITeleportRequestService teleportRequestService, IConnectionTrackingService connectionTrackingService, IChatProcessingService chatProcessingService, ISLTimeService slTimeService, IPresenceService presenceService, IDbContextFactory<RadegastDbContext> dbContextFactory, IFriendshipRequestService friendshipRequestService, IGroupInvitationService groupInvitationService, IRegionMapCacheService regionMapCacheService, IAutoSitService autoSitService, IAutoGreeterService autoGreeterService, IAttachmentCacheService attachmentCacheService, IFriendOnlineStateService friendOnlineStateService)
         {
             _logger = logger;
             _displayNameService = displayNameService;
@@ -120,6 +123,7 @@ namespace RadegastWeb.Core
             _autoSitService = autoSitService;
             _autoGreeterService = autoGreeterService;
             _attachmentCacheService = attachmentCacheService;
+            _friendOnlineStateService = friendOnlineStateService;
             AccountInfo = account;
             _accountId = account.Id.ToString();
             
@@ -1302,6 +1306,76 @@ namespace RadegastWeb.Core
             }
         }
 
+        public async Task<IEnumerable<FriendDto>> GetFriendsAsync()
+        {
+            try
+            {
+                if (!_client.Network.Connected || _client.Friends.FriendList.Count == 0)
+                {
+                    return Enumerable.Empty<FriendDto>();
+                }
+
+                var friends = _client.Friends.FriendList.Values.ToList();
+                var friendIds = friends.Select(friend => friend.UUID.ToString()).Distinct().ToList();
+
+                await _globalDisplayNameCache.MarkAsFriendsAsync(friendIds, true);
+                _friendOnlineStateService.EnsureFriendsTracked(Guid.Parse(_accountId), friendIds);
+                _ = Task.Run(() => _globalDisplayNameCache.PreloadDisplayNamesAsync(friendIds));
+
+                var friendTasks = friends.Select(async friend =>
+                {
+                    var avatarId = friend.UUID.ToString();
+                    var resolvedName = await _nameResolutionService.ResolveAgentNameAsync(Guid.Parse(_accountId), friend.UUID);
+                    var legacyName = await _globalDisplayNameCache.GetLegacyNameAsync(avatarId, resolvedName);
+                    var displayName = await _globalDisplayNameCache.GetDisplayNameAsync(avatarId, NameDisplayMode.OnlyDisplayName, legacyName);
+
+                    if (string.IsNullOrWhiteSpace(legacyName))
+                    {
+                        legacyName = resolvedName;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(displayName))
+                    {
+                        displayName = legacyName;
+                    }
+
+                    return new FriendDto
+                    {
+                        AvatarId = avatarId,
+                        DisplayName = displayName,
+                        LegacyName = legacyName,
+                        FormattedName = FormatFriendName(displayName, legacyName),
+                        IsOnline = _friendOnlineStateService.IsFriendOnline(Guid.Parse(_accountId), avatarId, true)
+                    };
+                });
+
+                return (await Task.WhenAll(friendTasks))
+                    .OrderByDescending(friend => friend.IsOnline)
+                    .ThenBy(friend => friend.FormattedName, StringComparer.OrdinalIgnoreCase);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error getting friends for account {AccountId}", _accountId);
+                return Enumerable.Empty<FriendDto>();
+            }
+        }
+
+        private static string FormatFriendName(string displayName, string legacyName)
+        {
+            if (string.IsNullOrWhiteSpace(displayName))
+            {
+                return legacyName;
+            }
+
+            if (string.IsNullOrWhiteSpace(legacyName) ||
+                string.Equals(displayName, legacyName, StringComparison.OrdinalIgnoreCase))
+            {
+                return displayName;
+            }
+
+            return $"{displayName} ({legacyName})";
+        }
+
         /// <summary>
         /// Get a specific group by ID
         /// </summary>
@@ -1772,6 +1846,7 @@ namespace RadegastWeb.Core
             UpdateStatus($"Login: {e.Status}");
             if (e.Status == LoginStatus.Success)
             {
+                _friendOnlineStateService.ResetAccount(Guid.Parse(_accountId));
                 AccountInfo.CurrentRegion = _client.Network.CurrentSim?.Name;
                 UpdateStatus($"Login successful");
                 UpdateRegionInfo();
@@ -1817,6 +1892,9 @@ namespace RadegastWeb.Core
                             await _displayNameService.PreloadDisplayNamesAsync(Guid.Parse(_accountId), avatarIds);
                             _logger.LogInformation("Preloaded display names for {Count} avatars after login", avatarIds.Count);
                         }
+
+                        // Cache inventory once at login for this session
+                        await CacheInventoryAsync();
                         
                         // Cache worn attachments after login
                         await CacheWornAttachmentsAsync();
@@ -1884,6 +1962,8 @@ namespace RadegastWeb.Core
             ResetPresenceStatusOnDisconnect();
             
             ConnectionChanged?.Invoke(this, false);
+
+            _friendOnlineStateService.ResetAccount(Guid.Parse(_accountId));
             
             // Trigger region change event with empty region to clear it in the database
             var regionInfo = new RegionInfoDto
@@ -1970,6 +2050,8 @@ namespace RadegastWeb.Core
             ResetPresenceStatusOnDisconnect();
             
             ConnectionChanged?.Invoke(this, false);
+
+            _friendOnlineStateService.ResetAccount(Guid.Parse(_accountId));
             
             // Trigger region change event with empty region to clear it in the database
             var regionInfo = new RegionInfoDto
@@ -3473,6 +3555,9 @@ namespace RadegastWeb.Core
                 
                 if (e.Accepted)
                 {
+                    _friendOnlineStateService.SetFriendOnline(Guid.Parse(_accountId), e.AgentID.ToString(), false);
+                    await _globalDisplayNameCache.MarkAsFriendAsync(e.AgentID.ToString(), true);
+
                     _logger.LogInformation("Friendship accepted with {AgentName} ({AgentId}) for account {AccountId}", 
                         agentName, e.AgentID, _accountId);
                     
@@ -3493,6 +3578,8 @@ namespace RadegastWeb.Core
                 }
                 else
                 {
+                    await _globalDisplayNameCache.MarkAsFriendAsync(e.AgentID.ToString(), false);
+
                     _logger.LogInformation("Friendship declined with {AgentName} ({AgentId}) for account {AccountId}", 
                         agentName, e.AgentID, _accountId);
                     
@@ -3525,6 +3612,8 @@ namespace RadegastWeb.Core
         {
             try
             {
+                _friendOnlineStateService.SetFriendOnline(Guid.Parse(_accountId), e.Friend.UUID.ToString(), true);
+                await _globalDisplayNameCache.MarkAsFriendAsync(e.Friend.UUID.ToString(), true);
                 var friendName = await _nameResolutionService.ResolveAgentNameAsync(Guid.Parse(_accountId), e.Friend.UUID);
                 _logger.LogDebug("Friend {FriendName} came online for account {AccountId}", friendName, _accountId);
                 
@@ -3556,6 +3645,8 @@ namespace RadegastWeb.Core
         {
             try
             {
+                _friendOnlineStateService.SetFriendOnline(Guid.Parse(_accountId), e.Friend.UUID.ToString(), false);
+                await _globalDisplayNameCache.MarkAsFriendAsync(e.Friend.UUID.ToString(), true);
                 var friendName = await _nameResolutionService.ResolveAgentNameAsync(Guid.Parse(_accountId), e.Friend.UUID);
                 _logger.LogDebug("Friend {FriendName} went offline for account {AccountId}", friendName, _accountId);
                 
@@ -5246,7 +5337,9 @@ namespace RadegastWeb.Core
                     attachments.Count, _accountId);
                 
                 // Save to XML cache
-                await _attachmentCacheService.SaveAttachmentsAsync(Guid.Parse(_accountId), attachments);
+                var accountGuid = Guid.Parse(_accountId);
+                await _attachmentCacheService.SaveAttachmentsAsync(accountGuid, attachments);
+                await _attachmentCacheService.UpdateInventoryWornStateAsync(accountGuid, attachments);
                 
                 _logger.LogInformation("Successfully cached {Count} worn attachments for account {AccountId}", 
                     attachments.Count, _accountId);
@@ -5279,6 +5372,314 @@ namespace RadegastWeb.Core
         public async Task UpdateAttachmentCacheAsync()
         {
             await CacheWornAttachmentsAsync();
+        }
+
+        /// <summary>
+        /// Get cached inventory tree for this account.
+        /// </summary>
+        public async Task<InventoryCacheCollection> GetCachedInventoryAsync()
+        {
+            try
+            {
+                var accountGuid = Guid.Parse(_accountId);
+                var inventory = await _attachmentCacheService.LoadInventoryAsync(accountGuid);
+
+                if (inventory.RootNodes.Count > 0)
+                {
+                    return inventory;
+                }
+
+                if (!_client.Network.Connected)
+                {
+                    _logger.LogInformation("Inventory cache is empty for account {AccountId} and client is disconnected", _accountId);
+                    return inventory;
+                }
+
+                _logger.LogInformation("Inventory cache empty for account {AccountId}, ensuring cache is populated", _accountId);
+                await EnsureInventoryCachePopulatedAsync();
+
+                return await _attachmentCacheService.LoadInventoryAsync(accountGuid);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error loading cached inventory for account {AccountId}", _accountId);
+                return new InventoryCacheCollection();
+            }
+        }
+
+        private async Task EnsureInventoryCachePopulatedAsync()
+        {
+            Task fetchTask;
+
+            await _inventoryCacheFetchLock.WaitAsync();
+            try
+            {
+                if (_inventoryCacheFetchTask != null && !_inventoryCacheFetchTask.IsCompleted)
+                {
+                    fetchTask = _inventoryCacheFetchTask;
+                    _logger.LogDebug("Inventory fetch already running for account {AccountId}; waiting for completion", _accountId);
+                }
+                else
+                {
+                    _inventoryCacheFetchTask = CacheInventoryAsync();
+                    fetchTask = _inventoryCacheFetchTask;
+                    _logger.LogInformation("Starting inventory cache fetch for account {AccountId}", _accountId);
+                }
+            }
+            finally
+            {
+                _inventoryCacheFetchLock.Release();
+            }
+
+            await fetchTask;
+        }
+
+        /// <summary>
+        /// Build and cache full inventory tree for this account.
+        /// This runs once on login and persists to the account cache folder.
+        /// </summary>
+        private async Task CacheInventoryAsync()
+        {
+            try
+            {
+                if (!_client.Network.Connected)
+                {
+                    _logger.LogWarning("Cannot cache inventory - not connected");
+                    return;
+                }
+
+                if (_client.Inventory.Store?.RootNode == null)
+                {
+                    _logger.LogWarning("Cannot cache inventory - inventory store not initialized yet");
+                    return;
+                }
+
+                // Give caps/skeleton a brief window to settle after login.
+                await Task.Delay(1500);
+
+                await FetchInventoryTreeAsync();
+
+                var rootNode = _client.Inventory.Store?.RootNode;
+                if (rootNode == null)
+                {
+                    _logger.LogWarning("Inventory root node unavailable after fetch for account {AccountId}", _accountId);
+                    return;
+                }
+
+                var rootNodes = BuildInventoryCacheNodes(rootNode, UUID.Zero);
+                var collection = new InventoryCacheCollection
+                {
+                    LastUpdated = DateTime.UtcNow,
+                    RootNodes = rootNodes
+                };
+
+                await _attachmentCacheService.SaveInventoryAsync(Guid.Parse(_accountId), collection);
+
+                _logger.LogInformation("Successfully cached inventory for account {AccountId} with {RootCount} root nodes",
+                    _accountId, rootNodes.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error caching inventory for account {AccountId}", _accountId);
+            }
+        }
+
+        private async Task FetchInventoryTreeAsync()
+        {
+            var store = _client.Inventory.Store;
+            var rootNode = store?.RootNode;
+            if (rootNode?.Data is not InventoryFolder rootFolder)
+            {
+                return;
+            }
+
+            var queue = new Queue<UUID>();
+            var visited = new HashSet<UUID>();
+            queue.Enqueue(rootFolder.UUID);
+
+            while (queue.Count > 0)
+            {
+                var folderId = queue.Dequeue();
+                if (!visited.Add(folderId))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    await _client.Inventory.RequestFolderContents(
+                        folderId,
+                        _client.Self.AgentID,
+                        true,
+                        true,
+                        InventorySortOrder.ByName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed requesting contents for inventory folder {FolderId}", folderId);
+                }
+
+                InventoryNode? folderNode = null;
+                try
+                {
+                    folderNode = store?.GetNodeFor(folderId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Unable to access inventory node for folder {FolderId}", folderId);
+                }
+
+                if (folderNode?.Nodes == null)
+                {
+                    continue;
+                }
+
+                List<InventoryNode> children;
+                try
+                {
+                    children = folderNode.Nodes.Values.ToList();
+                }
+                catch (InvalidOperationException)
+                {
+                    continue;
+                }
+
+                foreach (var child in children)
+                {
+                    if (child.Data is InventoryFolder childFolder)
+                    {
+                        queue.Enqueue(childFolder.UUID);
+                    }
+                }
+            }
+        }
+
+        private List<InventoryCacheNode> BuildInventoryCacheNodes(InventoryNode parentNode, UUID parentUuid)
+        {
+            var result = new List<InventoryCacheNode>();
+
+            if (parentNode.Nodes == null)
+            {
+                return result;
+            }
+
+            List<InventoryNode> children;
+            try
+            {
+                children = parentNode.Nodes.Values.ToList();
+            }
+            catch (InvalidOperationException)
+            {
+                return result;
+            }
+
+            foreach (var child in children)
+            {
+                if (child.Data == null)
+                {
+                    continue;
+                }
+
+                var data = child.Data;
+                var node = new InventoryCacheNode
+                {
+                    Uuid = data.UUID.ToString(),
+                    ParentUuid = parentUuid == UUID.Zero ? string.Empty : parentUuid.ToString(),
+                    Name = data.Name ?? "(unnamed)",
+                    IsFolder = data is InventoryFolder,
+                    TypeName = GetInventoryTypeName(data),
+                    FolderType = data is InventoryFolder folder ? folder.PreferredType.ToString() : string.Empty,
+                    AssetType = data is InventoryItem item ? item.AssetType.ToString() : string.Empty,
+                    IsLink = data is InventoryItem linkItem && linkItem.IsLink(),
+                    IconClass = GetInventoryIconClass(data)
+                };
+
+                if (child.Nodes != null && child.Nodes.Count > 0)
+                {
+                    node.Children = BuildInventoryCacheNodes(child, data.UUID);
+                }
+
+                result.Add(node);
+            }
+
+            return result
+                .OrderByDescending(n => n.IsFolder)
+                .ThenBy(n => n.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string GetInventoryTypeName(InventoryBase item)
+        {
+            return item switch
+            {
+                InventoryFolder => "Folder",
+                InventoryNotecard => "Notecard",
+                InventoryTexture => "Texture",
+                InventoryLSL => "Script",
+                InventoryWearable wearable => wearable.WearableType.ToString(),
+                InventoryAttachment => "Attachment",
+                InventoryObject => "Object",
+                InventorySound => "Sound",
+                InventoryAnimation => "Animation",
+                InventoryGesture => "Gesture",
+                InventoryLandmark => "Landmark",
+                InventoryCallingCard => "Calling Card",
+                InventorySnapshot => "Snapshot",
+                _ => item.GetType().Name
+            };
+        }
+
+        private static string GetInventoryIconClass(InventoryBase item)
+        {
+            if (item is InventoryFolder folder)
+            {
+                return folder.PreferredType switch
+                {
+                    FolderType.Trash => "fas fa-trash",
+                    FolderType.LostAndFound => "fas fa-box-open",
+                    FolderType.CurrentOutfit => "fas fa-tshirt",
+                    FolderType.Clothing => "fas fa-shirt",
+                    FolderType.BodyPart => "fas fa-user",
+                    FolderType.CallingCard => "fas fa-address-card",
+                    FolderType.Landmark => "fas fa-map-marker-alt",
+                    FolderType.Gesture => "fas fa-hand",
+                    FolderType.Animation => "fas fa-film",
+                    FolderType.Notecard => "fas fa-sticky-note",
+                    FolderType.Sound => "fas fa-volume-up",
+                    FolderType.Texture => "fas fa-image",
+                    FolderType.Object => "fas fa-cube",
+                    _ => "fas fa-folder"
+                };
+            }
+
+            if (item is InventoryWearable)
+            {
+                return "fas fa-shirt";
+            }
+
+            if (item is InventoryAttachment)
+            {
+                return "fas fa-paperclip";
+            }
+
+            if (item is not InventoryItem invItem)
+            {
+                return "fas fa-file";
+            }
+
+            return invItem.AssetType switch
+            {
+                AssetType.Notecard => "fas fa-sticky-note",
+                AssetType.LSLText => "fas fa-file-code",
+                AssetType.Texture => "fas fa-image",
+                AssetType.Object => "fas fa-cube",
+                AssetType.Sound => "fas fa-volume-up",
+                AssetType.Animation => "fas fa-film",
+                AssetType.Gesture => "fas fa-hand",
+                AssetType.Landmark => "fas fa-map-marker-alt",
+                AssetType.CallingCard => "fas fa-address-card",
+                _ => "fas fa-file"
+            };
         }
 
         #endregion
@@ -5366,6 +5767,10 @@ namespace RadegastWeb.Core
                 
                 // Clean up group service resources
                 _groupService.CleanupAccount(Guid.Parse(_accountId));
+
+                _friendOnlineStateService.ResetAccount(Guid.Parse(_accountId));
+
+                _inventoryCacheFetchLock.Dispose();
                 
                 // Clean up region map cache for this account
                 _ = Task.Run(async () => await _regionMapCacheService.CleanupAccountMapsAsync(Guid.Parse(_accountId)));

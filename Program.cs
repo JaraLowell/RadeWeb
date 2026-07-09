@@ -151,6 +151,7 @@ builder.Services.AddSingleton<IConnectionTrackingService, ConnectionTrackingServ
 builder.Services.AddSingleton<IChatProcessingService, ChatProcessingService>();
 builder.Services.AddSingleton<ISLTimeService, SLTimeService>();
 builder.Services.AddSingleton<IAttachmentCacheService, AttachmentCacheService>();
+builder.Services.AddSingleton<IFriendOnlineStateService, FriendOnlineStateService>();
 
 // Interactive notice services
 builder.Services.AddSingleton<IFriendshipRequestService, FriendshipRequestService>();

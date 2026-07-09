@@ -28,6 +28,26 @@ namespace RadegastWeb.Services
         /// Check if attachments cache exists for an account
         /// </summary>
         bool HasCachedAttachments(Guid accountId);
+
+        /// <summary>
+        /// Save inventory tree cache for an account
+        /// </summary>
+        Task SaveInventoryAsync(Guid accountId, InventoryCacheCollection inventory);
+
+        /// <summary>
+        /// Load inventory tree cache for an account
+        /// </summary>
+        Task<InventoryCacheCollection> LoadInventoryAsync(Guid accountId);
+
+        /// <summary>
+        /// Check if inventory cache exists for an account
+        /// </summary>
+        bool HasCachedInventory(Guid accountId);
+
+        /// <summary>
+        /// Update worn state markers in inventory cache using current worn attachments
+        /// </summary>
+        Task UpdateInventoryWornStateAsync(Guid accountId, List<AttachmentItem> attachments);
     }
     
     /// <summary>
@@ -38,7 +58,8 @@ namespace RadegastWeb.Services
     {
         private readonly ILogger<AttachmentCacheService> _logger;
         private readonly string _dataRoot;
-        private readonly XmlSerializer _serializer;
+        private readonly XmlSerializer _attachmentSerializer;
+        private readonly XmlSerializer _inventorySerializer;
         
         public AttachmentCacheService(ILogger<AttachmentCacheService> logger, IConfiguration configuration)
         {
@@ -49,7 +70,8 @@ namespace RadegastWeb.Services
             _dataRoot = Path.Combine(contentRoot, "data", "accounts");
             
             // Initialize XML serializer
-            _serializer = new XmlSerializer(typeof(AttachmentCollection));
+            _attachmentSerializer = new XmlSerializer(typeof(AttachmentCollection));
+            _inventorySerializer = new XmlSerializer(typeof(InventoryCacheCollection));
             
             // Ensure the data directory exists
             if (!Directory.Exists(_dataRoot))
@@ -79,7 +101,7 @@ namespace RadegastWeb.Services
                 using (var fileStream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
                 using (var streamWriter = new StreamWriter(fileStream))
                 {
-                    _serializer.Serialize(streamWriter, collection);
+                    _attachmentSerializer.Serialize(streamWriter, collection);
                 }
                 
                 _logger.LogDebug("Saved {Count} attachments to cache for account {AccountId}", 
@@ -108,7 +130,7 @@ namespace RadegastWeb.Services
                 
                 using (var fileStream = new FileStream(cacheFilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
-                    var collection = (AttachmentCollection?)_serializer.Deserialize(fileStream);
+                    var collection = (AttachmentCollection?)_attachmentSerializer.Deserialize(fileStream);
                     
                     if (collection == null)
                     {
@@ -154,10 +176,125 @@ namespace RadegastWeb.Services
             var cacheFilePath = GetCacheFilePath(accountId);
             return File.Exists(cacheFilePath);
         }
+
+        public Task SaveInventoryAsync(Guid accountId, InventoryCacheCollection inventory)
+        {
+            try
+            {
+                var cacheFilePath = GetInventoryCacheFilePath(accountId);
+                var cacheDir = Path.GetDirectoryName(cacheFilePath);
+
+                if (!string.IsNullOrEmpty(cacheDir) && !Directory.Exists(cacheDir))
+                {
+                    Directory.CreateDirectory(cacheDir);
+                }
+
+                inventory.LastUpdated = DateTime.UtcNow;
+
+                using (var fileStream = new FileStream(cacheFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    _inventorySerializer.Serialize(fileStream, inventory);
+                }
+
+                _logger.LogDebug("Saved inventory cache for account {AccountId} with {RootCount} root nodes",
+                    accountId, inventory.RootNodes.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error saving inventory cache for account {AccountId}", accountId);
+                throw;
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task<InventoryCacheCollection> LoadInventoryAsync(Guid accountId)
+        {
+            try
+            {
+                var cacheFilePath = GetInventoryCacheFilePath(accountId);
+
+                if (!File.Exists(cacheFilePath))
+                {
+                    _logger.LogDebug("No inventory cache file found for account {AccountId}", accountId);
+                    return Task.FromResult(new InventoryCacheCollection());
+                }
+
+                using (var fileStream = new FileStream(cacheFilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    var collection = (InventoryCacheCollection?)_inventorySerializer.Deserialize(fileStream);
+                    if (collection == null)
+                    {
+                        _logger.LogWarning("Failed to deserialize inventory cache for account {AccountId}", accountId);
+                        return Task.FromResult(new InventoryCacheCollection());
+                    }
+
+                    return Task.FromResult(collection);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error loading inventory cache for account {AccountId}", accountId);
+                return Task.FromResult(new InventoryCacheCollection());
+            }
+        }
+
+        public bool HasCachedInventory(Guid accountId)
+        {
+            var cacheFilePath = GetInventoryCacheFilePath(accountId);
+            return File.Exists(cacheFilePath);
+        }
+
+        public async Task UpdateInventoryWornStateAsync(Guid accountId, List<AttachmentItem> attachments)
+        {
+            var inventory = await LoadInventoryAsync(accountId);
+            if (inventory.RootNodes.Count == 0)
+            {
+                return;
+            }
+
+            var wornByItemId = attachments
+                .Where(a => !string.IsNullOrWhiteSpace(a.Uuid))
+                .GroupBy(a => a.Uuid)
+                .ToDictionary(g => g.Key, g => g.First());
+
+            ApplyWornState(inventory.RootNodes, wornByItemId);
+            await SaveInventoryAsync(accountId, inventory);
+        }
+
+        private static void ApplyWornState(List<InventoryCacheNode> nodes, Dictionary<string, AttachmentItem> wornByItemId)
+        {
+            foreach (var node in nodes)
+            {
+                if (!node.IsFolder)
+                {
+                    if (wornByItemId.TryGetValue(node.Uuid, out var attachment))
+                    {
+                        node.IsWorn = true;
+                        node.WornAttachmentPoint = attachment.AttachmentPoint;
+                    }
+                    else
+                    {
+                        node.IsWorn = false;
+                        node.WornAttachmentPoint = string.Empty;
+                    }
+                }
+
+                if (node.Children.Count > 0)
+                {
+                    ApplyWornState(node.Children, wornByItemId);
+                }
+            }
+        }
         
         private string GetCacheFilePath(Guid accountId)
         {
             return Path.Combine(_dataRoot, accountId.ToString(), "cache", "attachments.xml");
+        }
+
+        private string GetInventoryCacheFilePath(Guid accountId)
+        {
+            return Path.Combine(_dataRoot, accountId.ToString(), "cache", "inventory.xml");
         }
     }
 }
