@@ -99,6 +99,16 @@ RadegastWeb is a modern, web-based Second Life client inspired by the original R
 
 ### Linux Server Update Flow
 
+One-time check/update for .NET 8 SDK (Linux):
+
+```bash
+dotnet --list-sdks
+sudo apt-get update
+sudo apt-get install -y dotnet-sdk-8.0
+```
+
+After that, use the normal server update flow.
+
 Most Linux machines can continue using the standard update flow:
 
 ```bash
