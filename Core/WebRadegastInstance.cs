@@ -5445,11 +5445,46 @@ namespace RadegastWeb.Core
 
         public async Task<bool> DetachAttachmentAsync(UUID itemUuid)
         {
+            if (_client.Appearance != null)
+            {
+                try
+                {
+                    _client.Appearance.Detach(itemUuid);
+                    _logger.LogInformation("Detached attachment via AppearanceManager.Detach for account {AccountId} item {ItemUuid}",
+                        _accountId, itemUuid);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "AppearanceManager.Detach failed for item {ItemUuid}; falling back to reflective appearance action", itemUuid);
+                }
+            }
+
             return await InvokeAppearanceActionAsync(itemUuid, null, "Detach", "TakeOff", "RemoveFromOutfit");
         }
 
         public async Task<bool> WearAttachmentAsync(UUID itemUuid, AttachmentPoint? attachmentPoint = null)
         {
+            if (_client.Appearance != null)
+            {
+                var inventoryItem = _client.Inventory.Store?[itemUuid] as InventoryItem;
+                if (inventoryItem != null)
+                {
+                    try
+                    {
+                        var point = attachmentPoint ?? AttachmentPoint.Default;
+                        _client.Appearance.Attach(inventoryItem, point, false);
+                        _logger.LogInformation("Wore attachment via AppearanceManager.Attach for account {AccountId} item {ItemUuid} at point {AttachmentPoint}",
+                            _accountId, itemUuid, point);
+                        return true;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "AppearanceManager.Attach failed for item {ItemUuid}; falling back to reflective appearance action", itemUuid);
+                    }
+                }
+            }
+
             if (attachmentPoint.HasValue)
             {
                 var wornWithPoint = await InvokeAppearanceActionAsync(itemUuid, attachmentPoint, "Wear", "Attach", "AddToOutfit");

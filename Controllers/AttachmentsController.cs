@@ -181,7 +181,10 @@ namespace RadegastWeb.Controllers
                 var success = await instance.DetachAttachmentAsync(inventoryItemUuid);
                 if (!success)
                 {
-                    return BadRequest(new { message = "Failed to detach attachment" });
+                    return BadRequest(new
+                    {
+                        message = "Failed to detach attachment. Avatar appearance API is unavailable or the item is not currently attached."
+                    });
                 }
 
                 await instance.UpdateAttachmentCacheAsync();
