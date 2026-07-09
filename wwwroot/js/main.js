@@ -2951,7 +2951,7 @@ class RadegastWebClient {
         treeContainer.appendChild(fragment);
     }
 
-    createInventoryNodeElement(node, expanded = false, parentFolderType = '') {
+    createInventoryNodeElement(node, expanded = false, parentFolderType = '', parentFolderName = '') {
         const wrapper = document.createElement('div');
         wrapper.className = 'inventory-node';
 
@@ -2964,27 +2964,32 @@ class RadegastWebClient {
             }
 
             const summary = document.createElement('summary');
-            summary.appendChild(this.createInventoryEntry(node, parentFolderType));
+            summary.appendChild(this.createInventoryEntry(node, parentFolderType, parentFolderName));
             details.appendChild(summary);
 
             const childrenContainer = document.createElement('div');
             childrenContainer.className = 'inventory-children';
 
             node.children.forEach(child => {
-                childrenContainer.appendChild(this.createInventoryNodeElement(child, false, node.folderType || parentFolderType));
+                childrenContainer.appendChild(this.createInventoryNodeElement(
+                    child,
+                    false,
+                    node.folderType || parentFolderType,
+                    node.name || parentFolderName
+                ));
             });
 
             details.appendChild(childrenContainer);
 
             wrapper.appendChild(details);
         } else {
-            wrapper.appendChild(this.createInventoryEntry(node, parentFolderType));
+            wrapper.appendChild(this.createInventoryEntry(node, parentFolderType, parentFolderName));
         }
 
         return wrapper;
     }
 
-    createInventoryEntry(node, parentFolderType = '') {
+    createInventoryEntry(node, parentFolderType = '', parentFolderName = '') {
         const row = document.createElement('div');
         row.className = 'inventory-entry';
 
@@ -3020,7 +3025,13 @@ class RadegastWebClient {
         actions.className = 'inventory-entry-actions ms-auto d-flex gap-1';
         let hasActions = false;
 
-        if (node.isFolder && node.uuid && parentFolderType === 'CurrentOutfit') {
+        const normalizedParentType = (parentFolderType || '').toLowerCase();
+        const normalizedParentName = (parentFolderName || '').toLowerCase();
+        const isOutfitParent = normalizedParentType === 'currentoutfit'
+            || normalizedParentType.includes('outfit')
+            || normalizedParentName === 'my outfits';
+
+        if (node.isFolder && node.uuid && isOutfitParent) {
 
             const wearFolderBtn = document.createElement('button');
             wearFolderBtn.className = 'btn btn-sm btn-outline-success';
