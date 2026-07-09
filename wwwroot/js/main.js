@@ -2967,9 +2967,14 @@ class RadegastWebClient {
             summary.appendChild(this.createInventoryEntry(node));
             details.appendChild(summary);
 
+            const childrenContainer = document.createElement('div');
+            childrenContainer.className = 'inventory-children';
+
             node.children.forEach(child => {
-                details.appendChild(this.createInventoryNodeElement(child));
+                childrenContainer.appendChild(this.createInventoryNodeElement(child));
             });
+
+            details.appendChild(childrenContainer);
 
             wrapper.appendChild(details);
         } else {

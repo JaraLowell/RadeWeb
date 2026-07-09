@@ -558,13 +558,18 @@ a {
     background-color: var(--chat-bg);
 }
 
+.attachments-list-container {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
 .friends-list-container {
     max-height: 60vh;
     overflow-y: auto;
 }
 
 .inventory-node details {
-    margin-left: 0.75rem;
+    margin: 0;
 }
 
 .inventory-node summary {
@@ -573,8 +578,18 @@ a {
     padding: 0.125rem 0;
 }
 
+.inventory-node summary > .inventory-entry {
+    padding-left: 0.125rem;
+}
+
 .inventory-node summary::-webkit-details-marker {
     display: none;
+}
+
+.inventory-children {
+    margin-left: 1rem;
+    padding-left: 0.5rem;
+    border-left: 1px solid rgba(108, 117, 125, 0.22);
 }
 
 .inventory-entry {
@@ -609,6 +624,10 @@ a {
 
 [data-theme="dark"] .inventory-entry .inv-type {
     color: #adb5bd;
+}
+
+[data-theme="dark"] .inventory-children {
+    border-left-color: rgba(173, 181, 189, 0.22);
 }
 
 /* Chat Tabs Styling */
@@ -999,27 +1018,39 @@ footer {
 /* Custom scrollbar for chat, people list, and sidebar panels */
 .chat-messages::-webkit-scrollbar,
 .people-list::-webkit-scrollbar,
-.content-row .col-md-3::-webkit-scrollbar {
+.content-row .col-md-3::-webkit-scrollbar,
+.attachments-list-container::-webkit-scrollbar,
+.inventory-tree-container::-webkit-scrollbar,
+.friends-list-container::-webkit-scrollbar {
     width: 8px;
 }
 
 .chat-messages::-webkit-scrollbar-track,
 .people-list::-webkit-scrollbar-track,
-.content-row .col-md-3::-webkit-scrollbar-track {
+.content-row .col-md-3::-webkit-scrollbar-track,
+.attachments-list-container::-webkit-scrollbar-track,
+.inventory-tree-container::-webkit-scrollbar-track,
+.friends-list-container::-webkit-scrollbar-track {
     background: var(--scrollbar-track);
     border-radius: 4px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb,
 .people-list::-webkit-scrollbar-thumb,
-.content-row .col-md-3::-webkit-scrollbar-thumb {
+.content-row .col-md-3::-webkit-scrollbar-thumb,
+.attachments-list-container::-webkit-scrollbar-thumb,
+.inventory-tree-container::-webkit-scrollbar-thumb,
+.friends-list-container::-webkit-scrollbar-thumb {
     background: var(--scrollbar-thumb);
     border-radius: 4px;
 }
 
 .chat-messages::-webkit-scrollbar-thumb:hover,
 .people-list::-webkit-scrollbar-thumb:hover,
-.content-row .col-md-3::-webkit-scrollbar-thumb:hover {
+.content-row .col-md-3::-webkit-scrollbar-thumb:hover,
+.attachments-list-container::-webkit-scrollbar-thumb:hover,
+.inventory-tree-container::-webkit-scrollbar-thumb:hover,
+.friends-list-container::-webkit-scrollbar-thumb:hover {
     background: var(--scrollbar-thumb-hover);
 }
 
