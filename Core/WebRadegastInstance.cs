@@ -879,6 +879,29 @@ namespace RadegastWeb.Core
                     TargetId = groupId,
                     SessionId = sessionId
                 };
+
+                // Process outgoing group IM through chat pipeline (handles database save and SignalR broadcast)
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _chatProcessingService.ProcessChatMessageAsync(chatMessage, Guid.Parse(_accountId));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing outgoing group IM through chat pipeline");
+
+                        // Fallback: save to database directly if pipeline fails
+                        try
+                        {
+                            await _chatHistoryService.SaveChatMessageAsync(chatMessage);
+                        }
+                        catch (Exception saveEx)
+                        {
+                            _logger.LogError(saveEx, "Error saving outgoing group IM to database as fallback");
+                        }
+                    }
+                });
                 
                 ChatReceived?.Invoke(this, chatMessage);
                 
