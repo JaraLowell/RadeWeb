@@ -1,9 +1,11 @@
 using Microsoft.Extensions.Configuration;
+using RadegastWeb.Core;
 using RadegastWeb.Models;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Net.Http.Headers;
+using System.Text.RegularExpressions;
 
 namespace RadegastWeb.Services
 {
@@ -26,6 +28,7 @@ namespace RadegastWeb.Services
         private static readonly TimeSpan ConfigCacheTimeout = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan ConfigRetryAfterFailure = TimeSpan.FromMinutes(15);
         private static readonly TimeSpan ConfigRetryAfterFileNotFound = TimeSpan.FromHours(1);
+        private static readonly Regex SpeakerPrefixRegex = new(@"^\s*(?<speaker>[^:\n]{1,80}):\s+", RegexOptions.Compiled);
         private readonly Random _random = new();
 
         public AiChatService(
@@ -121,9 +124,8 @@ namespace RadegastWeb.Services
                 }
             }
 
-            // Don't respond to our own messages
             var accountInstance = _accountService.GetInstance(message.AccountId);
-            if (accountInstance != null && message.SenderName == accountInstance.Client.Self.Name)
+            if (IsSelfMessage(message, accountInstance))
                 return Task.FromResult(false);
 
             // Check ignore lists (UUID is more secure than name)
@@ -198,6 +200,14 @@ namespace RadegastWeb.Services
                 {
                     // Truncate response if too long
                     var content = response.Content;
+
+                    // Safety guard: never let the bot post transcript-style lines as other speakers.
+                    if (ShouldBlockAsOtherSpeaker(content, message.AccountId, config))
+                    {
+                        _logger.LogWarning("Blocked AI response that appears to speak as a different character for account {AccountId}", message.AccountId);
+                        return null;
+                    }
+
                     if (content.Length > config.ResponseConfig.MaxResponseLength)
                     {
                         content = content.Substring(0, config.ResponseConfig.MaxResponseLength - 3) + "...";
@@ -214,6 +224,80 @@ namespace RadegastWeb.Services
                 _logger.LogError(ex, "Error generating AI response");
                 return null;
             }
+        }
+
+        private bool IsSelfMessage(ChatMessageDto message, WebRadegastInstance? accountInstance)
+        {
+            if (accountInstance == null)
+                return false;
+
+            var selfId = accountInstance.Client.Self.AgentID.ToString();
+            if (!string.IsNullOrWhiteSpace(message.SenderId) &&
+                string.Equals(message.SenderId, selfId, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var selfName = accountInstance.Client.Self.Name;
+            if (!string.IsNullOrWhiteSpace(message.SenderName) &&
+                string.Equals(message.SenderName, selfName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool ShouldBlockAsOtherSpeaker(string responseContent, Guid accountId, AiBotConfig config)
+        {
+            if (string.IsNullOrWhiteSpace(responseContent))
+                return false;
+
+            var accountInstance = _accountService.GetInstance(accountId);
+            var allowedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (accountInstance != null)
+            {
+                var selfName = accountInstance.Client.Self.Name;
+                if (!string.IsNullOrWhiteSpace(selfName))
+                {
+                    allowedNames.Add(selfName.Trim());
+                    var selfFirst = selfName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                    if (!string.IsNullOrWhiteSpace(selfFirst))
+                        allowedNames.Add(selfFirst.Trim());
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(config.AvatarName))
+            {
+                allowedNames.Add(config.AvatarName.Trim());
+                var configFirst = config.AvatarName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(configFirst))
+                    allowedNames.Add(configFirst.Trim());
+            }
+
+            var lines = responseContent.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var rawLine in lines)
+            {
+                var line = rawLine.Trim();
+                if (line.Length == 0)
+                    continue;
+
+                var match = SpeakerPrefixRegex.Match(line);
+                if (!match.Success)
+                    continue;
+
+                var speaker = match.Groups["speaker"].Value.Trim();
+                if (string.IsNullOrWhiteSpace(speaker))
+                    continue;
+
+                if (!allowedNames.Contains(speaker))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public async Task<string?> ProcessChatMessageAsync(ChatMessageDto message, IEnumerable<ChatMessageDto> chatHistory)

@@ -497,6 +497,13 @@ namespace RadegastWeb.Services
             if ((!isNormalChat && !isGroupChat) || string.IsNullOrEmpty(message.SenderId))
                 return ChatProcessingResult.CreateSuccess();
 
+            // Never run AI on messages authored by this same avatar, including outgoing local/group posts.
+            if (context.AccountInstance != null &&
+                string.Equals(message.SenderId, context.AccountInstance.Client.Self.AgentID.ToString(), StringComparison.OrdinalIgnoreCase))
+            {
+                return ChatProcessingResult.CreateSuccess();
+            }
+
             try
             {
                 using var scope = _serviceProvider.CreateScope();
