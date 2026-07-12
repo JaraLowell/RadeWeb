@@ -96,13 +96,19 @@ namespace RadegastWeb.Services
                         if (!string.IsNullOrEmpty(result.ResponseMessage) && context.AccountInstance != null)
                         {
                             // Send response back to chat
-                            if (message.ChatType == "Normal")
+                            if (string.Equals(message.ChatType, "Normal", StringComparison.OrdinalIgnoreCase))
                             {
                                 context.AccountInstance.SendChat(result.ResponseMessage);
                             }
-                            else if (message.ChatType == "IM" && !string.IsNullOrEmpty(message.SenderId))
+                            else if (string.Equals(message.ChatType, "IM", StringComparison.OrdinalIgnoreCase) &&
+                                     !string.IsNullOrEmpty(message.SenderId))
                             {
-                                context.AccountInstance.SendIM(result.ResponseMessage, message.SenderId);
+                                context.AccountInstance.SendIM(message.SenderId, result.ResponseMessage);
+                            }
+                            else if (string.Equals(message.ChatType, "Group", StringComparison.OrdinalIgnoreCase) &&
+                                     !string.IsNullOrEmpty(message.TargetId))
+                            {
+                                context.AccountInstance.SendGroupIM(message.TargetId, result.ResponseMessage);
                             }
                             // Add more chat types as needed
                         }
@@ -485,8 +491,10 @@ namespace RadegastWeb.Services
 
         public async Task<ChatProcessingResult> ProcessAsync(ChatMessageDto message, ChatProcessingContext context)
         {
-            // Only process normal chat from agents for AI
-            if (message.ChatType != "Normal" || string.IsNullOrEmpty(message.SenderId))
+            // Process local chat by default, and group chat when enabled in AI config.
+            var isNormalChat = string.Equals(message.ChatType, "Normal", StringComparison.OrdinalIgnoreCase);
+            var isGroupChat = string.Equals(message.ChatType, "Group", StringComparison.OrdinalIgnoreCase);
+            if ((!isNormalChat && !isGroupChat) || string.IsNullOrEmpty(message.SenderId))
                 return ChatProcessingResult.CreateSuccess();
 
             try

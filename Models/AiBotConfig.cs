@@ -43,6 +43,61 @@ namespace RadegastWeb.Models
         /// Response settings
         /// </summary>
         public AiResponseConfig ResponseConfig { get; set; } = new();
+
+        /// <summary>
+        /// Group chat behavior settings
+        /// </summary>
+        public AiGroupChatConfig GroupChat { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Group chat behavior configuration
+    /// </summary>
+    public class AiGroupChatConfig
+    {
+        /// <summary>
+        /// Whether the bot can respond in group chat
+        /// </summary>
+        public bool EnableGroup { get; set; } = false;
+
+        /// <summary>
+        /// Backward-compatible typo support for config key "enableGorup"
+        /// </summary>
+        public bool EnableGorup
+        {
+            get => EnableGroup;
+            set => EnableGroup = value;
+        }
+
+        /// <summary>
+        /// Require trigger keywords for group replies. When true, name/question triggers are ignored in groups.
+        /// </summary>
+        public bool RequireTriggerKeyword { get; set; } = true;
+
+        /// <summary>
+        /// Whether to include recent group history as context
+        /// </summary>
+        public bool IncludeGroupHistory { get; set; } = false;
+
+        /// <summary>
+        /// Number of recent group lines to include when IncludeGroupHistory is true
+        /// </summary>
+        public int GroupHistoryMessages { get; set; } = 5;
+
+        /// <summary>
+        /// Allowlist of group UUIDs where AI replies are permitted.
+        /// Strict mode: if empty, group replies are disabled.
+        /// </summary>
+        public List<string> AllowedGroups { get; set; } = new();
+
+        /// <summary>
+        /// Alias for JSON key "allowedGroup" (requested singular name).
+        /// </summary>
+        public List<string> AllowedGroup
+        {
+            get => AllowedGroups;
+            set => AllowedGroups = value ?? new List<string>();
+        }
     }
 
     /// <summary>

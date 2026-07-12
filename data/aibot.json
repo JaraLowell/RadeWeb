@@ -19,6 +19,16 @@
     "maxMessageLength": 150,
     "includeBotMessages": false
   },
+  "groupChat": {
+    "enableGorup": false,
+    "requireTriggerKeyword": true,
+    "includeGroupHistory": false,
+    "groupHistoryMessages": 5,
+    "allowedGroup": [
+      "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
+    ]
+  },
   "responseConfig": {
     "minResponseDelaySeconds": 2,
     "maxResponseDelaySeconds": 5,

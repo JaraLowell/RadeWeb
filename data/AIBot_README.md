@@ -176,6 +176,19 @@ The `systemPrompt` defines your AI's personality and behavior. Make it specific 
 
 The bot will stop adding history messages once any limit is reached, ensuring API requests stay manageable.
 
+### Group Chat (Optional)
+- `groupChat.enableGroup`: Enable AI replies in group chat (default: `false`)
+- `groupChat.enableGorup`: Typo-compatible alias for `enableGroup` (both are accepted)
+- `groupChat.requireTriggerKeyword`: If `true`, group replies only happen when a trigger keyword is present
+- `groupChat.includeGroupHistory`: If `true`, include recent group lines as context
+- `groupChat.groupHistoryMessages`: Number of recent group lines to include (default: `5`)
+- `groupChat.allowedGroup`: Optional list of allowed group UUIDs (singular key alias)
+- `groupChat.allowedGroups`: Optional list of allowed group UUIDs (plural key)
+
+When `includeGroupHistory` is `false`, the bot sends only the triggering line (with sender name) to the AI.
+Strict mode: if `allowedGroup`/`allowedGroups` is empty or missing, group replies are disabled.
+When `allowedGroup`/`allowedGroups` contains values, the bot only replies in those group UUIDs.
+
 **Recommended Settings**:
 - For basic chat: `maxHistoryCharacters: 1000`, `maxMessageLength: 100`
 - For detailed context: `maxHistoryCharacters: 2500`, `maxMessageLength: 200`
@@ -201,13 +214,15 @@ The bot supports two types of ignore lists:
 ## Behavior
 
 The AI bot will:
-- ✅ Respond to local chat only
+- ✅ Respond to local chat
+- ✅ Optionally respond to group chat when `groupChat.enableGroup` is enabled
+- ✅ In group mode, can respond only to trigger keywords
+- ✅ In group mode, can optionally include last N group lines (default 5)
 - ✅ Include recent chat history for context
 - ✅ Add natural delays before responding
 - ✅ Respect ignore lists and trigger conditions
 - ✅ UUID-based blocking (secure, permanent)
 - ❌ Never respond to IMs (instant messages)
-- ❌ Never respond to group chat
 - ❌ Never respond to whispers
 - ❌ Never respond to its own messages
 
@@ -224,10 +239,12 @@ The AI bot will:
 ### Account Filtering Priority
 The AI bot filters incoming chat in this order:
 1. **Account ID Check**: Only processes chat from the account specified in `linkedAccountId`
-2. **Chat Type Check**: Only processes "normal" local chat (not IMs, groups, whispers)
-3. **Self-Message Check**: Ignores messages from the bot's own avatar
-4. **Ignore Lists**: Checks UUID and name-based ignore lists
-5. **Trigger Conditions**: Evaluates response probability and trigger keywords
+2. **Chat Type Check**: Processes "normal" local chat, and "group" only when `groupChat.enableGroup` is true
+3. **Allowed Group Check**: Strict mode - empty list disables group replies; otherwise only listed UUIDs are eligible
+4. **Self-Message Check**: Ignores messages from the bot's own avatar
+5. **Ignore Lists**: Checks UUID and name-based ignore lists
+6. **Trigger Conditions**: Evaluates name/question/keyword triggers (group can require keywords only)
+7. **Probability Check**: Evaluates response probability (skipped for keyword-required group mode)
 
 **Note**: `avatarName` is NOT used for filtering - it's only used by the AI for context and roleplay.
 

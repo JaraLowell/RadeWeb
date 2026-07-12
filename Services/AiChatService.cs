@@ -87,9 +87,39 @@ namespace RadegastWeb.Services
                 return Task.FromResult(false);
             }
 
-            // Only respond to local chat (not IMs, groups, or whispers)
-            if (message.ChatType.ToLower() != "normal")
+            var chatType = message.ChatType?.Trim() ?? string.Empty;
+            var isNormalChat = string.Equals(chatType, "normal", StringComparison.OrdinalIgnoreCase);
+            var isGroupChat = string.Equals(chatType, "group", StringComparison.OrdinalIgnoreCase);
+
+            // Only respond to local chat by default. Group chat is opt-in.
+            if (!isNormalChat && !isGroupChat)
                 return Task.FromResult(false);
+
+            // Group replies are optional and disabled unless explicitly enabled.
+            if (isGroupChat && !config.GroupChat.EnableGroup)
+                return Task.FromResult(false);
+
+            // Optional group allowlist filter: if configured, only respond in listed group UUIDs.
+            if (isGroupChat)
+            {
+                var allowedGroups = config.GroupChat.AllowedGroups
+                    .Where(g => !string.IsNullOrWhiteSpace(g))
+                    .Select(g => g.Trim())
+                    .ToList();
+
+                // Strict mode: if no groups are configured, group responses are disabled.
+                if (allowedGroups.Count == 0)
+                {
+                    return Task.FromResult(false);
+                }
+
+                var targetGroupId = message.TargetId?.Trim();
+                if (string.IsNullOrEmpty(targetGroupId) ||
+                    !allowedGroups.Any(g => string.Equals(g, targetGroupId, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return Task.FromResult(false);
+                }
+            }
 
             // Don't respond to our own messages
             var accountInstance = _accountService.GetInstance(message.AccountId);
@@ -113,12 +143,9 @@ namespace RadegastWeb.Services
                 return Task.FromResult(false);
             }
 
-            // Check response probability
-            if (_random.NextDouble() > config.ResponseConfig.ResponseProbability)
-                return Task.FromResult(false);
-
-            // Check for trigger conditions
+            // Check trigger conditions
             var shouldRespond = false;
+            var triggerKeywordMatched = false;
 
             // Check for name mentions
             if (config.ResponseConfig.RespondToNameMentions && accountInstance != null)
@@ -135,7 +162,20 @@ namespace RadegastWeb.Services
             // Check for trigger keywords
             if (config.ResponseConfig.TriggerKeywords.Any(keyword => 
                 message.Message.Contains(keyword, StringComparison.OrdinalIgnoreCase)))
+            {
+                triggerKeywordMatched = true;
                 shouldRespond = true;
+            }
+
+            // In group chat mode, optionally require trigger keywords and skip random probability.
+            if (isGroupChat && config.GroupChat.RequireTriggerKeyword)
+            {
+                return Task.FromResult(triggerKeywordMatched);
+            }
+
+            // Check response probability
+            if (_random.NextDouble() > config.ResponseConfig.ResponseProbability)
+                return Task.FromResult(false);
 
             return Task.FromResult(shouldRespond);
         }
@@ -311,14 +351,27 @@ namespace RadegastWeb.Services
                 Content = systemPrompt
             });
 
+            var chatType = message.ChatType?.Trim() ?? string.Empty;
+            var isGroupChat = string.Equals(chatType, "group", StringComparison.OrdinalIgnoreCase);
+
+            // Local chat uses normal history settings. Group chat history is controlled independently.
+            var includeHistory = config.ChatHistory.IncludeHistory;
+            var maxHistoryMessages = config.ChatHistory.MaxHistoryMessages;
+
+            if (isGroupChat)
+            {
+                includeHistory = config.GroupChat.EnableGroup && config.GroupChat.IncludeGroupHistory;
+                maxHistoryMessages = Math.Max(0, config.GroupChat.GroupHistoryMessages);
+            }
+
             // Add chat history if enabled
-            if (config.ChatHistory.IncludeHistory)
+            if (includeHistory && maxHistoryMessages > 0)
             {
                 var relevantHistory = chatHistory
-                    .Where(h => h.ChatType.ToLower() == "normal" && // Only normal chat
+                    .Where(h => string.Equals(h.ChatType, chatType, StringComparison.OrdinalIgnoreCase) &&
                                h.Timestamp >= DateTime.UtcNow.AddMinutes(-config.ChatHistory.MaxHistoryAgeMinutes))
                     .OrderBy(h => h.Timestamp)
-                    .TakeLast(config.ChatHistory.MaxHistoryMessages)
+                    .TakeLast(maxHistoryMessages)
                     .ToList();
 
                 var totalHistoryCharacters = 0;
