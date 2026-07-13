@@ -151,18 +151,23 @@ namespace RadegastWeb.Services
             // Check trigger conditions
             var shouldRespond = false;
             var triggerKeywordMatched = false;
+            var nameMentionMatched = false;
+            var questionMatched = false;
 
             // Check for name mentions
-            if (config.ResponseConfig.RespondToNameMentions && accountInstance != null)
+            if (config.ResponseConfig.RespondToNameMentions)
             {
-                var botName = accountInstance.Client.Self.Name;
-                if (message.Message.Contains(botName, StringComparison.OrdinalIgnoreCase))
+                nameMentionMatched = IsBotNameMentioned(message.Message, accountInstance, config);
+                if (nameMentionMatched)
                     shouldRespond = true;
             }
 
             // Check for questions
             if (config.ResponseConfig.RespondToQuestions && message.Message.TrimEnd().EndsWith('?'))
+            {
+                questionMatched = true;
                 shouldRespond = true;
+            }
 
             // Check for trigger keywords
             if (config.ResponseConfig.TriggerKeywords.Any(keyword => 
@@ -178,11 +183,48 @@ namespace RadegastWeb.Services
                 return Task.FromResult(triggerKeywordMatched);
             }
 
+            // Hard triggers bypass random response probability.
+            if (nameMentionMatched || questionMatched || triggerKeywordMatched)
+                return Task.FromResult(true);
+
             // Check response probability
             if (_random.NextDouble() > config.ResponseConfig.ResponseProbability)
                 return Task.FromResult(false);
 
             return Task.FromResult(shouldRespond);
+        }
+
+        private static bool IsBotNameMentioned(string messageText, WebRadegastInstance? accountInstance, AiBotConfig config)
+        {
+            if (string.IsNullOrWhiteSpace(messageText))
+                return false;
+
+            var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            if (accountInstance != null)
+            {
+                var selfName = accountInstance.Client.Self.Name?.Trim();
+                if (!string.IsNullOrWhiteSpace(selfName))
+                {
+                    candidates.Add(selfName);
+
+                    var firstName = selfName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                    if (!string.IsNullOrWhiteSpace(firstName))
+                        candidates.Add(firstName);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(config.AvatarName))
+            {
+                var configuredName = config.AvatarName.Trim();
+                candidates.Add(configuredName);
+
+                var configuredFirstName = configuredName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(configuredFirstName))
+                    candidates.Add(configuredFirstName);
+            }
+
+            return candidates.Any(name => messageText.Contains(name, StringComparison.OrdinalIgnoreCase));
         }
 
         public async Task<string?> GenerateResponseAsync(ChatMessageDto message, IEnumerable<ChatMessageDto> chatHistory)
