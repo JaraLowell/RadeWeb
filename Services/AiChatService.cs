@@ -17,6 +17,7 @@ namespace RadegastWeb.Services
         private readonly ILogger<AiChatService> _logger;
         private readonly IAccountService _accountService;
         private readonly IChatHistoryService _chatHistoryService;
+        private readonly ISLTimeService _slTimeService;
         private readonly HttpClient _httpClient;
         private readonly string _configPath;
         private AiBotConfig? _cachedConfig;
@@ -35,12 +36,14 @@ namespace RadegastWeb.Services
             ILogger<AiChatService> logger,
             IAccountService accountService,
             IChatHistoryService chatHistoryService,
+            ISLTimeService slTimeService,
             IHttpClientFactory httpClientFactory,
             IConfiguration configuration)
         {
             _logger = logger;
             _accountService = accountService;
             _chatHistoryService = chatHistoryService;
+            _slTimeService = slTimeService;
             _httpClient = httpClientFactory.CreateClient();
             
             // Get the data directory path from configuration or use default
@@ -193,7 +196,7 @@ namespace RadegastWeb.Services
 
             try
             {
-                var messages = BuildChatMessages(message, chatHistory, config);
+                var messages = await BuildChatMessagesAsync(message, chatHistory, config);
                 var response = await CallAiApiAsync(messages, config.ApiConfig);
 
                 if (response.Success && !string.IsNullOrEmpty(response.Content))
@@ -417,7 +420,7 @@ namespace RadegastWeb.Services
             }
         }
 
-        private List<AiChatMessage> BuildChatMessages(ChatMessageDto message, IEnumerable<ChatMessageDto> chatHistory, AiBotConfig config)
+        private async Task<List<AiChatMessage>> BuildChatMessagesAsync(ChatMessageDto message, IEnumerable<ChatMessageDto> chatHistory, AiBotConfig config)
         {
             var messages = new List<AiChatMessage>();
 
@@ -433,6 +436,13 @@ namespace RadegastWeb.Services
             {
                 Role = "system",
                 Content = systemPrompt
+            });
+
+            // Add dynamic world context so the AI stays aware of place/time/people without polluting persona prompt.
+            messages.Add(new AiChatMessage
+            {
+                Role = "system",
+                Content = await BuildWorldContextMessageAsync(message)
             });
 
             var chatType = message.ChatType?.Trim() ?? string.Empty;
@@ -519,6 +529,59 @@ namespace RadegastWeb.Services
             });
 
             return messages;
+        }
+
+        private async Task<string> BuildWorldContextMessageAsync(ChatMessageDto message)
+        {
+            var accountInstance = _accountService.GetInstance(message.AccountId);
+            var regionName = message.RegionName;
+
+            if (string.IsNullOrWhiteSpace(regionName) && accountInstance != null)
+            {
+                regionName = accountInstance.Client.Network.CurrentSim?.Name;
+            }
+
+            var inWorldTime = !string.IsNullOrWhiteSpace(message.SLTDateTime)
+                ? message.SLTDateTime
+                : _slTimeService.FormatSLTWithDate(DateTime.UtcNow, "MMM dd, HH:mm:ss");
+
+            var posture = "standing";
+            var seatObjectId = "none";
+
+            if (accountInstance != null && accountInstance.IsConnected)
+            {
+                posture = accountInstance.IsSitting ? "sitting" : "standing";
+                seatObjectId = accountInstance.CurrentSittingObjectUuid?.ToString() ?? "none";
+            }
+
+            var nearbyPeople = "none";
+            try
+            {
+                var nearby = await _accountService.GetNearbyAvatarsAsync(message.AccountId);
+                var nearbyWithin20m = nearby
+                    .Where(a => a.Distance >= 0 && a.Distance <= 20.0f)
+                    .OrderBy(a => a.Distance)
+                    .Take(8)
+                    .Select(a => $"{a.DisplayName} ({a.Distance:F1}m)")
+                    .ToList();
+
+                if (nearbyWithin20m.Count > 0)
+                {
+                    nearbyPeople = string.Join(", ", nearbyWithin20m);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to gather nearby avatars for world context on account {AccountId}", message.AccountId);
+            }
+
+            return $"WORLD_CONTEXT:\n" +
+                   $"- region: {regionName ?? "Unknown"}\n" +
+                   $"- in world time: {inWorldTime}\n" +
+                   $"- posture: {posture}\n" +
+                   $"- seat_object_id: {seatObjectId}\n" +
+                   $"- nearby_people_within_20m: {nearbyPeople}\n" +
+                   "Use only this world context for place/time/proximity facts. If a field is Unknown or none, do not invent details.";
         }
 
         private async Task<AiApiResponse> CallAiApiAsync(List<AiChatMessage> messages, AiApiConfig apiConfig)
