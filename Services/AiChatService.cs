@@ -503,6 +503,7 @@ namespace RadegastWeb.Services
             // Add chat history if enabled
             if (includeHistory && maxHistoryMessages > 0)
             {
+                var accountInstance = _accountService.GetInstance(message.AccountId);
                 var relevantHistory = chatHistory
                     .Where(h => string.Equals(h.ChatType, chatType, StringComparison.OrdinalIgnoreCase) &&
                                h.Timestamp >= DateTime.UtcNow.AddMinutes(-config.ChatHistory.MaxHistoryAgeMinutes))
@@ -515,11 +516,10 @@ namespace RadegastWeb.Services
 
                 foreach (var historyMsg in relevantHistory)
                 {
+                    var isBotMessage = IsSelfMessage(historyMsg, accountInstance);
+
                     // Skip bot's own messages if not configured to include them
-                    var accountInstance = _accountService.GetInstance(message.AccountId);
-                    if (!config.ChatHistory.IncludeBotMessages && 
-                        accountInstance != null && 
-                        historyMsg.SenderName == accountInstance.Client.Self.Name)
+                    if (!config.ChatHistory.IncludeBotMessages && isBotMessage)
                         continue;
 
                     // Truncate individual messages if they're too long
@@ -529,7 +529,10 @@ namespace RadegastWeb.Services
                         messageText = messageText.Substring(0, config.ChatHistory.MaxMessageLength - 3) + "...";
                     }
 
-                    var formattedContent = $"{historyMsg.SenderName}: {messageText}";
+                    var historyRole = isBotMessage ? "assistant" : "user";
+                    var formattedContent = isBotMessage
+                        ? messageText
+                        : $"{historyMsg.SenderName}: {messageText}";
                     
                     // Check if adding this message would exceed the total character limit
                     if (totalHistoryCharacters + formattedContent.Length > config.ChatHistory.MaxHistoryCharacters)
@@ -542,7 +545,7 @@ namespace RadegastWeb.Services
                     totalHistoryCharacters += formattedContent.Length;
                     historyMessages.Add(new AiChatMessage
                     {
-                        Role = "user",
+                        Role = historyRole,
                         Content = formattedContent,
                         SenderName = historyMsg.SenderName,
                         Timestamp = historyMsg.Timestamp
