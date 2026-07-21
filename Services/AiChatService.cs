@@ -532,7 +532,7 @@ namespace RadegastWeb.Services
                     var historyRole = isBotMessage ? "assistant" : "user";
                     var formattedContent = isBotMessage
                         ? messageText
-                        : $"{historyMsg.SenderName}: {messageText}";
+                        : $"[{historyMsg.SenderName}]: {messageText}";
                     
                     // Check if adding this message would exceed the total character limit
                     if (totalHistoryCharacters + formattedContent.Length > config.ChatHistory.MaxHistoryCharacters)
@@ -568,7 +568,7 @@ namespace RadegastWeb.Services
             messages.Add(new AiChatMessage
             {
                 Role = "user",
-                Content = $"{message.SenderName}: {currentMessageText}",
+                Content = $"[{message.SenderName}]: {currentMessageText}",
                 SenderName = message.SenderName,
                 Timestamp = message.Timestamp
             });
