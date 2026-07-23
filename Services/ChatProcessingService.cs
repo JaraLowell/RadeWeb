@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.SignalR;
+﻿using Microsoft.AspNetCore.SignalR;
 using LibreMetaverse;
 using RadegastWeb.Core;
 using RadegastWeb.Hubs;
@@ -423,6 +423,7 @@ namespace RadegastWeb.Services
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger _logger;
+        private const string SkipAiResponseKey = "SkipAiResponse";
 
         public CorradeCommandProcessor(IServiceProvider serviceProvider, ILogger logger)
         {
@@ -446,6 +447,9 @@ namespace RadegastWeb.Services
                 
                 if (corradeService.IsWhisperCorradeCommand(message.Message))
                 {
+                    // Mark command-shaped input so downstream AI processing can skip it.
+                    context.SharedData[SkipAiResponseKey] = true;
+
                     var result = await corradeService.ProcessWhisperCommandAsync(
                         context.AccountId,
                         message.SenderId,
@@ -479,6 +483,7 @@ namespace RadegastWeb.Services
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger _logger;
+        private const string SkipAiResponseKey = "SkipAiResponse";
 
         public AiChatProcessor(IServiceProvider serviceProvider, ILogger logger)
         {
@@ -491,6 +496,14 @@ namespace RadegastWeb.Services
 
         public async Task<ChatProcessingResult> ProcessAsync(ChatMessageDto message, ChatProcessingContext context)
         {
+            if (context.SharedData.TryGetValue(SkipAiResponseKey, out var skipAiObj) &&
+                skipAiObj is bool skipAiResponse &&
+                skipAiResponse)
+            {
+                _logger.LogDebug("Skipping AI response because message was handled as command-only");
+                return ChatProcessingResult.CreateSuccess();
+            }
+
             // Process local chat by default, and group chat when enabled in AI config.
             var isNormalChat = string.Equals(message.ChatType, "Normal", StringComparison.OrdinalIgnoreCase);
             var isGroupChat = string.Equals(message.ChatType, "Group", StringComparison.OrdinalIgnoreCase);
@@ -720,6 +733,7 @@ namespace RadegastWeb.Services
     {
         private readonly IServiceProvider _serviceProvider;
         private readonly ILogger _logger;
+        private const string SkipAiResponseKey = "SkipAiResponse";
 
         public GroupTeleportCommandProcessor(IServiceProvider serviceProvider, ILogger logger)
         {
@@ -744,54 +758,43 @@ namespace RadegastWeb.Services
 
             try
             {
-                // Check if message matches the pattern "[name] tp" (case-insensitive)
-                var messageLower = message.Message?.ToLower().Trim() ?? "";
-                
-                // Match patterns like "azza tp", "john tp", etc.
+                // Strict command shape: exactly two words and one must be "tp".
+                var messageLower = message.Message?.ToLowerInvariant().Trim() ?? string.Empty;
                 var words = messageLower.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                
-                if (words.Length == 2 && words[1] == "tp")
+
+                if (words.Length == 2 && (words[0] == "tp" || words[1] == "tp"))
                 {
-                    var requestedName = words[0];
-                    
-                    _logger.LogDebug("Detected teleport request for '{RequestedName}' in {ChatType} from {SenderName}", 
-                        requestedName, message.ChatType, message.SenderName);
+                    var requestedToken = words[0] == "tp" ? words[1] : words[0];
 
                     using var scope = _serviceProvider.CreateScope();
                     var accountService = scope.ServiceProvider.GetRequiredService<IAccountService>();
 
-                    // Get all accounts and filter by both first name and display name
+                    // Match either:
+                    // 1) legacy first name first 4 chars only
+                    // 2) full first word of display name
                     var allAccounts = await accountService.GetAccountsAsync();
-                    var matchingAccounts = allAccounts.Where(a =>
-                    {
-                        // Check if first name matches
-                        if (a.FirstName.Equals(requestedName, StringComparison.OrdinalIgnoreCase))
-                            return true;
-                        
-                        // Check if first word of display name matches
-                        if (!string.IsNullOrWhiteSpace(a.DisplayName))
-                        {
-                            var displayNameFirstWord = a.DisplayName.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                            if (displayNameFirstWord != null && 
-                                displayNameFirstWord.Equals(requestedName, StringComparison.OrdinalIgnoreCase))
-                                return true;
-                        }
-                        
-                        return false;
-                    });
-                    
-                    var connectedAccounts = matchingAccounts
+                    var connectedAccounts = allAccounts
                         .Where(a => accountService.GetInstance(a.Id)?.IsConnected == true)
                         .ToList();
 
-                    if (!connectedAccounts.Any())
+                    var accountToUse = connectedAccounts
+                        .FirstOrDefault(a => MatchesTeleportNameToken(a, requestedToken));
+
+                    if (accountToUse == null)
                     {
-                        _logger.LogDebug("No connected accounts found with first name or display name matching '{RequestedName}'", requestedName);
+                        _logger.LogDebug(
+                            "TP command token '{RequestedToken}' did not match any connected account (legacy first-4 or display first-full)",
+                            requestedToken);
                         return ChatProcessingResult.CreateSuccess();
                     }
 
-                    // Use the first matching connected account
-                    var accountToUse = connectedAccounts.First();
+                    var matchedByDisplayFirst = MatchesDisplayFirstName(accountToUse, requestedToken);
+                    _logger.LogDebug(
+                        "Detected teleport request token '{RequestedToken}' in {ChatType} from {SenderName} (matched by {MatchType})",
+                        requestedToken,
+                        message.ChatType,
+                        message.SenderName,
+                        matchedByDisplayFirst ? "display first name" : "legacy first 4 chars");
                     
                     // Get the requester's agent ID from the sender ID
                     if (string.IsNullOrEmpty(message.SenderId))
@@ -808,13 +811,9 @@ namespace RadegastWeb.Services
 
                     if (success)
                     {
-                        var matchedName = accountToUse.FirstName.Equals(requestedName, StringComparison.OrdinalIgnoreCase)
-                            ? $"FirstName: {accountToUse.FirstName}"
-                            : $"DisplayName: {accountToUse.DisplayName}";
-                        
                         _logger.LogInformation(
-                            "Sent teleport lure from {AccountName} (matched {MatchedName}, AccountId: {AccountId}) to {RequesterName} ({RequesterId}) in response to {ChatType} request",
-                            accountToUse.DisplayName ?? accountToUse.FirstName, matchedName, accountToUse.Id, message.SenderName, message.SenderId, message.ChatType);
+                            "Sent teleport lure from {AccountName} (AccountId: {AccountId}) to {RequesterName} ({RequesterId}) in response to {ChatType} request",
+                            accountToUse.DisplayName ?? accountToUse.FirstName, accountToUse.Id, message.SenderName, message.SenderId, message.ChatType);
                     }
                     else
                     {
@@ -822,6 +821,9 @@ namespace RadegastWeb.Services
                             "Failed to send teleport lure from {AccountName} ({AccountId}) to {RequesterName} ({RequesterId}) via {ChatType}",
                             accountToUse.DisplayName ?? accountToUse.FirstName, accountToUse.Id, message.SenderName, message.SenderId, message.ChatType);
                     }
+
+                    // Command-only input should not trigger AI response generation.
+                    context.SharedData[SkipAiResponseKey] = true;
                 }
 
                 return ChatProcessingResult.CreateSuccess();
@@ -832,6 +834,38 @@ namespace RadegastWeb.Services
                     message.SenderName);
                 return ChatProcessingResult.CreateSuccess(); // Continue processing on error
             }
+        }
+
+        private static bool MatchesTeleportNameToken(Account account, string requestedToken)
+        {
+            if (string.IsNullOrWhiteSpace(requestedToken))
+                return false;
+
+            var token = requestedToken.ToLowerInvariant();
+            return MatchesLegacyFirstNameShort(account, token) || MatchesDisplayFirstName(account, token);
+        }
+
+        private static bool MatchesLegacyFirstNameShort(Account account, string token)
+        {
+            if (string.IsNullOrWhiteSpace(account.FirstName))
+                return false;
+
+            var legacyFirst = account.FirstName.ToLowerInvariant();
+            var legacyShort = legacyFirst.Length >= 4 ? legacyFirst.Substring(0, 4) : legacyFirst;
+            return token == legacyShort;
+        }
+
+        private static bool MatchesDisplayFirstName(Account account, string token)
+        {
+            if (string.IsNullOrWhiteSpace(account.DisplayName))
+                return false;
+
+            var displayFirst = account.DisplayName
+                .ToLowerInvariant()
+                .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault();
+
+            return !string.IsNullOrWhiteSpace(displayFirst) && token == displayFirst;
         }
     }
 }
